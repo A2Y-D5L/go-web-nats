@@ -3,7 +3,9 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -109,4 +111,105 @@ func GitCommitIfChangedForTest(ctx context.Context, dir, message string) (bool, 
 
 func GitRevParseForTest(ctx context.Context, dir, ref string) (string, error) {
 	return gitRevParse(ctx, dir, ref)
+}
+
+func ParseImageBuilderModeForTest(raw string) (string, error) {
+	mode, err := parseImageBuilderMode(raw)
+	return string(mode), err
+}
+
+func ImageBuilderModeFromEnvForTest() (string, error) {
+	mode, err := imageBuilderModeFromEnv()
+	return string(mode), err
+}
+
+func SelectImageBuilderBackendNameForTest(modeRaw string) (string, error) {
+	mode, err := parseImageBuilderMode(modeRaw)
+	if err != nil {
+		return "", err
+	}
+	return selectImageBuilderBackendName(mode), nil
+}
+
+func RunImageBuilderBuildForTest(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	imageTag string,
+) (string, []string, error) {
+	outcome, err := runImageBuilderBuild(ctx, artifacts, msg, spec, imageTag)
+	return outcome.message, outcome.artifacts, err
+}
+
+func RunImageBuilderBuildWithBackendForTest(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	imageTag string,
+	modeRaw string,
+	message, summary, logs string,
+	metadata map[string]any,
+	errText string,
+) (string, []string, error) {
+	mode, modeErr := parseImageBuilderMode(modeRaw)
+	dockerfileBody := renderImageBuilderDockerfile(spec)
+	dockerfilePath, err := artifacts.WriteFile(msg.ProjectID, imageBuildDockerfilePath, dockerfileBody)
+	if err != nil {
+		return "", nil, err
+	}
+	outcome, runErr := runImageBuilderBuildWithBackend(
+		ctx,
+		artifacts,
+		msg,
+		mode,
+		modeErr,
+		testBuildKitBackend{
+			outcome: imageBuildResult{
+				message:  message,
+				summary:  summary,
+				metadata: metadata,
+				logs:     logs,
+			},
+			err: errorFromString(errText),
+		},
+		imageBuildRequest{
+			OpID:              msg.OpID,
+			ProjectID:         msg.ProjectID,
+			Spec:              spec,
+			ImageTag:          imageTag,
+			ContextDir:        sourceRepoDir(artifacts, msg.ProjectID),
+			DockerfileBody:    dockerfileBody,
+			DockerfileRelPath: imageBuildDockerfilePath,
+		},
+		[]string{dockerfilePath},
+	)
+	return outcome.message, outcome.artifacts, runErr
+}
+
+type testBuildKitBackend struct {
+	outcome imageBuildResult
+	err     error
+}
+
+func (testBuildKitBackend) name() string {
+	return string(imageBuilderModeBuildKit)
+}
+
+func (b testBuildKitBackend) build(
+	ctx context.Context,
+	_ imageBuildRequest,
+) (imageBuildResult, error) {
+	if err := ensureContextAlive(ctx); err != nil {
+		return imageBuildResult{}, err
+	}
+	return b.outcome, b.err
+}
+
+func errorFromString(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return errors.New(text)
 }

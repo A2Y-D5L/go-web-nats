@@ -132,6 +132,24 @@ Optional override:
 
 - `PAAS_LOCAL_API_BASE_URL` (example: `http://127.0.0.1:8080`)
 - `PAAS_ENABLE_COMMIT_WATCHER` (`true|false`, default `false`) enables in-process polling watcher for source commits
+- `PAAS_IMAGE_BUILDER_MODE` (`artifact|buildkit`, default `buildkit`)
+- `PAAS_BUILDKIT_ADDR` (optional, default `unix:///run/buildkit/buildkitd.sock` when BuildKit mode is enabled)
+
+Image builder mode behavior:
+
+- `buildkit` (default): runs the image builder backend through BuildKit integration without shelling out to `docker`, `buildctl`, or `buildkitd`.
+  - BuildKit metadata/debug artifacts are written under `build/`:
+    - `build/buildkit-summary.txt`
+    - `build/buildkit-metadata.json`
+    - `build/buildkit.log`
+  - If BuildKit is unavailable/incompatible at runtime, the worker fails gracefully with a clear error and no panic.
+- `artifact`: preserves prior metadata-only behavior and writes build artifacts without a container runtime build.
+
+Current platform limitation:
+
+- BuildKit code path is capability-gated. This repository now defaults to `buildkit` mode.
+- If the binary is built without the `buildkit` tag, default image builds fail with a deterministic capability error unless `PAAS_IMAGE_BUILDER_MODE=artifact` is set.
+- BuildKit-tagged builds require Moby BuildKit Go modules to be available in the module graph/cache for this environment.
 
 Trigger dedupe:
 
@@ -171,6 +189,10 @@ Config contracts are modeled from:
 - `repos/manifests/rendered.yaml`
 - `build/Dockerfile`
 - `build/publish-local-daemon.json`
+- `build/image.txt`
+- `build/buildkit-summary.txt` (BuildKit mode)
+- `build/buildkit-metadata.json` (BuildKit mode)
+- `build/buildkit.log` (BuildKit mode)
 - `deploy/deployment.yaml`
 - `deploy/service.yaml`
 - `deploy/rendered.yaml`
@@ -180,18 +202,155 @@ Config contracts are modeled from:
 Prereqs:
 
 - Go `1.25+` (module target is `1.25.0`)
+- `git` and `curl` (used by local hook + webhook demo loop)
 
-Commands:
+Recommended preflight:
 
 ```bash
 go mod tidy
-go test ./...
-go run ./cmd/server
+make check
 ```
 
-Open:
+Makefile shortcuts:
+
+```bash
+make setup-local
+make setup-buildkit
+```
+
+macOS note:
+
+- `make setup-buildkit` may install `buildctl` without `buildkitd` (daemon) because Darwin release archives can omit `buildkitd`.
+- In that case, run a Linux BuildKit daemon via container:
+
+```bash
+make buildkit-start-container
+```
+
+Then use:
+
+```bash
+BUILDKIT_ADDR=tcp://127.0.0.1:1234 make buildkit-check
+BUILDKIT_ADDR=tcp://127.0.0.1:1234 make run-buildkit
+```
+
+### Option A: Local-Dev Reliable Startup (artifact mode)
+
+Use this when you want predictable local behavior without BuildKit runtime requirements:
+
+```bash
+PAAS_IMAGE_BUILDER_MODE=artifact make run
+```
+
+Equivalent:
+
+```bash
+PAAS_IMAGE_BUILDER_MODE=artifact go run ./cmd/server
+```
+
+### Option B: BuildKit Mode (default mode)
+
+Use this when you want real image builds through the in-process BuildKit backend:
+
+```bash
+go run -tags buildkit ./cmd/server
+```
+
+Optional BuildKit endpoint override:
+
+```bash
+PAAS_BUILDKIT_ADDR=unix:///run/buildkit/buildkitd.sock go run -tags buildkit ./cmd/server
+```
+
+Equivalent Make target:
+
+```bash
+make run-buildkit
+```
+
+### BuildKit Dependency Setup (local runtime/build capability)
+
+The runtime BuildKit path requires both:
+
+- BuildKit-enabled binary: run with `-tags buildkit`
+- Reachable BuildKit daemon API endpoint: configured via `PAAS_BUILDKIT_ADDR`
+
+1. Install BuildKit daemon locally.
+Examples:
+
+```bash
+# macOS/Linux (Homebrew provides buildctl)
+brew install buildkit
+```
+
+```bash
+# Install buildkitd (daemon) from official release binaries
+BK_VER=v0.27.1
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"      # darwin or linux
+ARCH="$(uname -m)"                                   # arm64 or x86_64
+if [ "$ARCH" = "x86_64" ]; then ARCH=amd64; fi
+curl -fsSL -o /tmp/buildkit.tgz \
+  "https://github.com/moby/buildkit/releases/download/${BK_VER}/buildkit-${BK_VER}.${OS}-${ARCH}.tar.gz"
+tar -xzf /tmp/buildkit.tgz -C /tmp
+mkdir -p "$HOME/.local/bin"
+install -m 0755 /tmp/bin/buildkitd "$HOME/.local/bin/buildkitd"
+install -m 0755 /tmp/bin/buildctl "$HOME/.local/bin/buildctl"
+```
+
+2. Ensure your shell can find the daemon binary.
+Example (zsh):
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+command -v buildkitd
+```
+
+If `go install github.com/moby/buildkit/cmd/buildkitd@latest` fails with
+`go.mod ... contains one or more exclude directives` (seen on Go `1.26.x`),
+use the release-binary method above.
+
+3. Start a local BuildKit daemon and choose a socket address.
+Example (user-owned socket):
+
+```bash
+mkdir -p "$HOME/.local/run/buildkit"
+buildkitd --addr "unix://$HOME/.local/run/buildkit/buildkitd.sock"
+```
+
+Equivalent Make target:
+
+```bash
+make buildkit-start
+```
+
+4. Point the server at that endpoint and run with BuildKit support:
+
+```bash
+PAAS_BUILDKIT_ADDR="unix://$HOME/.local/run/buildkit/buildkitd.sock" go run -tags buildkit ./cmd/server
+```
+
+5. If BuildKit cannot be provided locally, use artifact mode explicitly:
+
+```bash
+PAAS_IMAGE_BUILDER_MODE=artifact go run ./cmd/server
+```
+
+Notes:
+
+- Default mode is `buildkit`; if BuildKit support is unavailable, image build steps fail with explicit errors.
+- If you run without `-tags buildkit`, set `PAAS_IMAGE_BUILDER_MODE=artifact` to avoid expected BuildKit capability failures.
+
+After startup, open:
 
 - `http://127.0.0.1:8080`
+
+Optional smoke flow (with server running):
+
+```bash
+make wait-api
+make smoke-registration
+```
 
 After creating a project, make a commit in the bootstrapped source repo to trigger CI locally:
 

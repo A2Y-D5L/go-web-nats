@@ -62,9 +62,13 @@ tasks:
   - id: workers.build
     files:
       - workers_action_build.go
+      - workers_action_buildkit.go
+      - workers_action_buildkit_stub.go
+      - workers_action_buildkit_moby.go
       - workers_render.go
     tests:
       - workers_messages_test.go
+      - workers_build_test.go
   - id: workers.deploy
     files:
       - workers_action_deploy.go

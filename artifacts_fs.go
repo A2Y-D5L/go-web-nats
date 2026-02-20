@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	securejoin "github.com/cyphar/filepath-securejoin"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -103,11 +105,10 @@ func (a *FSArtifacts) ReadFile(projectID, relPath string) ([]byte, error) {
 	if strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
 		return nil, errors.New("invalid relPath")
 	}
-	full := filepath.Join(dir, relPath)
-	if !strings.HasPrefix(filepath.Clean(full), filepath.Clean(dir)+string(filepath.Separator)) {
+	full, err := securejoin.SecureJoin(dir, relPath)
+	if err != nil {
 		return nil, errors.New("invalid relPath")
 	}
-	//nolint:gosec // full path is validated to remain within project directory.
 	return os.ReadFile(full)
 }
 

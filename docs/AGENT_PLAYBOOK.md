@@ -23,12 +23,13 @@ Task lookup helpers:
 1. Pick the correct worker file:
    - registration: `workers_action_registration.go`
    - bootstrap: `workers_action_bootstrap.go` + helpers
-   - build: `workers_action_build.go`
+   - build: `workers_action_build.go` + `workers_action_buildkit*.go` helpers
    - deploy: `workers_action_deploy.go`
 2. Keep shared helpers in:
    - git operations (go-git): `workers_action_git.go`
    - webhook hook script/install + optional commit watcher: `workers_action_webhook_hooks.go`
    - file/path utilities: `workers_action_files.go`
+   - build backends and mode-gated BuildKit path: `workers_action_buildkit.go`, `workers_action_buildkit_stub.go`, `workers_action_buildkit_moby.go`
 3. Preserve op step bookkeeping calls (`markOpStepStart`/`markOpStepEnd`).
 4. Run `make test-workers`, then `make check`.
 

@@ -90,13 +90,14 @@ func Run() {
 		sourceTriggerMu: sync.Mutex{},
 	}
 	watcherStarted := startSourceCommitWatcher(ctx, api)
+	builderMode, builderModeErr := imageBuilderModeFromEnv()
 	srv := &http.Server{
 		Addr:              httpAddr,
 		Handler:           api.routes(),
 		ReadHeaderTimeout: defaultReadHeaderWait,
 	}
 
-	logRuntimeStartup(mainLog, natsURL, watcherStarted)
+	logRuntimeStartup(mainLog, natsURL, watcherStarted, builderMode, builderModeErr)
 
 	listenErr := srv.ListenAndServe()
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
@@ -104,10 +105,20 @@ func Run() {
 	}
 }
 
-func logRuntimeStartup(mainLog sourceLogger, natsURL string, watcherStarted bool) {
+func logRuntimeStartup(
+	mainLog sourceLogger,
+	natsURL string,
+	watcherStarted bool,
+	builderMode imageBuilderMode,
+	builderModeErr error,
+) {
 	mainLog.Infof("NATS: %s", natsURL)
 	mainLog.Infof("Portal: http://%s", httpAddr)
 	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
+	mainLog.Infof("Image builder mode: %s", builderMode)
+	if builderModeErr != nil {
+		mainLog.Warnf("Image builder mode fallback: %v", builderModeErr)
+	}
 	if watcherStarted {
 		mainLog.Infof("Source commit watcher: enabled")
 	} else {

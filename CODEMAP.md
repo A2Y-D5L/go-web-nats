@@ -48,6 +48,9 @@ Primary agent contract: `AGENTS.md`
 - `workers_action_bootstrap.go`: repo bootstrap worker orchestrator.
 - `workers_action_bootstrap_helpers.go`: repo bootstrap helper stages (seed/commit/webhook metadata).
 - `workers_action_build.go`: image builder worker.
+- `workers_action_buildkit.go`: image builder backend contracts and request/result types.
+- `workers_action_buildkit_stub.go`: default non-BuildKit fallback backend (`!buildkit`) with graceful capability error output.
+- `workers_action_buildkit_moby.go`: BuildKit-tagged backend (`buildkit`) using Moby BuildKit client/frontend libraries.
 - `workers_action_deploy.go`: manifest renderer/deployer worker.
 - `workers_render.go`: shared rendering and naming helpers.
 - `ops_bookkeeping.go`: operation step tracking and finalization helpers.
@@ -67,6 +70,7 @@ Primary agent contract: `AGENTS.md`
 - `api_handlers_test.go`: project/artifact handler routing behavior.
 - `api_webhooks_test.go`: webhook branch filter behavior.
 - `workers_messages_test.go`: worker/result message compatibility.
+- `workers_build_test.go`: image builder mode parsing, backend selection, and build artifact behavior.
 - `model_spec_test.go`: spec normalization/validation/rendering behavior.
 - `workers_git_test.go`: go-git bootstrap + hook script behavior.
 - `artifacts_fs_test.go`: filesystem artifact listing safety behavior.
