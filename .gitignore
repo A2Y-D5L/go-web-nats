@@ -11,6 +11,8 @@
 !LICENSE
 !Makefile
 !README.md
+!CODEMAP.md
+!TASKMAP.yaml
 !docs/**/*.md
 !*.go
 !**/testdata/*.json
