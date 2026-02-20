@@ -9,6 +9,7 @@
 !CHANGELOG.md
 !CONTRIBUTING.md
 !LICENSE
+!Makefile
 !README.md
 !docs/**/*.md
 !*.go
