@@ -44,6 +44,17 @@ func RenderProjectConfigYAMLForTest(spec ProjectSpec) []byte {
 	return renderProjectConfigYAML(spec)
 }
 
+func RenderKustomizedProjectManifestsForTest(
+	spec ProjectSpec,
+	image string,
+) (string, string, string, error) {
+	rendered, err := renderKustomizedProjectManifests(spec, image)
+	if err != nil {
+		return "", "", "", err
+	}
+	return rendered.deployment, rendered.service, rendered.rendered, nil
+}
+
 type WaiterHubForTest struct {
 	hub *waiterHub
 }

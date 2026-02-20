@@ -77,13 +77,14 @@ func runManifestRendererApply(
 	spec ProjectSpec,
 	imageTag string,
 ) (repoBootstrapOutcome, error) {
-	deployment := renderDeploymentManifest(spec, imageTag)
-	service := renderServiceManifest(spec)
+	manifests, err := renderKustomizedProjectManifests(spec, imageTag)
+	if err != nil {
+		return repoBootstrapOutcome{}, err
+	}
 	renderedArtifacts, err := writeRenderedManifestFiles(
 		artifacts,
 		msg.ProjectID,
-		deployment,
-		service,
+		manifests,
 	)
 	if err != nil {
 		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, err
@@ -110,25 +111,30 @@ func runManifestRendererApply(
 
 func writeRenderedManifestFiles(
 	artifacts ArtifactStore,
-	projectID, deployment, service string,
+	projectID string,
+	manifests renderedProjectManifests,
 ) ([]string, error) {
-	a1, err := artifacts.WriteFile(projectID, "deploy/deployment.yaml", []byte(deployment))
-	if err != nil {
-		return nil, err
+	manifestFiles := []struct {
+		path string
+		data string
+	}{
+		{path: "deploy/deployment.yaml", data: manifests.deployment},
+		{path: "deploy/service.yaml", data: manifests.service},
+		{path: "deploy/rendered.yaml", data: manifests.rendered},
+		{path: "repos/manifests/deployment.yaml", data: manifests.deployment},
+		{path: "repos/manifests/service.yaml", data: manifests.service},
+		{path: "repos/manifests/kustomization.yaml", data: manifests.kustomization},
+		{path: "repos/manifests/rendered.yaml", data: manifests.rendered},
 	}
-	a2, err := artifacts.WriteFile(projectID, "deploy/service.yaml", []byte(service))
-	if err != nil {
-		return []string{a1}, err
+	written := make([]string, 0, len(manifestFiles))
+	for _, manifestFile := range manifestFiles {
+		artifactPath, err := artifacts.WriteFile(projectID, manifestFile.path, []byte(manifestFile.data))
+		if err != nil {
+			return written, err
+		}
+		written = append(written, artifactPath)
 	}
-	a3, err := artifacts.WriteFile(projectID, "repos/manifests/deployment.yaml", []byte(deployment))
-	if err != nil {
-		return []string{a1, a2}, err
-	}
-	a4, err := artifacts.WriteFile(projectID, "repos/manifests/service.yaml", []byte(service))
-	if err != nil {
-		return []string{a1, a2, a3}, err
-	}
-	return []string{a1, a2, a3, a4}, nil
+	return written, nil
 }
 
 func updateProjectReadyState(

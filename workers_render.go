@@ -1,9 +1,28 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+
+	"sigs.k8s.io/kustomize/api/krusty"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
+)
+
+type renderedProjectManifests struct {
+	deployment    string
+	service       string
+	kustomization string
+	rendered      string
+}
+
+const (
+	manifestFileDeployment    = "deployment.yaml"
+	manifestFileService       = "service.yaml"
+	manifestFileKustomization = "kustomization.yaml"
 )
 
 func shortID(id string) string {
@@ -126,6 +145,151 @@ spec:
     port: 80
     targetPort: 8080
 `, name, name)
+}
+
+func renderKustomizedProjectManifests(
+	spec ProjectSpec,
+	image string,
+) (renderedProjectManifests, error) {
+	deployment := renderDeploymentManifest(spec, image)
+	service := renderServiceManifest(spec)
+	kustomization := renderKustomizationManifest()
+	renderedManifest, err := runKustomizeBuild(deployment, service, kustomization)
+	if err != nil {
+		return renderedProjectManifests{}, err
+	}
+	renderedDeployment, renderedService, err := splitRenderedManifests(renderedManifest)
+	if err != nil {
+		return renderedProjectManifests{}, err
+	}
+	return renderedProjectManifests{
+		deployment:    renderedDeployment,
+		service:       renderedService,
+		kustomization: kustomization,
+		rendered:      string(renderedManifest),
+	}, nil
+}
+
+func renderKustomizationManifest() string {
+	return `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+`
+}
+
+func runKustomizeBuild(
+	deployment,
+	service,
+	kustomization string,
+) ([]byte, error) {
+	tempDir, err := os.MkdirTemp("", "platform-kustomize-")
+	if err != nil {
+		return nil, fmt.Errorf("create kustomize temp dir: %w", err)
+	}
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+	}()
+
+	manifestFiles := []struct {
+		name string
+		data string
+	}{
+		{name: manifestFileDeployment, data: deployment},
+		{name: manifestFileService, data: service},
+		{name: manifestFileKustomization, data: kustomization},
+	}
+	for _, manifestFile := range manifestFiles {
+		writeErr := os.WriteFile(
+			filepath.Join(tempDir, manifestFile.name),
+			[]byte(manifestFile.data),
+			fileModePrivate,
+		)
+		if writeErr != nil {
+			return nil, fmt.Errorf("write kustomize input %s: %w", manifestFile.name, writeErr)
+		}
+	}
+
+	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
+	result, err := kustomizer.Run(filesys.MakeFsOnDisk(), tempDir)
+	if err != nil {
+		return nil, fmt.Errorf("run kustomize build: %w", err)
+	}
+	renderedManifest, err := result.AsYaml()
+	if err != nil {
+		return nil, fmt.Errorf("encode rendered manifests as yaml: %w", err)
+	}
+	return renderedManifest, nil
+}
+
+func splitRenderedManifests(renderedManifest []byte) (string, string, error) {
+	deployment := ""
+	service := ""
+	for _, manifest := range splitManifestDocs(string(renderedManifest)) {
+		switch manifestKind(manifest) {
+		case "Deployment":
+			if deployment != "" {
+				return "", "", errors.New("rendered manifests contain multiple deployments")
+			}
+			deployment = normalizeManifestOutput(manifest)
+		case "Service":
+			if service != "" {
+				return "", "", errors.New("rendered manifests contain multiple services")
+			}
+			service = normalizeManifestOutput(manifest)
+		}
+	}
+	if deployment == "" {
+		return "", "", errors.New("rendered manifests missing deployment")
+	}
+	if service == "" {
+		return "", "", errors.New("rendered manifests missing service")
+	}
+	return deployment, service, nil
+}
+
+func manifestKind(manifest string) string {
+	for line := range strings.SplitSeq(manifest, "\n") {
+		trimmed := strings.TrimSpace(line)
+		kind, ok := strings.CutPrefix(trimmed, "kind:")
+		if ok {
+			return strings.TrimSpace(kind)
+		}
+	}
+	return ""
+}
+
+func splitManifestDocs(renderedManifest string) []string {
+	lines := strings.Split(renderedManifest, "\n")
+	docs := make([]string, 0)
+	var current strings.Builder
+	appendDoc := func() {
+		doc := normalizeManifestOutput(current.String())
+		if doc == "" {
+			return
+		}
+		docs = append(docs, doc)
+	}
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "---" {
+			appendDoc()
+			current.Reset()
+			continue
+		}
+		current.WriteString(line)
+		current.WriteByte('\n')
+	}
+	appendDoc()
+	return docs
+}
+
+func normalizeManifestOutput(in string) string {
+	trimmed := strings.TrimSpace(in)
+	if trimmed == "" {
+		return ""
+	}
+	return trimmed + "\n"
 }
 
 func safeName(s string) string {
