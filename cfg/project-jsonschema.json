@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://platform.example.com/schemas/app.v2.json",
+  "title": "Platform App Config v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "runtime", "environments"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "platform.example.com/v2",
+      "description": "Config schema version identifier."
+    },
+    "kind": {
+      "type": "string",
+      "const": "App",
+      "description": "Top-level document kind."
+    },
+    "name": {
+      "type": "string",
+      "description": "Logical application name. Used for derived resource names.",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "Platform runtime contract identifier (e.g. python_3.14).",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+([_-][a-z0-9]+)*(\\.[0-9]+(\\.[0-9]+)*)?$"
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Optional list of platform capabilities to enable. Future-proofing field.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-z][a-z0-9_\\-]*[a-z0-9]$"
+      },
+      "uniqueItems": true
+    },
+    "environments": {
+      "type": "object",
+      "description": "Environment-specific overlays. Keys are environment names (dev, staging, prod, etc.).",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/environment" },
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32,
+        "pattern": "^[a-z][a-z0-9_\\-]*[a-z0-9]$"
+      }
+    },
+    "networkPolicies": { "$ref": "#/$defs/networkPolicies" }
+  },
+  "$defs": {
+    "environment": {
+      "type": "object",
+      "description": "Environment configuration. Currently supports vars only; designed to be extensible later.",
+      "additionalProperties": false,
+      "required": ["vars"],
+      "properties": {
+        "vars": { "$ref": "#/$defs/varsMap" }
+      }
+    },
+    "varsMap": {
+      "type": "object",
+      "description": "Map of environment variables. Values are either literal strings or secret URIs.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 4096,
+        "allOf": [
+          {
+            "anyOf": [
+              { "$ref": "#/$defs/secretUri" },
+              { "$ref": "#/$defs/literalString" }
+            ]
+          }
+        ]
+      },
+      "propertyNames": { "$ref": "#/$defs/envVarName" }
+    },
+    "envVarName": {
+      "type": "string",
+      "description": "Environment variable name. Uppercase with digits and underscores.",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Z_][A-Z0-9_]*$"
+    },
+    "secretUri": {
+      "type": "string",
+      "description": "Secret reference URI. Currently only Delinea is supported.",
+      "pattern": "^secret://delinea/[1-9][0-9]*$"
+    },
+    "literalString": {
+      "type": "string",
+      "description": "Literal string value. To force a literal that contains a scheme-like prefix, quote it in YAML."
+    },
+    "networkPolicies": {
+      "type": "object",
+      "description": "Standard network policy presets. Currently supports ingress/egress enums.",
+      "additionalProperties": false,
+      "required": ["ingress", "egress"],
+      "properties": {
+        "ingress": {
+          "type": "string",
+          "description": "Ingress policy preset.",
+          "enum": ["internal", "none"]
+        },
+        "egress": {
+          "type": "string",
+          "description": "Egress policy preset.",
+          "enum": ["internal", "none"]
+        }
+      }
+    }
+  }
+}

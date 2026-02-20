@@ -1,0 +1,142 @@
+<!-- File: web/index.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PaaS Portal (Embedded NATS + Workers + Artifacts)</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>PaaS Portal</h1>
+      <p class="muted">Registration events reconcile projects. Source repo `main` webhooks trigger CI (build, containerize, render manifests).</p>
+    </header>
+
+    <main class="grid">
+      <section class="card">
+        <h2>Create project</h2>
+        <form id="createForm">
+          <label>API Version <input id="createAPIVersion" value="platform.example.com/v2" required /></label>
+          <label>Kind <input id="createKind" value="App" required /></label>
+          <label>Name <input id="createName" required placeholder="my-service" /></label>
+          <label>Runtime <input id="createRuntime" required placeholder="go_1.26" /></label>
+          <label>Capabilities (comma-separated) <input id="createCapabilities" placeholder="http,metrics" /></label>
+          <label>Network ingress
+            <select id="createIngress">
+              <option value="internal">internal</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+          <label>Network egress
+            <select id="createEgress">
+              <option value="internal">internal</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+          <label>Environments JSON
+            <textarea id="createEnvironments" rows="8"></textarea>
+          </label>
+          <button type="submit">Create</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Projects</h2>
+        <div class="toolbar">
+          <input id="projectSearch" placeholder="Search by name or ID (/)" />
+          <select id="phaseFilter">
+            <option value="all">All phases</option>
+            <option value="Ready">Ready</option>
+            <option value="Reconciling">Reconciling</option>
+            <option value="Deleting">Deleting</option>
+            <option value="Error">Error</option>
+          </select>
+          <select id="projectSort">
+            <option value="updated_desc">Recently updated</option>
+            <option value="name_asc">Name A-Z</option>
+            <option value="created_asc">Oldest first</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="refreshBtn">Refresh</button>
+          <div id="projectStats" class="muted"></div>
+        </div>
+        <div id="projects"></div>
+      </section>
+
+      <section class="card">
+        <h2>Selected project</h2>
+        <div id="selected" class="muted">None selected.</div>
+
+        <h3>Update</h3>
+        <form id="updateForm">
+          <label>API Version <input id="updateAPIVersion" required /></label>
+          <label>Kind <input id="updateKind" required /></label>
+          <label>Name <input id="updateName" required /></label>
+          <label>Runtime <input id="updateRuntime" required /></label>
+          <label>Capabilities (comma-separated) <input id="updateCapabilities" /></label>
+          <label>Network ingress
+            <select id="updateIngress">
+              <option value="internal">internal</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+          <label>Network egress
+            <select id="updateEgress">
+              <option value="internal">internal</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+          <label>Environments JSON
+            <textarea id="updateEnvironments" rows="8"></textarea>
+          </label>
+          <button type="submit">Update</button>
+        </form>
+
+        <h3>Trigger CI webhook</h3>
+        <form id="webhookForm">
+          <label>Repo
+            <input id="webhookRepo" value="source" placeholder="source" />
+          </label>
+          <label>Branch
+            <input id="webhookBranch" value="main" placeholder="main" />
+          </label>
+          <label>Ref
+            <input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main" />
+          </label>
+          <label>Commit (optional)
+            <input id="webhookCommit" placeholder="abc123def456" />
+          </label>
+          <button type="submit">Trigger CI</button>
+        </form>
+
+        <h3>Artifacts</h3>
+        <div class="row">
+          <button id="loadArtifactsBtn">Load artifacts</button>
+          <input id="artifactSearch" placeholder="Filter artifacts..." />
+        </div>
+        <div id="artifacts" class="files"></div>
+        <div class="row">
+          <button id="copyPreviewBtn" type="button" disabled>Copy preview</button>
+        </div>
+        <pre id="artifactPreview" class="pre muted">Select a file to preview.</pre>
+
+        <h3>Operation progress</h3>
+        <div id="opProgress"></div>
+        <div id="opTimeline" class="timeline"></div>
+
+        <h3>Last operation</h3>
+        <pre id="lastOp" class="pre"></pre>
+
+        <div class="danger">
+          <button id="deleteBtn">Delete project</button>
+        </div>
+
+        <div id="status" class="status"></div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

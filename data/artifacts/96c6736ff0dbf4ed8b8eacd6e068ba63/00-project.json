@@ -1,0 +1,16 @@
+{
+  "id": "96c6736ff0dbf4ed8b8eacd6e068ba63",
+  "created_at": "2026-02-20T00:14:55.328681Z",
+  "updated_at": "2026-02-20T00:14:55.328681Z",
+  "spec": {
+    "name": "bar",
+    "description": "the bar project"
+  },
+  "status": {
+    "phase": "Reconciling",
+    "updated_at": "2026-02-20T00:14:55.328681Z",
+    "last_op_id": "f1a7338a88ed703f30141364ca8ebb34",
+    "last_op_kind": "create",
+    "message": "provisioning"
+  }
+}

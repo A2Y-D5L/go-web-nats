@@ -1,0 +1,3 @@
+# foo
+
+the foo project

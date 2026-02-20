@@ -1,0 +1,16 @@
+{
+  "id": "7f9bcf8cbe1a5bf09800dae2cb493585",
+  "created_at": "2026-02-20T00:08:45.361754Z",
+  "updated_at": "2026-02-20T00:08:45.361754Z",
+  "spec": {
+    "name": "foo-pro",
+    "description": "foofoofoo"
+  },
+  "status": {
+    "phase": "Reconciling",
+    "updated_at": "2026-02-20T00:08:45.361754Z",
+    "last_op_id": "efd9b2c933e9cd79b46ee7200f427e6b",
+    "last_op_kind": "create",
+    "message": "provisioning"
+  }
+}

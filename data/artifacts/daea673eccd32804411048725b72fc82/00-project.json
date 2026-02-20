@@ -1,0 +1,16 @@
+{
+  "id": "daea673eccd32804411048725b72fc82",
+  "created_at": "2026-02-20T00:14:20.628497Z",
+  "updated_at": "2026-02-20T00:14:20.628497Z",
+  "spec": {
+    "name": "foo",
+    "description": "the foo project"
+  },
+  "status": {
+    "phase": "Reconciling",
+    "updated_at": "2026-02-20T00:14:20.628497Z",
+    "last_op_id": "74683acaa6ca76bd2af8389e82641575",
+    "last_op_kind": "create",
+    "message": "provisioning"
+  }
+}

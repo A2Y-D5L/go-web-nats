@@ -1,0 +1,17 @@
+# example-app.yaml
+apiVersion: platform.example.com/v2
+kind: App
+name: hello
+runtime: go_1.26
+environments:
+  dev:
+    vars:
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+  prod:
+    vars:
+      LOG_LEVEL: warn
+      LOG_FORMAT: json
+networkPolicies:
+  ingress: internal
+  egress: internal
