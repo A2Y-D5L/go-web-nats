@@ -1279,6 +1279,7 @@ async function buildEnvironmentSnapshots() {
 function createEnvironmentCard(snapshot) {
   const card = makeElem("article", "environment-card");
   card.dataset.env = snapshot.env;
+  const promotionEvidence = Array.isArray(snapshot?.promotionEvidence) ? snapshot.promotionEvidence : [];
 
   const head = makeElem("div", "environment-head");
   head.append(
@@ -1300,8 +1301,8 @@ function createEnvironmentCard(snapshot) {
     makeElem("span", "", `Rendered manifest ${snapshot.hasRendered ? "yes" : "no"}`)
   );
 
-  if (snapshot.promotionEvidence.length) {
-    const label = snapshot.promotionEvidence.map((edge) => `${edge.from}→${edge.to}`).join(", ");
+  if (promotionEvidence.length) {
+    const label = promotionEvidence.map((edge) => `${edge.from}→${edge.to}`).join(", ");
     meta.appendChild(makeElem("span", "", `Promotion evidence ${label}`));
   } else {
     meta.appendChild(makeElem("span", "", "Promotion evidence none yet"));
