@@ -3,12 +3,26 @@ const dom = {
     create: document.getElementById("createForm"),
     update: document.getElementById("updateForm"),
     webhook: document.getElementById("webhookForm"),
+    deleteConfirm: document.getElementById("deleteConfirmForm"),
   },
   buttons: {
+    openCreateModal: document.getElementById("openCreateModalBtn"),
+    openUpdateModal: document.getElementById("openUpdateModalBtn"),
+    openDeleteModal: document.getElementById("openDeleteModalBtn"),
     refresh: document.getElementById("refreshBtn"),
-    deleteProject: document.getElementById("deleteBtn"),
     loadArtifacts: document.getElementById("loadArtifactsBtn"),
     copyPreview: document.getElementById("copyPreviewBtn"),
+    createAddEnv: document.getElementById("createAddEnvBtn"),
+    createCleanKeys: document.getElementById("createCleanKeysBtn"),
+    updateAddEnv: document.getElementById("updateAddEnvBtn"),
+    updateCleanKeys: document.getElementById("updateCleanKeysBtn"),
+    createModalClose: document.getElementById("createModalCloseBtn"),
+    createModalCancel: document.getElementById("createModalCancelBtn"),
+    updateModalClose: document.getElementById("updateModalCloseBtn"),
+    updateModalCancel: document.getElementById("updateModalCancelBtn"),
+    deleteModalClose: document.getElementById("deleteModalCloseBtn"),
+    deleteModalCancel: document.getElementById("deleteModalCancelBtn"),
+    deleteConfirm: document.getElementById("deleteConfirmBtn"),
   },
   inputs: {
     createAPIVersion: document.getElementById("createAPIVersion"),
@@ -18,7 +32,6 @@ const dom = {
     createCapabilities: document.getElementById("createCapabilities"),
     createIngress: document.getElementById("createIngress"),
     createEgress: document.getElementById("createEgress"),
-    createEnvironments: document.getElementById("createEnvironments"),
 
     updateAPIVersion: document.getElementById("updateAPIVersion"),
     updateKind: document.getElementById("updateKind"),
@@ -27,7 +40,6 @@ const dom = {
     updateCapabilities: document.getElementById("updateCapabilities"),
     updateIngress: document.getElementById("updateIngress"),
     updateEgress: document.getElementById("updateEgress"),
-    updateEnvironments: document.getElementById("updateEnvironments"),
 
     webhookRepo: document.getElementById("webhookRepo"),
     webhookBranch: document.getElementById("webhookBranch"),
@@ -38,6 +50,7 @@ const dom = {
     phaseFilter: document.getElementById("phaseFilter"),
     projectSort: document.getElementById("projectSort"),
     artifactSearch: document.getElementById("artifactSearch"),
+    deleteConfirm: document.getElementById("deleteConfirmInput"),
   },
   text: {
     healthLabel: document.getElementById("healthLabel"),
@@ -56,6 +69,8 @@ const dom = {
     artifactPreviewMeta: document.getElementById("artifactPreviewMeta"),
     artifactPreview: document.getElementById("artifactPreview"),
     opRaw: document.getElementById("lastOp"),
+    deleteModalTarget: document.getElementById("deleteModalTarget"),
+    deleteConfirmHint: document.getElementById("deleteConfirmHint"),
   },
   containers: {
     projects: document.getElementById("projects"),
@@ -64,9 +79,23 @@ const dom = {
     opTimeline: document.getElementById("opTimeline"),
     opInsights: document.getElementById("opInsights"),
   },
+  runtime: {
+    timelineButton: document.getElementById("runtimeViewTimeline"),
+    artifactsButton: document.getElementById("runtimeViewArtifacts"),
+    timelinePanel: document.getElementById("runtimeTimelinePanel"),
+    artifactsPanel: document.getElementById("runtimeArtifactsPanel"),
+  },
+  envEditors: {
+    create: document.getElementById("createEnvList"),
+    update: document.getElementById("updateEnvList"),
+  },
+  modals: {
+    create: document.getElementById("createModal"),
+    update: document.getElementById("updateModal"),
+    delete: document.getElementById("deleteModal"),
+  },
 };
 
-dom.buttons.update = dom.forms.update.querySelector("button[type='submit']");
 dom.buttons.webhook = dom.forms.webhook.querySelector("button[type='submit']");
 
 const fullWorkerOrder = ["registrar", "repoBootstrap", "imageBuilder", "manifestRenderer"];
@@ -76,6 +105,13 @@ const buildKitArtifactSet = new Set([
   "build/buildkit-metadata.json",
   "build/buildkit.log",
 ]);
+const runtimeProfiles = [
+  { value: "go_1.26", label: "Go version 1.26 (recommended)" },
+  { value: "go_1.25", label: "Go version 1.25" },
+  { value: "go_1.24", label: "Go version 1.24" },
+  { value: "go_1.23", label: "Go version 1.23" },
+];
+const runtimeLabelByValue = new Map(runtimeProfiles.map((profile) => [profile.value, profile.label]));
 
 const defaultEnvironments = {
   dev: {
@@ -120,6 +156,10 @@ const state = {
     timer: null,
     token: 0,
     failureCount: 0,
+  },
+  ui: {
+    runtimeView: "timeline",
+    modal: "none",
   },
 };
 
@@ -216,19 +256,234 @@ function parseCapabilities(raw) {
     .filter((part, index, list) => list.indexOf(part) === index);
 }
 
-function parseEnvironments(raw, label) {
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (_error) {
-    throw new Error(`${label} must be valid JSON`);
+function formatRuntimeLiteral(runtimeLiteral) {
+  const literal = String(runtimeLiteral || "").trim();
+  if (!literal) return "Not set";
+
+  const mapped = runtimeLabelByValue.get(literal);
+  if (mapped) return mapped;
+
+  const normalized = literal.replace(/[_-]+/g, " ").trim();
+  if (!normalized) return "Custom runtime profile";
+  return `Custom runtime profile (${normalized})`;
+}
+
+function populateRuntimeSelect(selectEl) {
+  selectEl.replaceChildren();
+  for (const profile of runtimeProfiles) {
+    const option = document.createElement("option");
+    option.value = profile.value;
+    option.textContent = profile.label;
+    selectEl.appendChild(option);
+  }
+}
+
+function ensureRuntimeOption(selectEl, runtimeLiteral) {
+  const literal = String(runtimeLiteral || "").trim();
+  if (!literal) return;
+
+  const existing = Array.from(selectEl.options).find((option) => option.value === literal);
+  if (existing) {
+    selectEl.value = literal;
+    return;
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${label} must be an object`);
+  const option = document.createElement("option");
+  option.value = literal;
+  option.textContent = formatRuntimeLiteral(literal);
+  option.dataset.customRuntime = "true";
+  selectEl.appendChild(option);
+  selectEl.value = literal;
+}
+
+function initRuntimePickers() {
+  populateRuntimeSelect(dom.inputs.createRuntime);
+  populateRuntimeSelect(dom.inputs.updateRuntime);
+}
+
+function sanitizeVarKey(raw) {
+  const source = String(raw || "").trim().toUpperCase();
+  const replaced = source.replace(/[^A-Z0-9_]+/g, "_").replace(/_+/g, "_");
+  if (!replaced) return "";
+  if (/^[A-Z_]/.test(replaced)) return replaced;
+  return `_${replaced}`;
+}
+
+function createVarRow(prefix, key = "", value = "") {
+  const row = makeElem("div", "env-var-row");
+
+  const keyLabel = makeElem("label", "field");
+  const keyText = makeElem("span", "", "Var key");
+  const keyInput = makeElem("input");
+  keyInput.className = "env-var-key";
+  keyInput.placeholder = "LOG_LEVEL";
+  keyInput.value = key;
+  keyInput.addEventListener("blur", () => {
+    keyInput.value = sanitizeVarKey(keyInput.value);
+  });
+  keyLabel.append(keyText, keyInput);
+
+  const valueLabel = makeElem("label", "field");
+  const valueText = makeElem("span", "", "Value");
+  const valueInput = makeElem("input");
+  valueInput.className = "env-var-value";
+  valueInput.placeholder = "info";
+  valueInput.value = value;
+  valueLabel.append(valueText, valueInput);
+
+  const cleanButton = makeElem("button", "btn btn-subtle", "Clean key");
+  cleanButton.type = "button";
+  cleanButton.addEventListener("click", () => {
+    keyInput.value = sanitizeVarKey(keyInput.value);
+  });
+
+  const removeButton = makeElem("button", "btn btn-subtle", "Remove");
+  removeButton.type = "button";
+  removeButton.addEventListener("click", () => {
+    row.remove();
+    syncEnvEditorEmptyState(prefix);
+  });
+
+  row.append(keyLabel, valueLabel, cleanButton, removeButton);
+  return row;
+}
+
+function createEnvironmentCard(prefix, name = "", vars = {}) {
+  const card = makeElem("article", "env-card");
+
+  const head = makeElem("div", "env-card-head");
+  const nameLabel = makeElem("label", "field");
+  const nameText = makeElem("span", "", "Environment name");
+  const nameInput = makeElem("input");
+  nameInput.className = "env-name";
+  nameInput.placeholder = "dev";
+  nameInput.value = name;
+  nameLabel.append(nameText, nameInput);
+
+  const removeEnvButton = makeElem("button", "btn btn-subtle", "Remove environment");
+  removeEnvButton.type = "button";
+  removeEnvButton.addEventListener("click", () => {
+    card.remove();
+    syncEnvEditorEmptyState(prefix);
+  });
+  head.append(nameLabel, removeEnvButton);
+
+  const varsList = makeElem("div", "env-vars-list");
+  const entries = Object.entries(vars || {});
+  for (const [key, value] of entries) {
+    varsList.appendChild(createVarRow(prefix, key, String(value)));
   }
 
-  return parsed;
+  const actions = makeElem("div", "env-card-actions");
+  const addVarButton = makeElem("button", "btn btn-subtle", "Add variable");
+  addVarButton.type = "button";
+  addVarButton.addEventListener("click", () => {
+    varsList.appendChild(createVarRow(prefix));
+    syncEnvEditorEmptyState(prefix);
+  });
+  actions.appendChild(addVarButton);
+
+  card.append(head, varsList, actions);
+  return card;
+}
+
+function getEnvironmentCards(prefix) {
+  const editor = dom.envEditors[prefix];
+  return Array.from(editor.querySelectorAll(".env-card"));
+}
+
+function syncEnvEditorEmptyState(prefix) {
+  const editor = dom.envEditors[prefix];
+  const cards = getEnvironmentCards(prefix);
+  const empty = editor.querySelector(".env-empty");
+  if (!cards.length) {
+    if (!empty) {
+      editor.appendChild(
+        makeElem("div", "env-empty", "No environments yet. Add one to define where your app runs.")
+      );
+    }
+    return;
+  }
+  if (empty) {
+    empty.remove();
+  }
+}
+
+function addEnvironmentCard(prefix, name = "", vars = {}) {
+  const editor = dom.envEditors[prefix];
+  const empty = editor.querySelector(".env-empty");
+  if (empty) {
+    empty.remove();
+  }
+  editor.appendChild(createEnvironmentCard(prefix, name, vars));
+}
+
+function setEnvironmentsInEditor(prefix, environments) {
+  const editor = dom.envEditors[prefix];
+  editor.replaceChildren();
+  const entries = Object.entries(environments || {});
+  for (const [name, cfg] of entries) {
+    addEnvironmentCard(prefix, name, cfg?.vars || {});
+  }
+  syncEnvEditorEmptyState(prefix);
+}
+
+function cleanVarKeysInEditor(prefix) {
+  const editor = dom.envEditors[prefix];
+  const keys = Array.from(editor.querySelectorAll(".env-var-key"));
+  let changed = 0;
+  for (const input of keys) {
+    const cleaned = sanitizeVarKey(input.value);
+    if (input.value !== cleaned) {
+      input.value = cleaned;
+      changed += 1;
+    }
+  }
+  return changed;
+}
+
+function collectEnvironments(prefix, label) {
+  const cards = getEnvironmentCards(prefix);
+  if (!cards.length) {
+    throw new Error(`${label} requires at least one environment`);
+  }
+
+  const environments = {};
+  for (const card of cards) {
+    const nameInput = card.querySelector(".env-name");
+    const envName = String(nameInput?.value || "").trim();
+    if (!envName) {
+      throw new Error(`${label} has an environment without a name`);
+    }
+    if (environments[envName]) {
+      throw new Error(`${label} contains duplicate environment name "${envName}"`);
+    }
+
+    const vars = {};
+    const keyInputs = card.querySelectorAll(".env-var-key");
+    const valueInputs = card.querySelectorAll(".env-var-value");
+
+    for (let index = 0; index < keyInputs.length; index += 1) {
+      const rawKey = keyInputs[index].value;
+      const cleanedKey = sanitizeVarKey(rawKey);
+      keyInputs[index].value = cleanedKey;
+
+      const value = String(valueInputs[index]?.value || "");
+      if (!cleanedKey && value === "") {
+        continue;
+      }
+      if (!cleanedKey) {
+        throw new Error(`${label} has a variable with empty key`);
+      }
+      if (!/^[A-Z_][A-Z0-9_]*$/.test(cleanedKey)) {
+        throw new Error(`${label} has invalid variable key "${cleanedKey}"`);
+      }
+      vars[cleanedKey] = value;
+    }
+
+    environments[envName] = { vars };
+  }
+  return environments;
 }
 
 function workerOrderForKind(kind) {
@@ -242,12 +497,12 @@ function getSelectedProject() {
 
 function buildCreateSpec() {
   return {
-    apiVersion: dom.inputs.createAPIVersion.value.trim(),
-    kind: dom.inputs.createKind.value.trim(),
+    apiVersion: "platform.example.com/v2",
+    kind: "App",
     name: dom.inputs.createName.value.trim(),
     runtime: dom.inputs.createRuntime.value.trim(),
     capabilities: parseCapabilities(dom.inputs.createCapabilities.value),
-    environments: parseEnvironments(dom.inputs.createEnvironments.value, "Create environments"),
+    environments: collectEnvironments("create", "Create environments"),
     networkPolicies: {
       ingress: dom.inputs.createIngress.value,
       egress: dom.inputs.createEgress.value,
@@ -257,12 +512,12 @@ function buildCreateSpec() {
 
 function buildUpdateSpec() {
   return {
-    apiVersion: dom.inputs.updateAPIVersion.value.trim(),
-    kind: dom.inputs.updateKind.value.trim(),
+    apiVersion: "platform.example.com/v2",
+    kind: "App",
     name: dom.inputs.updateName.value.trim(),
     runtime: dom.inputs.updateRuntime.value.trim(),
     capabilities: parseCapabilities(dom.inputs.updateCapabilities.value),
-    environments: parseEnvironments(dom.inputs.updateEnvironments.value, "Update environments"),
+    environments: collectEnvironments("update", "Update environments"),
     networkPolicies: {
       ingress: dom.inputs.updateIngress.value,
       egress: dom.inputs.updateEgress.value,
@@ -284,22 +539,22 @@ function setCreateDefaults() {
   dom.inputs.createAPIVersion.value = "platform.example.com/v2";
   dom.inputs.createKind.value = "App";
   dom.inputs.createName.value = "";
-  dom.inputs.createRuntime.value = "go_1.26";
+  ensureRuntimeOption(dom.inputs.createRuntime, "go_1.26");
   dom.inputs.createCapabilities.value = "";
   dom.inputs.createIngress.value = "internal";
   dom.inputs.createEgress.value = "internal";
-  dom.inputs.createEnvironments.value = pretty(defaultEnvironments);
+  setEnvironmentsInEditor("create", defaultEnvironments);
 }
 
 function setUpdateDefaults() {
   dom.inputs.updateAPIVersion.value = "platform.example.com/v2";
   dom.inputs.updateKind.value = "App";
   dom.inputs.updateName.value = "";
-  dom.inputs.updateRuntime.value = "";
+  ensureRuntimeOption(dom.inputs.updateRuntime, "go_1.26");
   dom.inputs.updateCapabilities.value = "";
   dom.inputs.updateIngress.value = "internal";
   dom.inputs.updateEgress.value = "internal";
-  dom.inputs.updateEnvironments.value = pretty(defaultEnvironments);
+  setEnvironmentsInEditor("update", defaultEnvironments);
 }
 
 function syncUpdateForm(project) {
@@ -307,11 +562,11 @@ function syncUpdateForm(project) {
   dom.inputs.updateAPIVersion.value = spec.apiVersion || "platform.example.com/v2";
   dom.inputs.updateKind.value = spec.kind || "App";
   dom.inputs.updateName.value = spec.name || "";
-  dom.inputs.updateRuntime.value = spec.runtime || "";
+  ensureRuntimeOption(dom.inputs.updateRuntime, spec.runtime || "go_1.26");
   dom.inputs.updateCapabilities.value = Array.isArray(spec.capabilities) ? spec.capabilities.join(",") : "";
   dom.inputs.updateIngress.value = spec.networkPolicies?.ingress || "internal";
   dom.inputs.updateEgress.value = spec.networkPolicies?.egress || "internal";
-  dom.inputs.updateEnvironments.value = pretty(spec.environments || defaultEnvironments);
+  setEnvironmentsInEditor("update", spec.environments || defaultEnvironments);
 }
 
 function projectMatchesSearch(project, term) {
@@ -320,6 +575,7 @@ function projectMatchesSearch(project, term) {
     project.spec?.name || "",
     project.id || "",
     project.spec?.runtime || "",
+    formatRuntimeLiteral(project.spec?.runtime || ""),
     project.status?.phase || "",
   ]
     .join(" ")
@@ -382,6 +638,7 @@ function stopOperationMonitor({ clearPayload = false } = {}) {
 
 function clearSelection() {
   state.selectedProjectID = "";
+  closeAllModals();
   setUpdateDefaults();
   stopOperationMonitor({ clearPayload: true });
   resetArtifacts();
@@ -431,8 +688,8 @@ function renderProjectsList() {
   dom.containers.projects.replaceChildren();
   if (!visible.length) {
     const msg = state.projects.length
-      ? "No projects match the active search or filters."
-      : "No projects yet. Create one with a registration event.";
+      ? "No apps match these filters yet. Try clearing search or phase."
+      : "You do not have any apps yet. Create your first app to get started.";
     renderEmptyState(dom.containers.projects, msg);
     return;
   }
@@ -455,7 +712,7 @@ function renderProjectsList() {
     const runtimeMeta = makeElem(
       "p",
       "project-meta emphasis",
-      `runtime ${project.spec?.runtime || "n/a"} - updated ${elapsedSince(project.updated_at)}`
+      `${formatRuntimeLiteral(project.spec?.runtime)} - updated ${elapsedSince(project.updated_at)}`
     );
     const idMeta = makeElem("p", "project-meta", `id ${project.id}`);
     const msgMeta = makeElem("p", "project-meta", project.status?.message || "no status message");
@@ -482,14 +739,14 @@ function renderSelectionPanel() {
   dom.text.selected.replaceChildren();
 
   const hasSelection = Boolean(project);
-  dom.buttons.deleteProject.disabled = !hasSelection;
+  dom.buttons.openDeleteModal.disabled = !hasSelection;
   dom.buttons.loadArtifacts.disabled = !hasSelection;
-  dom.buttons.update.disabled = !hasSelection;
+  dom.buttons.openUpdateModal.disabled = !hasSelection;
   dom.buttons.webhook.disabled = !hasSelection;
 
   if (!project) {
     dom.text.selected.classList.add("muted");
-    dom.text.selected.textContent = "Select a project to inspect details and actions.";
+    dom.text.selected.textContent = "Select an app to view its configuration and release journey.";
     return;
   }
 
@@ -504,7 +761,7 @@ function renderSelectionPanel() {
   const row2 = makeElem("div", "project-summary-row");
   row2.append(
     makeElem("span", "project-meta emphasis", `ID ${project.id}`),
-    makeElem("span", "project-meta emphasis", `runtime ${project.spec?.runtime || "n/a"}`)
+    makeElem("span", "project-meta emphasis", formatRuntimeLiteral(project.spec?.runtime))
   );
 
   const row3 = makeElem("div", "project-summary-row");
@@ -516,6 +773,10 @@ function renderSelectionPanel() {
   const row4 = makeElem("p", "project-meta", project.status?.message || "");
 
   dom.text.selected.append(row1, row2, row3, row4);
+
+  if (state.ui.modal === "delete") {
+    syncDeleteConfirmationState();
+  }
 }
 
 function stepForWorker(op, workerName) {
@@ -544,7 +805,7 @@ function renderOperationProgress(op) {
   if (!op) {
     renderEmptyState(
       dom.containers.opProgress,
-      "No operation selected. Run create, update, delete, or CI webhook to view worker progress."
+      "No active operation yet. Create or update an app to see step-by-step progress."
     );
     return;
   }
@@ -592,7 +853,7 @@ function renderOperationTimeline(op) {
   dom.containers.opTimeline.replaceChildren();
 
   if (!op) {
-    renderEmptyState(dom.containers.opTimeline, "Timeline appears here after selecting a project with an operation.");
+    renderEmptyState(dom.containers.opTimeline, "Pipeline timeline appears here once an app operation starts.");
     return;
   }
 
@@ -687,6 +948,79 @@ function renderOperationInsights(op) {
   }
 }
 
+function setRuntimeView(view) {
+  if (view !== "timeline" && view !== "artifacts") return;
+  state.ui.runtimeView = view;
+  renderRuntimePanels();
+}
+
+function renderRuntimePanels() {
+  const timelineActive = state.ui.runtimeView === "timeline";
+  dom.runtime.timelinePanel.classList.toggle("is-hidden", !timelineActive);
+  dom.runtime.artifactsPanel.classList.toggle("is-hidden", timelineActive);
+  dom.runtime.timelineButton.classList.toggle("is-active", timelineActive);
+  dom.runtime.artifactsButton.classList.toggle("is-active", !timelineActive);
+  dom.runtime.timelineButton.setAttribute("aria-selected", String(timelineActive));
+  dom.runtime.artifactsButton.setAttribute("aria-selected", String(!timelineActive));
+}
+
+function syncDeleteConfirmationState() {
+  const project = getSelectedProject();
+  const expected = (project?.spec?.name || project?.id || "").trim();
+  const typed = String(dom.inputs.deleteConfirm.value || "").trim();
+  const valid = Boolean(expected) && typed === expected;
+  dom.buttons.deleteConfirm.disabled = !valid;
+  dom.text.deleteConfirmHint.textContent = expected
+    ? `Type "${expected}" exactly to enable deletion.`
+    : "Select an app first.";
+}
+
+function openModal(modalName) {
+  if (!dom.modals[modalName]) return;
+  const project = getSelectedProject();
+  if ((modalName === "update" || modalName === "delete") && !project) {
+    setStatus("Select an app first", "warning");
+    return;
+  }
+
+  if (modalName === "create") {
+    setCreateDefaults();
+  } else if (modalName === "update") {
+    syncUpdateForm(project);
+  } else if (modalName === "delete") {
+    const appName = project?.spec?.name || project?.id || "";
+    dom.text.deleteModalTarget.textContent = `Target app: ${appName}`;
+    dom.inputs.deleteConfirm.value = "";
+    syncDeleteConfirmationState();
+  }
+
+  for (const [key, modalEl] of Object.entries(dom.modals)) {
+    modalEl.classList.toggle("is-hidden", key !== modalName);
+  }
+  state.ui.modal = modalName;
+
+  const modalEl = dom.modals[modalName];
+  const firstInput = modalEl.querySelector("input:not([type='hidden']), select, textarea");
+  if (firstInput) {
+    firstInput.focus();
+  }
+}
+
+function closeModal(modalName) {
+  if (!dom.modals[modalName]) return;
+  dom.modals[modalName].classList.add("is-hidden");
+  if (state.ui.modal === modalName) {
+    state.ui.modal = "none";
+  }
+}
+
+function closeAllModals() {
+  for (const modalEl of Object.values(dom.modals)) {
+    modalEl.classList.add("is-hidden");
+  }
+  state.ui.modal = "none";
+}
+
 function renderOperationPanel() {
   const op = state.operation.payload;
   renderOperationProgress(op);
@@ -739,11 +1073,11 @@ function renderArtifactsPanel() {
   const filtered = filteredArtifactFiles();
 
   if (!project) {
-    dom.text.artifactStats.textContent = "Select a project first.";
+    dom.text.artifactStats.textContent = "Select an app first.";
     dom.containers.artifacts.replaceChildren();
-    renderEmptyState(dom.containers.artifacts, "No project selected.");
+    renderEmptyState(dom.containers.artifacts, "Pick an app to explore its generated artifacts.");
     dom.text.artifactPreview.classList.add("muted");
-    dom.text.artifactPreview.textContent = "Select an artifact to preview.";
+    dom.text.artifactPreview.textContent = "Select an artifact to open a preview.";
     dom.text.artifactPreviewMeta.textContent = "Preview unavailable";
     dom.buttons.copyPreview.disabled = true;
     dom.text.buildkitSignal.className = "buildkit-signal muted";
@@ -752,7 +1086,7 @@ function renderArtifactsPanel() {
   }
 
   if (!state.artifacts.loaded) {
-    dom.text.artifactStats.textContent = "Artifacts not loaded";
+    dom.text.artifactStats.textContent = "Artifacts are ready to load";
   } else {
     dom.text.artifactStats.textContent = `${filtered.length} visible of ${state.artifacts.files.length}`;
   }
@@ -761,11 +1095,11 @@ function renderArtifactsPanel() {
   dom.containers.artifacts.replaceChildren();
 
   if (!state.artifacts.loaded) {
-    renderEmptyState(dom.containers.artifacts, "Click load to fetch project artifact inventory.");
+    renderEmptyState(dom.containers.artifacts, "Click Load to fetch this app's artifact inventory.");
   } else if (!filtered.length) {
     const message = state.artifacts.files.length
-      ? "No artifacts match this filter."
-      : "No artifacts found for this project.";
+      ? "No artifacts match this filter yet."
+      : "No artifacts are available for this app yet.";
     renderEmptyState(dom.containers.artifacts, message);
   } else {
     for (const path of filtered) {
@@ -798,7 +1132,7 @@ function renderArtifactsPanel() {
   }
 
   dom.text.artifactPreviewMeta.textContent = state.artifacts.previewMeta;
-  dom.text.artifactPreview.textContent = state.artifacts.previewText || "Select an artifact to preview.";
+  dom.text.artifactPreview.textContent = state.artifacts.previewText || "Select an artifact to open a preview.";
   dom.text.artifactPreview.classList.toggle("muted", !state.artifacts.previewText || state.artifacts.previewIsBinary);
   dom.buttons.copyPreview.disabled = !state.artifacts.previewText || state.artifacts.previewIsBinary;
 }
@@ -848,6 +1182,7 @@ function renderAll() {
   renderStatus();
   renderProjectsList();
   renderSelectionPanel();
+  renderRuntimePanels();
   renderOperationPanel();
   renderArtifactsPanel();
   renderSystemStrip();
@@ -975,7 +1310,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
 async function loadArtifacts({ silent = false } = {}) {
   const project = getSelectedProject();
   if (!project) {
-    throw new Error("Select a project first");
+    throw new Error("Select an app first");
   }
 
   const response = await requestAPI("GET", `/api/projects/${encodeURIComponent(project.id)}/artifacts`);
@@ -1017,7 +1352,7 @@ function isProbablyText(bytes) {
 async function previewArtifact(path) {
   const project = getSelectedProject();
   if (!project) {
-    throw new Error("Select a project first");
+    throw new Error("Select an app first");
   }
 
   state.artifacts.selectedPath = path;
@@ -1067,6 +1402,7 @@ async function previewArtifact(path) {
 
 async function handleCreateSubmit(event) {
   event.preventDefault();
+  setRuntimeView("timeline");
   setStatus("Creating project via registration API...", "info");
 
   try {
@@ -1086,6 +1422,7 @@ async function handleCreateSubmit(event) {
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
+    closeModal("create");
     setStatus("Project created", "success");
   } catch (error) {
     setStatus(error.message, statusToneFromError(error));
@@ -1094,9 +1431,10 @@ async function handleCreateSubmit(event) {
 
 async function handleUpdateSubmit(event) {
   event.preventDefault();
+  setRuntimeView("timeline");
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first", "warning");
+    setStatus("Select an app first", "warning");
     return;
   }
 
@@ -1120,6 +1458,7 @@ async function handleUpdateSubmit(event) {
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
+    closeModal("update");
     setStatus("Project updated", "success");
   } catch (error) {
     setStatus(error.message, statusToneFromError(error));
@@ -1128,9 +1467,10 @@ async function handleUpdateSubmit(event) {
 
 async function handleWebhookSubmit(event) {
   event.preventDefault();
+  setRuntimeView("timeline");
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first", "warning");
+    setStatus("Select an app first", "warning");
     return;
   }
 
@@ -1156,17 +1496,21 @@ async function handleWebhookSubmit(event) {
   }
 }
 
-async function handleDeleteClick() {
+async function handleDeleteConfirmSubmit(event) {
+  event.preventDefault();
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first", "warning");
+    setStatus("Select an app first", "warning");
     return;
   }
 
-  const ok = window.confirm(
-    `Delete project "${project.spec?.name || project.id}"?\nThis cleans up local artifacts and repository state.`
-  );
-  if (!ok) return;
+  const expected = (project.spec?.name || project.id || "").trim();
+  const typed = String(dom.inputs.deleteConfirm.value || "").trim();
+  if (!expected || typed !== expected) {
+    setStatus("Deletion confirmation does not match the app name", "warning");
+    syncDeleteConfirmationState();
+    return;
+  }
 
   setStatus("Submitting delete registration event...", "warning");
 
@@ -1181,6 +1525,7 @@ async function handleDeleteClick() {
       renderOperationPanel();
     }
 
+    closeModal("delete");
     clearSelection();
     await refreshProjects({ silent: true, preserveSelection: false });
     setStatus("Project deleted", "success");
@@ -1192,10 +1537,11 @@ async function handleDeleteClick() {
 async function handleLoadArtifactsClick() {
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first", "warning");
+    setStatus("Select an app first", "warning");
     return;
   }
 
+  setRuntimeView("artifacts");
   setStatus(`Loading artifacts for ${project.spec?.name || project.id}...`, "info");
   try {
     await loadArtifacts({ silent: false });
@@ -1215,6 +1561,18 @@ async function handleCopyPreviewClick() {
 }
 
 function bindEvents() {
+  dom.buttons.openCreateModal.addEventListener("click", () => {
+    openModal("create");
+  });
+
+  dom.buttons.openUpdateModal.addEventListener("click", () => {
+    openModal("update");
+  });
+
+  dom.buttons.openDeleteModal.addEventListener("click", () => {
+    openModal("delete");
+  });
+
   dom.buttons.refresh.addEventListener("click", async () => {
     setStatus("Refreshing projects...", "info");
     try {
@@ -1236,8 +1594,8 @@ function bindEvents() {
     void handleWebhookSubmit(event);
   });
 
-  dom.buttons.deleteProject.addEventListener("click", () => {
-    void handleDeleteClick();
+  dom.forms.deleteConfirm.addEventListener("submit", (event) => {
+    void handleDeleteConfirmSubmit(event);
   });
 
   dom.buttons.loadArtifacts.addEventListener("click", () => {
@@ -1246,6 +1604,62 @@ function bindEvents() {
 
   dom.buttons.copyPreview.addEventListener("click", () => {
     void handleCopyPreviewClick();
+  });
+
+  dom.buttons.createModalClose.addEventListener("click", () => {
+    closeModal("create");
+  });
+
+  dom.buttons.createModalCancel.addEventListener("click", () => {
+    closeModal("create");
+  });
+
+  dom.buttons.updateModalClose.addEventListener("click", () => {
+    closeModal("update");
+  });
+
+  dom.buttons.updateModalCancel.addEventListener("click", () => {
+    closeModal("update");
+  });
+
+  dom.buttons.deleteModalClose.addEventListener("click", () => {
+    closeModal("delete");
+  });
+
+  dom.buttons.deleteModalCancel.addEventListener("click", () => {
+    closeModal("delete");
+  });
+
+  dom.inputs.deleteConfirm.addEventListener("input", () => {
+    syncDeleteConfirmationState();
+  });
+
+  dom.buttons.createAddEnv.addEventListener("click", () => {
+    addEnvironmentCard("create");
+    syncEnvEditorEmptyState("create");
+  });
+
+  dom.buttons.updateAddEnv.addEventListener("click", () => {
+    addEnvironmentCard("update");
+    syncEnvEditorEmptyState("update");
+  });
+
+  dom.buttons.createCleanKeys.addEventListener("click", () => {
+    const changed = cleanVarKeysInEditor("create");
+    setStatus(`Create form keys cleaned: ${changed}`, "success");
+  });
+
+  dom.buttons.updateCleanKeys.addEventListener("click", () => {
+    const changed = cleanVarKeysInEditor("update");
+    setStatus(`Update form keys cleaned: ${changed}`, "success");
+  });
+
+  dom.runtime.timelineButton.addEventListener("click", () => {
+    setRuntimeView("timeline");
+  });
+
+  dom.runtime.artifactsButton.addEventListener("click", () => {
+    setRuntimeView("artifacts");
   });
 
   dom.inputs.projectSearch.addEventListener("input", () => {
@@ -1268,11 +1682,27 @@ function bindEvents() {
     renderArtifactsPanel();
   });
 
+  document.querySelectorAll("[data-modal-close]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const modalName = btn.getAttribute("data-modal-close");
+      if (modalName) {
+        closeModal(modalName);
+      }
+    });
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
 
     const tagName = String(event.target?.tagName || "").toLowerCase();
     const typing = tagName === "input" || tagName === "textarea" || event.target?.isContentEditable;
+
+    const key = event.key.toLowerCase();
+    if (key === "escape" && state.ui.modal !== "none") {
+      event.preventDefault();
+      closeAllModals();
+      return;
+    }
 
     if (!typing && event.key === "/") {
       event.preventDefault();
@@ -1283,7 +1713,6 @@ function bindEvents() {
 
     if (typing) return;
 
-    const key = event.key.toLowerCase();
     if (key === "r") {
       event.preventDefault();
       dom.buttons.refresh.click();
@@ -1291,12 +1720,14 @@ function bindEvents() {
 
     if (key === "a") {
       event.preventDefault();
+      setRuntimeView("artifacts");
       dom.buttons.loadArtifacts.click();
     }
   });
 }
 
 async function init() {
+  initRuntimePickers();
   setCreateDefaults();
   setUpdateDefaults();
   syncUpdateForm(null);

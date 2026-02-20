@@ -3,61 +3,58 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Platform Control Plane</title>
+    <title>Launch Studio</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="app-shell">
-      <header class="hero" aria-label="Platform overview">
-        <p class="hero-eyebrow">Local-first platform demo</p>
-        <h1>Platform Control Plane</h1>
-        <p class="hero-subtitle">
-          Registration events reconcile projects, and source webhooks trigger CI from
-          <code>imageBuilder</code> into <code>manifestRenderer</code>.
-        </p>
-        <div class="hero-chips" role="list" aria-label="Core API pathways">
-          <span class="chip" role="listitem">POST /api/events/registration</span>
-          <span class="chip" role="listitem">POST /api/webhooks/source</span>
-          <span class="chip" role="listitem">Worker chain: registrar -> repoBootstrap -> imageBuilder -> manifestRenderer</span>
+      <header class="catalog-hero" aria-label="App catalog">
+        <div>
+          <p class="hero-eyebrow">Launch Studio</p>
+          <h1>Your Apps</h1>
+          <p class="hero-subtitle">Manage application lifecycle with clean create, update, and delete flows, then inspect pipeline progress and artifacts per app.</p>
+        </div>
+        <div class="catalog-actions">
+          <button id="openCreateModalBtn" type="button" class="btn btn-primary">Create app</button>
+          <button id="refreshBtn" type="button" class="btn btn-subtle">Refresh</button>
         </div>
       </header>
 
       <section class="system-strip" aria-label="System status">
         <article class="metric-card">
-          <p class="metric-label">Platform Health</p>
+          <p class="metric-label">Platform health</p>
           <p id="healthLabel" class="metric-value">Starting</p>
           <p id="healthMeta" class="metric-meta">Fetching projects</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Projects</p>
+          <p class="metric-label">Your portfolio</p>
           <p id="systemProjectCount" class="metric-value">0</p>
           <p id="systemReadyCount" class="metric-meta">0 ready</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Active Operation</p>
+          <p class="metric-label">Latest operation</p>
           <p id="systemActiveOp" class="metric-value">None</p>
           <p id="systemActiveOpMeta" class="metric-meta">No operation selected</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Builder Mode</p>
+          <p class="metric-label">Build mode</p>
           <p id="systemBuilderMode" class="metric-value">buildkit</p>
-          <p id="systemBuilderMeta" class="metric-meta">Metadata artifacts not loaded</p>
+          <p id="systemBuilderMeta" class="metric-meta">Metadata not loaded</p>
         </article>
       </section>
 
       <div id="appStatus" class="status-banner" role="status" aria-live="polite"></div>
 
-      <main class="workspace">
+      <main class="workspace" id="projectExperience">
         <section class="panel panel-projects" aria-label="Projects inventory">
           <div class="panel-header">
-            <h2>Projects</h2>
-            <button id="refreshBtn" type="button" class="btn btn-subtle">Refresh</button>
+            <h2>App Catalog</h2>
           </div>
 
           <div class="filter-grid">
             <label class="field compact" for="projectSearch">
               <span>Search</span>
-              <input id="projectSearch" placeholder="Name, ID, runtime (/)">
+              <input id="projectSearch" placeholder="Name, ID, runtime (/)" />
             </label>
             <label class="field compact" for="phaseFilter">
               <span>Phase</span>
@@ -83,133 +80,220 @@
           <div id="projects" class="project-list" role="listbox" aria-label="Projects list"></div>
         </section>
 
-        <section class="panel panel-details" aria-label="Project details and actions">
-          <div class="panel-header">
-            <h2>Selected Project</h2>
-          </div>
-
-          <div id="selected" class="project-summary muted">Select a project to inspect details and actions.</div>
-
-          <div class="action-grid">
-            <article class="subpanel">
-              <h3>Create Project</h3>
-              <form id="createForm" class="form-grid">
-                <label class="field" for="createAPIVersion"><span>API Version</span><input id="createAPIVersion" required></label>
-                <label class="field" for="createKind"><span>Kind</span><input id="createKind" required></label>
-                <label class="field" for="createName"><span>Name</span><input id="createName" required placeholder="my-service"></label>
-                <label class="field" for="createRuntime"><span>Runtime</span><input id="createRuntime" required placeholder="go_1.26"></label>
-                <label class="field" for="createCapabilities"><span>Capabilities</span><input id="createCapabilities" placeholder="http,metrics"></label>
-                <label class="field" for="createIngress">
-                  <span>Network ingress</span>
-                  <select id="createIngress">
-                    <option value="internal">internal</option>
-                    <option value="none">none</option>
-                  </select>
-                </label>
-                <label class="field" for="createEgress">
-                  <span>Network egress</span>
-                  <select id="createEgress">
-                    <option value="internal">internal</option>
-                    <option value="none">none</option>
-                  </select>
-                </label>
-                <label class="field field-full" for="createEnvironments">
-                  <span>Environments JSON</span>
-                  <textarea id="createEnvironments" rows="8"></textarea>
-                </label>
-                <button type="submit" class="btn btn-primary">Create</button>
-              </form>
-            </article>
-
-            <article class="subpanel">
-              <h3>Update Project</h3>
-              <form id="updateForm" class="form-grid">
-                <label class="field" for="updateAPIVersion"><span>API Version</span><input id="updateAPIVersion" required></label>
-                <label class="field" for="updateKind"><span>Kind</span><input id="updateKind" required></label>
-                <label class="field" for="updateName"><span>Name</span><input id="updateName" required></label>
-                <label class="field" for="updateRuntime"><span>Runtime</span><input id="updateRuntime" required></label>
-                <label class="field" for="updateCapabilities"><span>Capabilities</span><input id="updateCapabilities"></label>
-                <label class="field" for="updateIngress">
-                  <span>Network ingress</span>
-                  <select id="updateIngress">
-                    <option value="internal">internal</option>
-                    <option value="none">none</option>
-                  </select>
-                </label>
-                <label class="field" for="updateEgress">
-                  <span>Network egress</span>
-                  <select id="updateEgress">
-                    <option value="internal">internal</option>
-                    <option value="none">none</option>
-                  </select>
-                </label>
-                <label class="field field-full" for="updateEnvironments">
-                  <span>Environments JSON</span>
-                  <textarea id="updateEnvironments" rows="8"></textarea>
-                </label>
-                <button type="submit" class="btn btn-primary">Update</button>
-              </form>
-            </article>
-
-            <article class="subpanel subpanel-stack">
-              <div>
-                <h3>Trigger CI Webhook</h3>
-                <form id="webhookForm" class="form-grid">
-                  <label class="field" for="webhookRepo"><span>Repo</span><input id="webhookRepo" value="source" placeholder="source"></label>
-                  <label class="field" for="webhookBranch"><span>Branch</span><input id="webhookBranch" value="main" placeholder="main"></label>
-                  <label class="field" for="webhookRef"><span>Ref</span><input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main"></label>
-                  <label class="field" for="webhookCommit"><span>Commit (optional)</span><input id="webhookCommit" placeholder="abc123def456"></label>
-                  <button type="submit" class="btn btn-primary">Trigger CI</button>
-                </form>
-              </div>
-
-              <div class="danger-zone">
-                <h3>Delete Project</h3>
-                <p>Deletes project records and local artifacts.</p>
-                <button id="deleteBtn" type="button" class="btn btn-danger">Delete project</button>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section class="panel panel-runtime" aria-label="Operations and artifacts">
+        <section class="panel panel-main" aria-label="Selected app workspace">
           <article class="subpanel">
-            <div class="panel-header">
-              <h2>Operation Timeline</h2>
+            <div class="panel-header compact-header">
+              <h2>Selected App</h2>
+              <div class="selected-actions">
+                <button id="openUpdateModalBtn" type="button" class="btn btn-subtle">Update app</button>
+                <button id="openDeleteModalBtn" type="button" class="btn btn-danger">Delete app</button>
+              </div>
             </div>
-            <div id="opProgress"></div>
-            <div id="opTimeline" class="timeline"></div>
-            <div id="opInsights" class="insight-grid"></div>
-            <details id="opRawWrap" class="raw-details">
-              <summary>Last operation payload</summary>
-              <pre id="lastOp" class="codeblock"></pre>
-            </details>
+            <div id="selected" class="project-summary muted">Select an app to view configuration, operations, and artifacts.</div>
           </article>
 
           <article class="subpanel">
-            <div class="panel-header">
-              <h2>Artifacts</h2>
-              <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Load</button>
+            <h2>Trigger Source Webhook CI</h2>
+            <p class="subpanel-copy">Run a CI operation for the selected app from a source repo webhook event.</p>
+            <form id="webhookForm" class="form-grid">
+              <label class="field" for="webhookRepo"><span>Repo</span><input id="webhookRepo" value="source" placeholder="source" /></label>
+              <label class="field" for="webhookBranch"><span>Branch</span><input id="webhookBranch" value="main" placeholder="main" /></label>
+              <label class="field" for="webhookRef"><span>Ref</span><input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main" /></label>
+              <label class="field" for="webhookCommit"><span>Commit (optional)</span><input id="webhookCommit" placeholder="abc123def456" /></label>
+              <button type="submit" class="btn btn-primary">Trigger CI</button>
+            </form>
+          </article>
+
+          <article class="subpanel runtime-shell">
+            <div class="runtime-head">
+              <h2>Pipeline and Artifacts</h2>
+              <div class="runtime-toggle" role="tablist" aria-label="Runtime views">
+                <button id="runtimeViewTimeline" class="btn btn-subtle is-active" type="button" role="tab" aria-selected="true">Pipeline</button>
+                <button id="runtimeViewArtifacts" class="btn btn-subtle" type="button" role="tab" aria-selected="false">Artifacts</button>
+              </div>
             </div>
-            <label class="field compact" for="artifactSearch">
-              <span>Filter artifacts</span>
-              <input id="artifactSearch" placeholder="build/, deploy/, repos/...">
-            </label>
-            <p id="artifactStats" class="helper-text">Artifacts not loaded</p>
-            <div id="buildkitSignal" class="buildkit-signal muted">BuildKit metadata unavailable until artifacts are loaded.</div>
-            <div id="artifacts" class="artifact-list"></div>
-            <div class="preview-head">
-              <p id="artifactPreviewMeta" class="helper-text">Preview unavailable</p>
-              <button id="copyPreviewBtn" type="button" class="btn btn-subtle" disabled>Copy preview</button>
-            </div>
-            <pre id="artifactPreview" class="codeblock muted">Select an artifact to preview.</pre>
+
+            <section id="runtimeTimelinePanel" class="runtime-panel" role="tabpanel">
+              <div id="opProgress"></div>
+              <div id="opTimeline" class="timeline"></div>
+              <div id="opInsights" class="insight-grid"></div>
+              <details id="opRawWrap" class="raw-details">
+                <summary>Last operation payload</summary>
+                <pre id="lastOp" class="codeblock"></pre>
+              </details>
+            </section>
+
+            <section id="runtimeArtifactsPanel" class="runtime-panel is-hidden" role="tabpanel">
+              <div class="panel-header compact-header">
+                <h3>Artifacts</h3>
+                <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Load</button>
+              </div>
+              <label class="field compact" for="artifactSearch">
+                <span>Filter artifacts</span>
+                <input id="artifactSearch" placeholder="build/, deploy/, repos/..." />
+              </label>
+              <p id="artifactStats" class="helper-text">Artifacts not loaded</p>
+              <div id="buildkitSignal" class="buildkit-signal muted">BuildKit metadata unavailable until artifacts are loaded.</div>
+              <div id="artifacts" class="artifact-list"></div>
+              <div class="preview-head">
+                <p id="artifactPreviewMeta" class="helper-text">Preview unavailable</p>
+                <button id="copyPreviewBtn" type="button" class="btn btn-subtle" disabled>Copy preview</button>
+              </div>
+              <pre id="artifactPreview" class="codeblock muted">Select an artifact to preview.</pre>
+            </section>
           </article>
         </section>
       </main>
 
       <footer class="footer-note">
-        Keyboard shortcuts: <code>/</code> focus search, <code>r</code> refresh projects, <code>a</code> load artifacts.
+        Shortcuts: <code>/</code> search apps, <code>r</code> refresh, <code>a</code> load artifacts.
       </footer>
+    </div>
+
+    <div id="createModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
+      <button class="modal-backdrop" data-modal-close="create" aria-label="Close create modal"></button>
+      <section class="modal-card" aria-label="Create app modal">
+        <header class="modal-header">
+          <h2 id="createModalTitle">Create App</h2>
+          <button id="createModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
+        </header>
+        <form id="createForm" class="form-grid modal-form">
+          <input id="createAPIVersion" type="hidden" value="platform.example.com/v2" />
+          <input id="createKind" type="hidden" value="App" />
+          <label class="field" for="createName"><span>App name</span><input id="createName" required placeholder="my-service" /></label>
+          <label class="field" for="createRuntime">
+            <span>Runtime profile</span>
+            <select id="createRuntime" required></select>
+          </label>
+          <label class="field field-full" for="createCapabilities"><span>Capabilities</span><input id="createCapabilities" placeholder="http,metrics" /></label>
+
+          <div class="field-full env-builder">
+            <div class="env-builder-head">
+              <div>
+                <p class="env-builder-title">Environments</p>
+                <p class="helper-text">Add named environments and optional key/value vars.</p>
+              </div>
+              <div class="env-builder-actions">
+                <button id="createCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
+                <button id="createAddEnvBtn" type="button" class="btn btn-subtle">Add environment</button>
+              </div>
+            </div>
+            <div id="createEnvList" class="env-list"></div>
+          </div>
+
+          <details class="advanced-details field-full">
+            <summary>Advanced project settings</summary>
+            <div class="advanced-grid">
+              <label class="field" for="createIngress">
+                <span>Network ingress</span>
+                <select id="createIngress">
+                  <option value="internal">internal</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+              <label class="field" for="createEgress">
+                <span>Network egress</span>
+                <select id="createEgress">
+                  <option value="internal">internal</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+            </div>
+          </details>
+
+          <div class="modal-actions field-full">
+            <button id="createModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create app</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="updateModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="updateModalTitle">
+      <button class="modal-backdrop" data-modal-close="update" aria-label="Close update modal"></button>
+      <section class="modal-card" aria-label="Update app modal">
+        <header class="modal-header">
+          <h2 id="updateModalTitle">Update App</h2>
+          <button id="updateModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
+        </header>
+        <form id="updateForm" class="form-grid modal-form">
+          <input id="updateAPIVersion" type="hidden" value="platform.example.com/v2" />
+          <input id="updateKind" type="hidden" value="App" />
+          <label class="field" for="updateName"><span>Name</span><input id="updateName" required /></label>
+          <label class="field" for="updateRuntime">
+            <span>Runtime profile</span>
+            <select id="updateRuntime" required></select>
+          </label>
+          <label class="field field-full" for="updateCapabilities"><span>Capabilities</span><input id="updateCapabilities" /></label>
+
+          <div class="field-full env-builder">
+            <div class="env-builder-head">
+              <div>
+                <p class="env-builder-title">Environments</p>
+                <p class="helper-text">Use clean uppercase var keys (underscore only).</p>
+              </div>
+              <div class="env-builder-actions">
+                <button id="updateCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
+                <button id="updateAddEnvBtn" type="button" class="btn btn-subtle">Add environment</button>
+              </div>
+            </div>
+            <div id="updateEnvList" class="env-list"></div>
+          </div>
+
+          <details class="advanced-details field-full">
+            <summary>Advanced update settings</summary>
+            <div class="advanced-grid">
+              <label class="field" for="updateIngress">
+                <span>Network ingress</span>
+                <select id="updateIngress">
+                  <option value="internal">internal</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+              <label class="field" for="updateEgress">
+                <span>Network egress</span>
+                <select id="updateEgress">
+                  <option value="internal">internal</option>
+                  <option value="none">none</option>
+                </select>
+              </label>
+            </div>
+          </details>
+
+          <div class="modal-actions field-full">
+            <button id="updateModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
+            <button type="submit" class="btn btn-primary">Apply update</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="deleteModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+      <button class="modal-backdrop" data-modal-close="delete" aria-label="Close delete modal"></button>
+      <section class="modal-card modal-card-danger" aria-label="Delete app modal">
+        <header class="modal-header">
+          <h2 id="deleteModalTitle">Delete App</h2>
+          <button id="deleteModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
+        </header>
+
+        <div class="delete-warning">
+          <p class="delete-warning-title">Warning: this action is destructive.</p>
+          <p>This removes project records and cleans local artifacts for the selected app.</p>
+          <p id="deleteModalTarget" class="delete-target"></p>
+        </div>
+
+        <form id="deleteConfirmForm" class="form-grid modal-form">
+          <label class="field field-full" for="deleteConfirmInput">
+            <span>Type the app name to confirm</span>
+            <input id="deleteConfirmInput" autocomplete="off" />
+          </label>
+          <p id="deleteConfirmHint" class="helper-text field-full"></p>
+          <div class="modal-actions field-full">
+            <button id="deleteModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
+            <button id="deleteConfirmBtn" type="submit" class="btn btn-danger" disabled>Delete app permanently</button>
+          </div>
+        </form>
+      </section>
     </div>
 
     <script src="/app.js"></script>
