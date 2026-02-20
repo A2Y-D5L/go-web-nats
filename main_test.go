@@ -1,6 +1,8 @@
+//nolint:exhaustruct,govet // Tests favor compact fixtures and table syntax over exhaustive struct initialization and strict style rules.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -100,10 +102,10 @@ func TestWaiterHubRegisterDeliver(t *testing.T) {
 	}
 }
 
-func TestWaiterHubUnregisterAndDeliverNoPanic(t *testing.T) {
+func TestWaiterHubUnregisterAndDeliverNoPanic(_ *testing.T) {
 	h := newWaiterHub()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		opID := "op-race"
 		h.register(opID)
 
@@ -111,7 +113,7 @@ func TestWaiterHubUnregisterAndDeliverNoPanic(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 200; j++ {
+			for range 200 {
 				h.deliver(opID, WorkerResultMsg{OpID: opID})
 			}
 		}()
@@ -321,14 +323,14 @@ func TestEnsureLocalGitRepoAndCommit(t *testing.T) {
 	}
 
 	repo := filepath.Join(t.TempDir(), "source")
-	if err := ensureLocalGitRepo(repo); err != nil {
+	if err := ensureLocalGitRepo(context.Background(), repo); err != nil {
 		t.Fatalf("ensure local git repo: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
 		t.Fatalf("missing .git dir: %v", err)
 	}
 
-	changed, err := upsertFile(filepath.Join(repo, "README.md"), []byte("# test\n"), 0o644)
+	changed, err := upsertFile(filepath.Join(repo, "README.md"), []byte("# test\n"))
 	if err != nil {
 		t.Fatalf("upsert file: %v", err)
 	}
@@ -336,7 +338,11 @@ func TestEnsureLocalGitRepoAndCommit(t *testing.T) {
 		t.Fatal("expected file to be created")
 	}
 
-	committed, err := gitCommitIfChanged(repo, "platform-sync: seed test repo")
+	committed, err := gitCommitIfChanged(
+		context.Background(),
+		repo,
+		"platform-sync: seed test repo",
+	)
 	if err != nil {
 		t.Fatalf("git commit if changed: %v", err)
 	}
@@ -344,7 +350,7 @@ func TestEnsureLocalGitRepoAndCommit(t *testing.T) {
 		t.Fatal("expected commit to be created")
 	}
 
-	head, err := gitRevParse(repo, "HEAD")
+	head, err := gitRevParse(context.Background(), repo, "HEAD")
 	if err != nil {
 		t.Fatalf("git rev-parse: %v", err)
 	}

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -10,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -40,35 +41,58 @@ var webFS embed.FS
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	// API publishes project operations here
+	// API publishes project operations here.
 	subjectProjectOpStart = "paas.project.op.start"
 
-	// Worker pipeline chain
+	// Worker pipeline chain.
 	subjectRegistrationDone = "paas.project.op.registration.done"
 	subjectBootstrapDone    = "paas.project.op.bootstrap.done"
 	subjectBuildDone        = "paas.project.op.build.done"
 	subjectDeployDone       = "paas.project.op.deploy.done"
 
-	// KV buckets
+	// KV buckets.
 	kvBucketProjects = "paas_projects"
 	kvBucketOps      = "paas_ops"
 
-	// Project keys in KV
+	// Project keys in KV.
 	kvProjectKeyPrefix = "project/"
 	kvOpKeyPrefix      = "op/"
 
-	// HTTP
+	// HTTP.
 	httpAddr = "127.0.0.1:8080"
 
-	// Where workers write artifacts
+	// Where workers write artifacts.
 	defaultArtifactsRoot = "./data/artifacts"
 
-	// API wait timeout per request
+	// API wait timeout per request.
 	apiWaitTimeout = 45 * time.Second
 
-	// Schema defaults (from cfg/project-jsonschema.json)
+	// Schema defaults (from cfg/project-jsonschema.json).
 	projectAPIVersion = "platform.example.com/v2"
 	projectKind       = "App"
+
+	defaultKVProjectHistory = 25
+	defaultKVOpsHistory     = 50
+	defaultStartupWait      = 10 * time.Second
+	defaultReadHeaderWait   = 5 * time.Second
+	gitOpTimeout            = 20 * time.Second
+	gitReadTimeout          = 10 * time.Second
+	maxEnvVarValueLength    = 4096
+	shortIDLength           = 12
+	httpServerErrThreshold  = 500
+	httpClientErrThreshold  = 400
+
+	fileModePrivate        os.FileMode = 0o600
+	fileModeExecPrivate    os.FileMode = 0o700
+	dirModePrivateRead     os.FileMode = 0o750
+	projectRelPathPartsMin             = 2
+	touchedArtifactsCap                = 8
+
+	networkPolicyInternal = "internal"
+	branchMain            = "main"
+	projectPhaseReady     = "Ready"
+	projectPhaseError     = "Error"
+	projectPhaseDel       = "Deleting"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -176,7 +200,7 @@ func levelColor(level logLevel) string {
 
 func sourceColor(source string) string {
 	switch source {
-	case "main":
+	case branchMain:
 		return "97"
 	case "api":
 		return "94"
@@ -200,7 +224,9 @@ func ansi(code, s string) string {
 	return "\x1b[" + code + "m" + s + "\x1b[0m"
 }
 
-var appLog = newAppLogger()
+func appLoggerForProcess() *appLogger {
+	return newAppLogger()
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Domain model: Projects + Operations
@@ -264,7 +290,7 @@ type Operation struct {
 	Kind      OperationKind `json:"kind"`
 	ProjectID string        `json:"project_id"`
 	Requested time.Time     `json:"requested"`
-	Finished  time.Time     `json:"finished,omitempty"`
+	Finished  time.Time     `json:"finished"`
 	Status    string        `json:"status"` // queued|running|done|error
 	Error     string        `json:"error,omitempty"`
 	Steps     []OpStep      `json:"steps"`
@@ -296,10 +322,10 @@ func normalizeProjectSpec(in ProjectSpec) ProjectSpec {
 	spec.NetworkPolicies.Ingress = strings.TrimSpace(spec.NetworkPolicies.Ingress)
 	spec.NetworkPolicies.Egress = strings.TrimSpace(spec.NetworkPolicies.Egress)
 	if spec.NetworkPolicies.Ingress == "" {
-		spec.NetworkPolicies.Ingress = "internal"
+		spec.NetworkPolicies.Ingress = networkPolicyInternal
 	}
 	if spec.NetworkPolicies.Egress == "" {
-		spec.NetworkPolicies.Egress = "internal"
+		spec.NetworkPolicies.Egress = networkPolicyInternal
 	}
 
 	seenCaps := map[string]struct{}{}
@@ -330,6 +356,19 @@ func normalizeProjectSpec(in ProjectSpec) ProjectSpec {
 }
 
 func validateProjectSpec(spec ProjectSpec) error {
+	if err := validateProjectCore(spec); err != nil {
+		return err
+	}
+	if err := validateCapabilities(spec.Capabilities); err != nil {
+		return err
+	}
+	if err := validateEnvironments(spec.Environments); err != nil {
+		return err
+	}
+	return validateNetworkPolicies(spec.NetworkPolicies)
+}
+
+func validateProjectCore(spec ProjectSpec) error {
 	if spec.APIVersion != projectAPIVersion {
 		return fmt.Errorf("apiVersion must be %q", projectAPIVersion)
 	}
@@ -342,32 +381,51 @@ func validateProjectSpec(spec ProjectSpec) error {
 	if len(spec.Runtime) < 1 || len(spec.Runtime) > 128 || !runtimeRe.MatchString(spec.Runtime) {
 		return fmt.Errorf("runtime must match %s", runtimeRe.String())
 	}
-	for _, c := range spec.Capabilities {
-		if len(c) > 64 || !capabilityRe.MatchString(c) {
-			return fmt.Errorf("invalid capability %q", c)
+	return nil
+}
+
+func validateCapabilities(capabilities []string) error {
+	for _, capability := range capabilities {
+		if len(capability) > 64 || !capabilityRe.MatchString(capability) {
+			return fmt.Errorf("invalid capability %q", capability)
 		}
 	}
-	if len(spec.Environments) < 1 {
-		return fmt.Errorf("environments must include at least one environment")
+	return nil
+}
+
+func validateEnvironments(envs map[string]EnvConfig) error {
+	if len(envs) < 1 {
+		return errors.New("environments must include at least one environment")
 	}
-	for envName, envCfg := range spec.Environments {
+	for envName, envCfg := range envs {
 		if len(envName) > 32 || !envNameRe.MatchString(envName) {
 			return fmt.Errorf("invalid environment name %q", envName)
 		}
-		for k, v := range envCfg.Vars {
-			if len(k) > 128 || !envVarNameRe.MatchString(k) {
-				return fmt.Errorf("invalid environment variable name %q in %q", k, envName)
-			}
-			if len(v) > 4096 {
-				return fmt.Errorf("env var %q in %q exceeds max length", k, envName)
-			}
+		if err := validateEnvironmentVars(envName, envCfg.Vars); err != nil {
+			return err
 		}
 	}
-	if !networkValueRe.MatchString(spec.NetworkPolicies.Ingress) {
-		return fmt.Errorf("networkPolicies.ingress must be internal or none")
+	return nil
+}
+
+func validateEnvironmentVars(envName string, vars map[string]string) error {
+	for key, value := range vars {
+		if len(key) > 128 || !envVarNameRe.MatchString(key) {
+			return fmt.Errorf("invalid environment variable name %q in %q", key, envName)
+		}
+		if len(value) > maxEnvVarValueLength {
+			return fmt.Errorf("env var %q in %q exceeds max length", key, envName)
+		}
 	}
-	if !networkValueRe.MatchString(spec.NetworkPolicies.Egress) {
-		return fmt.Errorf("networkPolicies.egress must be internal or none")
+	return nil
+}
+
+func validateNetworkPolicies(policies NetworkPolicies) error {
+	if !networkValueRe.MatchString(policies.Ingress) {
+		return errors.New("networkPolicies.ingress must be internal or none")
+	}
+	if !networkValueRe.MatchString(policies.Egress) {
+		return errors.New("networkPolicies.egress must be internal or none")
 	}
 	return nil
 }
@@ -380,7 +438,7 @@ type ProjectOpMsg struct {
 	OpID      string        `json:"op_id"`
 	Kind      OperationKind `json:"kind"`
 	ProjectID string        `json:"project_id"`
-	Spec      ProjectSpec   `json:"spec,omitempty"` // create/update only
+	Spec      ProjectSpec   `json:"spec"` // create/update only
 	Err       string        `json:"err,omitempty"`
 	At        time.Time     `json:"at"`
 }
@@ -389,7 +447,7 @@ type WorkerResultMsg struct {
 	OpID      string        `json:"op_id"`
 	Kind      OperationKind `json:"kind"`
 	ProjectID string        `json:"project_id"`
-	Spec      ProjectSpec   `json:"spec,omitempty"`
+	Spec      ProjectSpec   `json:"spec"`
 	Worker    string        `json:"worker"`
 	Message   string        `json:"message,omitempty"`
 	Err       string        `json:"err,omitempty"`
@@ -397,34 +455,61 @@ type WorkerResultMsg struct {
 	At        time.Time     `json:"at"`
 }
 
+func zeroProjectSpec() ProjectSpec {
+	return ProjectSpec{
+		APIVersion:      "",
+		Kind:            "",
+		Name:            "",
+		Runtime:         "",
+		Capabilities:    nil,
+		Environments:    nil,
+		NetworkPolicies: NetworkPolicies{Ingress: "", Egress: ""},
+	}
+}
+
+func newWorkerResultMsg(message string) WorkerResultMsg {
+	return WorkerResultMsg{
+		OpID:      "",
+		Kind:      "",
+		ProjectID: "",
+		Spec:      zeroProjectSpec(),
+		Worker:    "",
+		Message:   message,
+		Err:       "",
+		Artifacts: nil,
+		At:        time.Time{},
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Infrastructure: Embedded NATS + JetStream KV
 ////////////////////////////////////////////////////////////////////////////////
 
-type KV struct {
-	js jetstream.JetStream
-}
+func ensureKVBucket(
+	ctx context.Context,
+	js jetstream.JetStream,
+	bucket string,
+	history uint8,
+	out *jetstream.KeyValue,
+) error {
+	var cfg jetstream.KeyValueConfig
+	cfg.Bucket = bucket
+	cfg.History = history
 
-func (k *KV) Projects(ctx context.Context) (jetstream.KeyValue, error) {
-	return ensureKV(ctx, k.js, kvBucketProjects, 25)
-}
-
-func (k *KV) Ops(ctx context.Context) (jetstream.KeyValue, error) {
-	return ensureKV(ctx, k.js, kvBucketOps, 50)
-}
-
-func ensureKV(ctx context.Context, js jetstream.JetStream, bucket string, history uint8) (jetstream.KeyValue, error) {
-	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:  bucket,
-		History: history,
-	})
+	createdKV, err := js.CreateKeyValue(ctx, cfg)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrBucketExists) {
-			return js.KeyValue(ctx, bucket)
+			existingKV, getErr := js.KeyValue(ctx, bucket)
+			if getErr != nil {
+				return getErr
+			}
+			*out = existingKV
+			return nil
 		}
-		return nil, err
+		return err
 	}
-	return kv, nil
+	*out = createdKV
+	return nil
 }
 
 func startEmbeddedNATS() (*server.Server, string, string, error) {
@@ -432,26 +517,26 @@ func startEmbeddedNATS() (*server.Server, string, string, error) {
 	if err != nil {
 		return nil, "", "", err
 	}
-	opts := &server.Options{
-		ServerName: "embedded-paas",
-		Host:       "127.0.0.1",
-		Port:       -1,
-		JetStream:  true,
-		StoreDir:   storeDir,
-		NoSigs:     true,
-	}
-	ns, err := server.NewServer(opts)
+	var opts server.Options
+	opts.ServerName = "embedded-paas"
+	opts.Host = "127.0.0.1"
+	opts.Port = -1
+	opts.JetStream = true
+	opts.StoreDir = storeDir
+	opts.NoSigs = true
+
+	ns, err := server.NewServer(&opts)
 	if err != nil {
 		_ = os.RemoveAll(storeDir)
 		return nil, "", "", err
 	}
 	ns.ConfigureLogger()
 	ns.Start()
-	if !ns.ReadyForConnections(10 * time.Second) {
+	if !ns.ReadyForConnections(defaultStartupWait) {
 		ns.Shutdown()
 		ns.WaitForShutdown()
 		_ = os.RemoveAll(storeDir)
-		return nil, "", "", fmt.Errorf("nats not ready")
+		return nil, "", "", errors.New("nats not ready")
 	}
 	return ns, ns.ClientURL(), storeDir, nil
 }
@@ -465,16 +550,18 @@ type Store struct {
 	kvOps      jetstream.KeyValue
 }
 
-func newStore(ctx context.Context, kv *KV) (*Store, error) {
-	p, err := kv.Projects(ctx)
+func newStore(ctx context.Context, js jetstream.JetStream) (*Store, error) {
+	var projectsKV jetstream.KeyValue
+	err := ensureKVBucket(ctx, js, kvBucketProjects, defaultKVProjectHistory, &projectsKV)
 	if err != nil {
 		return nil, err
 	}
-	o, err := kv.Ops(ctx)
+	var opsKV jetstream.KeyValue
+	err = ensureKVBucket(ctx, js, kvBucketOps, defaultKVOpsHistory, &opsKV)
 	if err != nil {
 		return nil, err
 	}
-	return &Store{kvProjects: p, kvOps: o}, nil
+	return &Store{kvProjects: projectsKV, kvOps: opsKV}, nil
 }
 
 func (s *Store) PutProject(ctx context.Context, p Project) error {
@@ -493,8 +580,9 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (Project, erro
 		return Project{}, err
 	}
 	var p Project
-	if err := json.Unmarshal(e.Value(), &p); err != nil {
-		return Project{}, err
+	unmarshalErr := json.Unmarshal(e.Value(), &p)
+	if unmarshalErr != nil {
+		return Project{}, unmarshalErr
 	}
 	return p, nil
 }
@@ -518,12 +606,12 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 			continue
 		}
 		projectID := strings.TrimPrefix(k, kvProjectKeyPrefix)
-		p, err := s.GetProject(ctx, projectID)
-		if err != nil {
+		project, getErr := s.GetProject(ctx, projectID)
+		if getErr != nil {
 			// best-effort listing
 			continue
 		}
-		out = append(out, p)
+		out = append(out, project)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
@@ -544,8 +632,9 @@ func (s *Store) GetOp(ctx context.Context, opID string) (Operation, error) {
 		return Operation{}, err
 	}
 	var op Operation
-	if err := json.Unmarshal(e.Value(), &op); err != nil {
-		return Operation{}, err
+	unmarshalErr := json.Unmarshal(e.Value(), &op)
+	if unmarshalErr != nil {
+		return Operation{}, unmarshalErr
 	}
 	return op, nil
 }
@@ -577,7 +666,7 @@ func (a *FSArtifacts) ProjectDir(projectID string) string {
 
 func (a *FSArtifacts) EnsureProjectDir(projectID string) (string, error) {
 	dir := a.ProjectDir(projectID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, dirModePrivateRead); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -590,14 +679,16 @@ func (a *FSArtifacts) WriteFile(projectID, relPath string, data []byte) (string,
 	}
 	relPath = filepath.Clean(relPath)
 	if strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
-		return "", fmt.Errorf("invalid relPath")
+		return "", errors.New("invalid relPath")
 	}
 	full := filepath.Join(dir, relPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return "", err
+	mkdirErr := os.MkdirAll(filepath.Dir(full), dirModePrivateRead)
+	if mkdirErr != nil {
+		return "", mkdirErr
 	}
-	if err := os.WriteFile(full, data, 0o644); err != nil {
-		return "", err
+	writeErr := os.WriteFile(full, data, fileModePrivate)
+	if writeErr != nil {
+		return "", writeErr
 	}
 	return filepath.ToSlash(relPath), nil
 }
@@ -612,9 +703,9 @@ func (a *FSArtifacts) ListFiles(projectID string) ([]string, error) {
 		}
 		return nil, err
 	}
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // best-effort
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, _ error) error {
+		if d == nil {
+			return nil
 		}
 		if d.IsDir() {
 			if d.Name() == ".git" {
@@ -622,9 +713,9 @@ func (a *FSArtifacts) ListFiles(projectID string) ([]string, error) {
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return nil
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			return relErr
 		}
 		files = append(files, filepath.ToSlash(rel))
 		return nil
@@ -640,9 +731,13 @@ func (a *FSArtifacts) ReadFile(projectID, relPath string) ([]byte, error) {
 	dir := a.ProjectDir(projectID)
 	relPath = filepath.Clean(relPath)
 	if strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
-		return nil, fmt.Errorf("invalid relPath")
+		return nil, errors.New("invalid relPath")
 	}
 	full := filepath.Join(dir, relPath)
+	if !strings.HasPrefix(filepath.Clean(full), filepath.Clean(dir)+string(filepath.Separator)) {
+		return nil, errors.New("invalid relPath")
+	}
+	//nolint:gosec // full path is verified to stay inside the project directory.
 	return os.ReadFile(full)
 }
 
@@ -660,7 +755,10 @@ type waiterHub struct {
 }
 
 func newWaiterHub() *waiterHub {
-	return &waiterHub{waiters: map[string]chan WorkerResultMsg{}}
+	return &waiterHub{
+		mu:      sync.Mutex{},
+		waiters: map[string]chan WorkerResultMsg{},
+	}
 }
 
 func (h *waiterHub) register(opID string) <-chan WorkerResultMsg {
@@ -706,7 +804,10 @@ type WorkerBase struct {
 	artifacts  ArtifactStore
 }
 
-func newWorkerBase(name, natsURL, subjectIn, subjectOut string, artifacts ArtifactStore) WorkerBase {
+func newWorkerBase(
+	name, natsURL, subjectIn, subjectOut string,
+	artifacts ArtifactStore,
+) WorkerBase {
 	return WorkerBase{
 		name:       name,
 		natsURL:    natsURL,
@@ -716,198 +817,388 @@ func newWorkerBase(name, natsURL, subjectIn, subjectOut string, artifacts Artifa
 	}
 }
 
-func (b WorkerBase) connect() (*nats.Conn, jetstream.JetStream, *Store, error) {
-	nc, err := nats.Connect(b.natsURL, nats.Name(b.name))
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	js, err := jetstream.New(nc)
-	if err != nil {
-		nc.Close()
-		return nil, nil, nil, err
-	}
-	kv := &KV{js: js}
-	store, err := newStore(context.Background(), kv)
-	if err != nil {
-		nc.Close()
-		return nil, nil, nil, err
-	}
-	return nc, js, store, nil
-}
-
-type RegistrationWorker struct{ WorkerBase }
-type RepoBootstrapWorker struct{ WorkerBase }
-type ImageBuilderWorker struct{ WorkerBase }
-type ManifestRendererWorker struct{ WorkerBase }
+type (
+	RegistrationWorker     struct{ WorkerBase }
+	RepoBootstrapWorker    struct{ WorkerBase }
+	ImageBuilderWorker     struct{ WorkerBase }
+	ManifestRendererWorker struct{ WorkerBase }
+)
 
 func NewRegistrationWorker(natsURL string, artifacts ArtifactStore) *RegistrationWorker {
-	return &RegistrationWorker{WorkerBase: newWorkerBase("registrar", natsURL, subjectProjectOpStart, subjectRegistrationDone, artifacts)}
+	return &RegistrationWorker{
+		WorkerBase: newWorkerBase(
+			"registrar",
+			natsURL,
+			subjectProjectOpStart,
+			subjectRegistrationDone,
+			artifacts,
+		),
+	}
 }
+
 func NewRepoBootstrapWorker(natsURL string, artifacts ArtifactStore) *RepoBootstrapWorker {
-	return &RepoBootstrapWorker{WorkerBase: newWorkerBase("repoBootstrap", natsURL, subjectRegistrationDone, subjectBootstrapDone, artifacts)}
+	return &RepoBootstrapWorker{
+		WorkerBase: newWorkerBase(
+			"repoBootstrap",
+			natsURL,
+			subjectRegistrationDone,
+			subjectBootstrapDone,
+			artifacts,
+		),
+	}
 }
+
 func NewImageBuilderWorker(natsURL string, artifacts ArtifactStore) *ImageBuilderWorker {
-	return &ImageBuilderWorker{WorkerBase: newWorkerBase("imageBuilder", natsURL, subjectBootstrapDone, subjectBuildDone, artifacts)}
+	return &ImageBuilderWorker{
+		WorkerBase: newWorkerBase(
+			"imageBuilder",
+			natsURL,
+			subjectBootstrapDone,
+			subjectBuildDone,
+			artifacts,
+		),
+	}
 }
+
 func NewManifestRendererWorker(natsURL string, artifacts ArtifactStore) *ManifestRendererWorker {
-	return &ManifestRendererWorker{WorkerBase: newWorkerBase("manifestRenderer", natsURL, subjectBuildDone, subjectDeployDone, artifacts)}
+	return &ManifestRendererWorker{
+		WorkerBase: newWorkerBase(
+			"manifestRenderer",
+			natsURL,
+			subjectBuildDone,
+			subjectDeployDone,
+			artifacts,
+		),
+	}
 }
 
 func (w *RegistrationWorker) Start(ctx context.Context) error {
-	return startWorker(ctx, w.name, w.natsURL, w.subjectIn, w.subjectOut, w.artifacts, registrationWorkerAction)
+	return startWorker(
+		ctx,
+		w.name,
+		w.natsURL,
+		w.subjectIn,
+		w.subjectOut,
+		w.artifacts,
+		registrationWorkerAction,
+	)
 }
+
 func (w *RepoBootstrapWorker) Start(ctx context.Context) error {
-	return startWorker(ctx, w.name, w.natsURL, w.subjectIn, w.subjectOut, w.artifacts, repoBootstrapWorkerAction)
+	return startWorker(
+		ctx,
+		w.name,
+		w.natsURL,
+		w.subjectIn,
+		w.subjectOut,
+		w.artifacts,
+		repoBootstrapWorkerAction,
+	)
 }
+
 func (w *ImageBuilderWorker) Start(ctx context.Context) error {
-	return startWorker(ctx, w.name, w.natsURL, w.subjectIn, w.subjectOut, w.artifacts, imageBuilderWorkerAction)
+	return startWorker(
+		ctx,
+		w.name,
+		w.natsURL,
+		w.subjectIn,
+		w.subjectOut,
+		w.artifacts,
+		imageBuilderWorkerAction,
+	)
 }
+
 func (w *ManifestRendererWorker) Start(ctx context.Context) error {
-	return startWorker(ctx, w.name, w.natsURL, w.subjectIn, w.subjectOut, w.artifacts, manifestRendererWorkerAction)
+	return startWorker(
+		ctx,
+		w.name,
+		w.natsURL,
+		w.subjectIn,
+		w.subjectOut,
+		w.artifacts,
+		manifestRendererWorkerAction,
+	)
 }
 
 type workerFn func(ctx context.Context, store *Store, artifacts ArtifactStore, msg ProjectOpMsg) (WorkerResultMsg, error)
 
 // startWorker subscribes to one subject (unique per worker), does work, and publishes a result for the next worker.
-func startWorker(ctx context.Context, workerName, natsURL, inSubj, outSubj string, artifacts ArtifactStore, fn workerFn) error {
-	workerLog := appLog.Source(workerName)
-
-	go func() {
-		nc, err := nats.Connect(natsURL, nats.Name(workerName))
-		if err != nil {
-			workerLog.Errorf("connect error: %v", err)
-			return
-		}
-		defer nc.Drain()
-
-		js, err := jetstream.New(nc)
-		if err != nil {
-			workerLog.Errorf("jetstream error: %v", err)
-			return
-		}
-		store, err := newStore(context.Background(), &KV{js: js})
-		if err != nil {
-			workerLog.Errorf("store error: %v", err)
-			return
-		}
-		workerLog.Infof("ready: subscribe=%s publish=%s", inSubj, outSubj)
-
-		sub, err := nc.Subscribe(inSubj, func(m *nats.Msg) {
-			var opMsg ProjectOpMsg
-			if err := json.Unmarshal(m.Data, &opMsg); err != nil {
-				workerLog.Warnf("discarding invalid message on %s: %v", inSubj, err)
-				return
-			}
-			if opMsg.Err != "" {
-				workerLog.Warnf("skip op=%s due to upstream error: %s", opMsg.OpID, opMsg.Err)
-				res := WorkerResultMsg{
-					OpID:      opMsg.OpID,
-					Kind:      opMsg.Kind,
-					ProjectID: opMsg.ProjectID,
-					Spec:      opMsg.Spec,
-					Worker:    workerName,
-					Err:       opMsg.Err,
-					Message:   "skipped due to upstream error",
-					At:        time.Now().UTC(),
-				}
-				b, _ := json.Marshal(res)
-				_ = nc.Publish(outSubj, b)
-				return
-			}
-			workerLog.Infof("start op=%s kind=%s project=%s", opMsg.OpID, opMsg.Kind, opMsg.ProjectID)
-
-			// Execute worker function
-			res, werr := fn(context.Background(), store, artifacts, opMsg)
-			if werr != nil {
-				res.Err = werr.Error()
-				workerLog.Errorf("op=%s failed: %v", opMsg.OpID, werr)
-			} else {
-				workerLog.Infof("done op=%s message=%q artifacts=%d", opMsg.OpID, res.Message, len(res.Artifacts))
-			}
-			res.Worker = workerName
-			res.OpID = opMsg.OpID
-			res.Kind = opMsg.Kind
-			res.ProjectID = opMsg.ProjectID
-			res.Spec = opMsg.Spec
-			if res.Err == "" {
-				res.Err = opMsg.Err
-			}
-			res.At = time.Now().UTC()
-
-			b, _ := json.Marshal(res)
-			if err := nc.Publish(outSubj, b); err != nil {
-				workerLog.Errorf("publish result failed op=%s subject=%s: %v", opMsg.OpID, outSubj, err)
-			}
-		})
-		if err != nil {
-			workerLog.Errorf("subscribe error: %v", err)
-			return
-		}
-		defer sub.Unsubscribe()
-
-		_ = nc.Flush()
-		<-ctx.Done()
-	}()
+func startWorker(
+	ctx context.Context,
+	workerName, natsURL, inSubj, outSubj string,
+	artifacts ArtifactStore,
+	fn workerFn,
+) error {
+	workerLog := appLoggerForProcess().Source(workerName)
+	go runWorkerLoop(ctx, workerName, natsURL, inSubj, outSubj, artifacts, fn, workerLog)
 
 	return nil
+}
+
+func runWorkerLoop(
+	ctx context.Context,
+	workerName, natsURL, inSubj, outSubj string,
+	artifacts ArtifactStore,
+	fn workerFn,
+	workerLog sourceLogger,
+) {
+	nc, err := nats.Connect(natsURL, nats.Name(workerName))
+	if err != nil {
+		workerLog.Errorf("connect error: %v", err)
+		return
+	}
+	defer func() {
+		if drainErr := nc.Drain(); drainErr != nil {
+			workerLog.Warnf("drain error: %v", drainErr)
+		}
+	}()
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		workerLog.Errorf("jetstream error: %v", err)
+		return
+	}
+	store, err := newStore(ctx, js)
+	if err != nil {
+		workerLog.Errorf("store error: %v", err)
+		return
+	}
+	workerLog.Infof("ready: subscribe=%s publish=%s", inSubj, outSubj)
+
+	sub, err := nc.Subscribe(inSubj, func(m *nats.Msg) {
+		handleWorkerMessage(
+			ctx,
+			store,
+			artifacts,
+			workerName,
+			inSubj,
+			outSubj,
+			fn,
+			nc,
+			m,
+			workerLog,
+		)
+	})
+	if err != nil {
+		workerLog.Errorf("subscribe error: %v", err)
+		return
+	}
+	defer func() {
+		if unSubErr := sub.Unsubscribe(); unSubErr != nil {
+			workerLog.Warnf("unsubscribe error: %v", unSubErr)
+		}
+	}()
+
+	_ = nc.Flush()
+	<-ctx.Done()
+}
+
+func handleWorkerMessage(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	workerName, inSubj, outSubj string,
+	fn workerFn,
+	nc *nats.Conn,
+	m *nats.Msg,
+	workerLog sourceLogger,
+) {
+	var opMsg ProjectOpMsg
+	unmarshalErr := json.Unmarshal(m.Data, &opMsg)
+	if unmarshalErr != nil {
+		workerLog.Warnf("discarding invalid message on %s: %v", inSubj, unmarshalErr)
+		return
+	}
+	if opMsg.Err != "" {
+		workerLog.Warnf("skip op=%s due to upstream error: %s", opMsg.OpID, opMsg.Err)
+		publishErr := publishWorkerResult(nc, outSubj, skipWorkerResult(opMsg, workerName))
+		if publishErr != nil {
+			workerLog.Errorf(
+				"publish result failed op=%s subject=%s: %v",
+				opMsg.OpID,
+				outSubj,
+				publishErr,
+			)
+		}
+		return
+	}
+
+	workerLog.Infof("start op=%s kind=%s project=%s", opMsg.OpID, opMsg.Kind, opMsg.ProjectID)
+	res, workerErr := fn(ctx, store, artifacts, opMsg)
+	if workerErr != nil {
+		res.Err = workerErr.Error()
+		workerLog.Errorf("op=%s failed: %v", opMsg.OpID, workerErr)
+	} else {
+		workerLog.Infof("done op=%s message=%q artifacts=%d", opMsg.OpID, res.Message, len(res.Artifacts))
+	}
+	publishErr := publishWorkerResult(nc, outSubj, finalizeWorkerResult(opMsg, workerName, res))
+	if publishErr != nil {
+		workerLog.Errorf(
+			"publish result failed op=%s subject=%s: %v",
+			opMsg.OpID,
+			outSubj,
+			publishErr,
+		)
+	}
+}
+
+func skipWorkerResult(opMsg ProjectOpMsg, workerName string) WorkerResultMsg {
+	res := newWorkerResultMsg("skipped due to upstream error")
+	res.OpID = opMsg.OpID
+	res.Kind = opMsg.Kind
+	res.ProjectID = opMsg.ProjectID
+	res.Spec = opMsg.Spec
+	res.Worker = workerName
+	res.Err = opMsg.Err
+	res.At = time.Now().UTC()
+	return res
+}
+
+func finalizeWorkerResult(
+	opMsg ProjectOpMsg,
+	workerName string,
+	res WorkerResultMsg,
+) WorkerResultMsg {
+	res.Worker = workerName
+	res.OpID = opMsg.OpID
+	res.Kind = opMsg.Kind
+	res.ProjectID = opMsg.ProjectID
+	res.Spec = opMsg.Spec
+	if res.Err == "" {
+		res.Err = opMsg.Err
+	}
+	res.At = time.Now().UTC()
+	return res
+}
+
+func publishWorkerResult(nc *nats.Conn, subject string, res WorkerResultMsg) error {
+	body, _ := json.Marshal(res)
+	return nc.Publish(subject, body)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Worker actions: real-world-ish PaaS artifacts
 ////////////////////////////////////////////////////////////////////////////////
 
-func registrationWorkerAction(ctx context.Context, store *Store, artifacts ArtifactStore, msg ProjectOpMsg) (WorkerResultMsg, error) {
+func registrationWorkerAction(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (WorkerResultMsg, error) {
 	stepStart := time.Now().UTC()
-	res := WorkerResultMsg{Message: "registration worker starting"}
+	res := newWorkerResultMsg("registration worker starting")
 	_ = markOpStepStart(ctx, store, msg.OpID, "registrar", stepStart, "register app configuration")
 
 	spec := normalizeProjectSpec(msg.Spec)
+	outcome := newRepoBootstrapOutcome()
+	var err error
 
 	switch msg.Kind {
 	case OpCreate, OpUpdate:
-		if err := validateProjectSpec(spec); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "registrar", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
+		outcome, err = runRegistrationCreateOrUpdate(artifacts, msg, spec)
+	case OpDelete:
+		outcome, err = runRegistrationDelete(artifacts, msg.ProjectID, msg.OpID)
+	case OpCI:
+		outcome = repoBootstrapOutcome{
+			message:   "registration skipped for ci operation",
+			artifacts: nil,
 		}
-		_, _ = artifacts.EnsureProjectDir(msg.ProjectID)
-		a1, err := artifacts.WriteFile(msg.ProjectID, "registration/project.yaml", renderProjectConfigYAML(spec))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "registrar", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		a2, err := artifacts.WriteFile(msg.ProjectID, "registration/registration.json", mustJSON(map[string]any{
+	default:
+		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
+	}
+	if err != nil {
+		_ = markOpStepEnd(
+			ctx,
+			store,
+			msg.OpID,
+			"registrar",
+			time.Now().UTC(),
+			"",
+			err.Error(),
+			outcome.artifacts,
+		)
+		return res, err
+	}
+
+	res.Message = outcome.message
+	res.Artifacts = outcome.artifacts
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		msg.OpID,
+		"registrar",
+		time.Now().UTC(),
+		res.Message,
+		"",
+		res.Artifacts,
+	)
+	return res, nil
+}
+
+func runRegistrationCreateOrUpdate(
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+) (repoBootstrapOutcome, error) {
+	if err := validateProjectSpec(spec); err != nil {
+		return newRepoBootstrapOutcome(), err
+	}
+	_, _ = artifacts.EnsureProjectDir(msg.ProjectID)
+	projectYAMLPath, err := artifacts.WriteFile(
+		msg.ProjectID,
+		"registration/project.yaml",
+		renderProjectConfigYAML(spec),
+	)
+	if err != nil {
+		return newRepoBootstrapOutcome(), err
+	}
+	registrationPath, err := artifacts.WriteFile(
+		msg.ProjectID,
+		"registration/registration.json",
+		mustJSON(map[string]any{
 			"project_id": msg.ProjectID,
 			"op_id":      msg.OpID,
 			"kind":       msg.Kind,
 			"registered": time.Now().UTC(),
 			"name":       spec.Name,
 			"runtime":    spec.Runtime,
-		}))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "registrar", time.Now().UTC(), "", err.Error(), []string{a1})
-			return res, err
-		}
-		res.Message = "project registration upserted"
-		res.Artifacts = []string{a1, a2}
-
-	case OpDelete:
-		a1, err := artifacts.WriteFile(msg.ProjectID, "registration/deregister.txt",
-			[]byte(fmt.Sprintf("deregister requested at %s\nop=%s\n", time.Now().UTC().Format(time.RFC3339), msg.OpID)))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "registrar", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		res.Message = "project deregistration staged"
-		res.Artifacts = []string{a1}
-
-	default:
-		err := fmt.Errorf("unknown op kind: %s", msg.Kind)
-		_ = markOpStepEnd(ctx, store, msg.OpID, "registrar", time.Now().UTC(), "", err.Error(), nil)
-		return res, err
+		}),
+	)
+	if err != nil {
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: []string{projectYAMLPath},
+		}, err
 	}
+	return repoBootstrapOutcome{
+		message:   "project registration upserted",
+		artifacts: []string{projectYAMLPath, registrationPath},
+	}, nil
+}
 
-	_ = markOpStepEnd(ctx, store, msg.OpID, "registrar", time.Now().UTC(), res.Message, "", res.Artifacts)
-	return res, nil
+func runRegistrationDelete(
+	artifacts ArtifactStore,
+	projectID, opID string,
+) (repoBootstrapOutcome, error) {
+	deregisterBody := fmt.Appendf(
+		nil,
+		"deregister requested at %s\nop=%s\n",
+		time.Now().UTC().Format(time.RFC3339),
+		opID,
+	)
+	deregisterPath, err := artifacts.WriteFile(
+		projectID,
+		"registration/deregister.txt",
+		deregisterBody,
+	)
+	if err != nil {
+		return newRepoBootstrapOutcome(), err
+	}
+	return repoBootstrapOutcome{
+		message:   "project deregistration staged",
+		artifacts: []string{deregisterPath},
+	}, nil
 }
 
 func localAPIBaseURL() string {
@@ -930,25 +1221,22 @@ func manifestsRepoDir(artifacts ArtifactStore, projectID string) string {
 	return filepath.Join(artifacts.ProjectDir(projectID), "repos", "manifests")
 }
 
-func runCmd(dir string, env []string, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+func runGitCmd(ctx context.Context, dir string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg != "" {
-			return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, msg)
+			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, msg)
 		}
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }
 
-func gitHasStagedChanges(dir string) (bool, error) {
-	cmd := exec.Command("git", "diff", "--cached", "--quiet", "--exit-code")
+func gitHasStagedChanges(ctx context.Context, dir string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--exit-code")
 	cmd.Dir = dir
 	err := cmd.Run()
 	if err == nil {
@@ -961,25 +1249,30 @@ func gitHasStagedChanges(dir string) (bool, error) {
 	return false, fmt.Errorf("git diff --cached --quiet: %w", err)
 }
 
-func gitCommitIfChanged(dir, message string) (bool, error) {
-	if err := runCmd(dir, nil, "git", "add", "-A"); err != nil {
+func gitCommitIfChanged(ctx context.Context, dir, message string) (bool, error) {
+	runCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
+	defer cancel()
+	if err := runGitCmd(runCtx, dir, "add", "-A"); err != nil {
 		return false, err
 	}
-	changed, err := gitHasStagedChanges(dir)
+	changed, err := gitHasStagedChanges(runCtx, dir)
 	if err != nil {
 		return false, err
 	}
 	if !changed {
 		return false, nil
 	}
-	if err := runCmd(dir, nil, "git", "commit", "-m", message); err != nil {
-		return false, err
+	commitErr := runGitCmd(runCtx, dir, "commit", "-m", message)
+	if commitErr != nil {
+		return false, commitErr
 	}
 	return true, nil
 }
 
-func gitRevParse(dir, ref string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", ref)
+func gitRevParse(ctx context.Context, dir, ref string) (string, error) {
+	runCtx, cancel := context.WithTimeout(ctx, gitReadTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, "git", "rev-parse", ref)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -992,53 +1285,58 @@ func gitRevParse(dir, ref string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func ensureLocalGitRepo(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func ensureLocalGitRepo(ctx context.Context, dir string) error {
+	if err := os.MkdirAll(dir, dirModePrivateRead); err != nil {
 		return err
 	}
+	runCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
+	defer cancel()
 	gitDir := filepath.Join(dir, ".git")
 	if _, err := os.Stat(gitDir); err != nil {
 		if !os.IsNotExist(err) {
 			return err
 		}
-		if err := runCmd(dir, nil, "git", "init", "-b", "main"); err != nil {
+		initErr := runGitCmd(runCtx, dir, "init", "-b", branchMain)
+		if initErr != nil {
 			// Fallback for older git versions that do not support `-b`.
-			if err2 := runCmd(dir, nil, "git", "init"); err2 != nil {
-				return fmt.Errorf("git init failed: %v; fallback failed: %w", err, err2)
+			fallbackErr := runGitCmd(runCtx, dir, "init")
+			if fallbackErr != nil {
+				return fmt.Errorf("git init failed: %w; fallback failed: %w", initErr, fallbackErr)
 			}
 		}
 	}
-	if err := runCmd(dir, nil, "git", "checkout", "-B", "main"); err != nil {
+	if err := runGitCmd(runCtx, dir, "checkout", "-B", branchMain); err != nil {
 		return err
 	}
-	if err := runCmd(dir, nil, "git", "config", "user.name", "Local PaaS Bot"); err != nil {
+	if err := runGitCmd(runCtx, dir, "config", "user.name", "Local PaaS Bot"); err != nil {
 		return err
 	}
-	if err := runCmd(dir, nil, "git", "config", "user.email", "paas-local@example.invalid"); err != nil {
+	if err := runGitCmd(runCtx, dir, "config", "user.email", "paas-local@example.invalid"); err != nil {
 		return err
 	}
-	if err := runCmd(dir, nil, "git", "config", "commit.gpgsign", "false"); err != nil {
+	if err := runGitCmd(runCtx, dir, "config", "commit.gpgsign", "false"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func writeFileIfMissing(path string, data []byte, mode os.FileMode) (bool, error) {
+func writeFileIfMissing(path string, data []byte) (bool, error) {
 	if _, err := os.Stat(path); err == nil {
 		return false, nil
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), dirModePrivateRead); err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(path, data, mode); err != nil {
-		return false, err
+	writeErr := os.WriteFile(path, data, fileModePrivate)
+	if writeErr != nil {
+		return false, writeErr
 	}
 	return true, nil
 }
 
-func upsertFile(path string, data []byte, mode os.FileMode) (bool, error) {
+func upsertFile(path string, data []byte) (bool, error) {
 	prev, err := os.ReadFile(path)
 	if err == nil && string(prev) == string(data) {
 		return false, nil
@@ -1046,11 +1344,13 @@ func upsertFile(path string, data []byte, mode os.FileMode) (bool, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
+	mkdirErr := os.MkdirAll(filepath.Dir(path), dirModePrivateRead)
+	if mkdirErr != nil {
+		return false, mkdirErr
 	}
-	if err := os.WriteFile(path, data, mode); err != nil {
-		return false, err
+	writeErr := os.WriteFile(path, data, fileModePrivate)
+	if writeErr != nil {
+		return false, writeErr
 	}
 	return true, nil
 }
@@ -1075,7 +1375,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-if [ "$branch" != "main" ]; then
+if [ "$branch" != %q ]; then
   exit 0
 fi
 
@@ -1091,25 +1391,25 @@ if [ -z "$commit" ]; then
   exit 0
 fi
 
-curl -fsS --max-time 2 \
+curl -fsS --max-time %d \
   -H 'Content-Type: application/json' \
   -X POST '%s' \
   -d "{\"project_id\":\"%s\",\"repo\":\"source\",\"branch\":\"${branch}\",\"ref\":\"refs/heads/${branch}\",\"commit\":\"${commit}\"}" \
   >/dev/null || true
-`, endpoint, projectID)
+`, branchMain, projectRelPathPartsMin, endpoint, projectID)
 }
 
 func installSourceWebhookHooks(repoDir, projectID, endpoint string) error {
 	script := []byte(renderSourceWebhookHookScript(projectID, endpoint))
 	for _, hook := range []string{"post-commit", "post-merge"} {
 		hookPath := filepath.Join(repoDir, ".git", "hooks", hook)
-		if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(hookPath), dirModePrivateRead); err != nil {
 			return err
 		}
-		if err := os.WriteFile(hookPath, script, 0o755); err != nil {
+		if err := os.WriteFile(hookPath, script, fileModeExecPrivate); err != nil {
 			return err
 		}
-		if err := os.Chmod(hookPath, 0o755); err != nil {
+		if err := os.Chmod(hookPath, fileModeExecPrivate); err != nil {
 			return err
 		}
 	}
@@ -1128,336 +1428,635 @@ func uniqueSorted(values []string) []string {
 	for v := range set {
 		out = append(out, v)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
-func repoBootstrapWorkerAction(ctx context.Context, store *Store, artifacts ArtifactStore, msg ProjectOpMsg) (WorkerResultMsg, error) {
+type repoBootstrapOutcome struct {
+	message   string
+	artifacts []string
+}
+
+func newRepoBootstrapOutcome() repoBootstrapOutcome {
+	return repoBootstrapOutcome{
+		message:   "",
+		artifacts: nil,
+	}
+}
+
+func repoBootstrapWorkerAction(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (WorkerResultMsg, error) {
 	stepStart := time.Now().UTC()
-	res := WorkerResultMsg{Message: "repo bootstrap worker starting"}
-	_ = markOpStepStart(ctx, store, msg.OpID, "repoBootstrap", stepStart, "bootstrap source and manifests repos")
+	res := newWorkerResultMsg("repo bootstrap worker starting")
+	_ = markOpStepStart(
+		ctx,
+		store,
+		msg.OpID,
+		"repoBootstrap",
+		stepStart,
+		"bootstrap source and manifests repos",
+	)
 
 	spec := normalizeProjectSpec(msg.Spec)
+	outcome := newRepoBootstrapOutcome()
+	var err error
+
 	switch msg.Kind {
 	case OpCreate, OpUpdate:
-		projectDir, err := artifacts.EnsureProjectDir(msg.ProjectID)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
+		outcome, err = runRepoBootstrapCreateOrUpdate(ctx, artifacts, msg, spec)
+	case OpDelete:
+		outcome, err = runRepoBootstrapDelete(artifacts, msg.ProjectID)
+	case OpCI:
+		outcome = repoBootstrapOutcome{
+			message:   "repo bootstrap skipped for ci operation",
+			artifacts: nil,
 		}
-		sourceDir := sourceRepoDir(artifacts, msg.ProjectID)
-		manifestsDir := manifestsRepoDir(artifacts, msg.ProjectID)
-		if err := ensureLocalGitRepo(sourceDir); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		if err := ensureLocalGitRepo(manifestsDir); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
+	default:
+		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
+	}
+	if err != nil {
+		_ = markOpStepEnd(
+			ctx,
+			store,
+			msg.OpID,
+			"repoBootstrap",
+			time.Now().UTC(),
+			"",
+			err.Error(),
+			outcome.artifacts,
+		)
+		return res, err
+	}
 
-		var touched []string
-		sourceReadme := filepath.Join(sourceDir, "README.md")
-		created, err := writeFileIfMissing(sourceReadme, []byte(fmt.Sprintf("# %s source\n\nRuntime: %s\n", spec.Name, spec.Runtime)), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if created {
-			touched = append(touched, relPath(projectDir, sourceReadme))
-		}
+	res.Message = outcome.message
+	res.Artifacts = outcome.artifacts
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		msg.OpID,
+		"repoBootstrap",
+		time.Now().UTC(),
+		res.Message,
+		"",
+		res.Artifacts,
+	)
+	return res, nil
+}
 
-		sourceMain := filepath.Join(sourceDir, "main.go")
-		created, err = writeFileIfMissing(sourceMain, []byte(fmt.Sprintf(`package main
+func runRepoBootstrapDelete(
+	artifacts ArtifactStore,
+	projectID string,
+) (repoBootstrapOutcome, error) {
+	planPath, err := artifacts.WriteFile(
+		projectID,
+		"repos/teardown-plan.txt",
+		[]byte("archive source repo\narchive manifests repo\nremove project workspace\n"),
+	)
+	if err != nil {
+		return repoBootstrapOutcome{}, err
+	}
+	return repoBootstrapOutcome{
+		message:   "repository teardown plan generated",
+		artifacts: []string{planPath},
+	}, nil
+}
+
+func runRepoBootstrapCreateOrUpdate(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+) (repoBootstrapOutcome, error) {
+	projectDir, sourceDir, manifestsDir, err := ensureBootstrapRepos(ctx, artifacts, msg.ProjectID)
+	if err != nil {
+		return repoBootstrapOutcome{}, err
+	}
+
+	touched := make([]string, 0, touchedArtifactsCap)
+	err = seedSourceRepo(msg, spec, projectDir, sourceDir, &touched)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: touched}, err
+	}
+	err = seedManifestsRepo(msg, spec, projectDir, manifestsDir, &touched)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: touched}, err
+	}
+	err = commitBootstrapSeeds(ctx, msg, sourceDir, manifestsDir)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: touched}, err
+	}
+
+	webhookURL, err := configureSourceWebhook(ctx, msg, projectDir, sourceDir, &touched)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: touched}, err
+	}
+	err = writeBootstrapSummary(ctx, msg, projectDir, sourceDir, manifestsDir, webhookURL, &touched)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: touched}, err
+	}
+	return repoBootstrapOutcome{
+		message:   "bootstrapped local source/manifests git repos and installed source webhook",
+		artifacts: uniqueSorted(touched),
+	}, nil
+}
+
+func ensureBootstrapRepos(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	projectID string,
+) (string, string, string, error) {
+	projectDir, err := artifacts.EnsureProjectDir(projectID)
+	if err != nil {
+		return "", "", "", err
+	}
+	sourceDir := sourceRepoDir(artifacts, projectID)
+	manifestsDir := manifestsRepoDir(artifacts, projectID)
+	sourceRepoErr := ensureLocalGitRepo(ctx, sourceDir)
+	if sourceRepoErr != nil {
+		return "", "", "", sourceRepoErr
+	}
+	manifestsRepoErr := ensureLocalGitRepo(ctx, manifestsDir)
+	if manifestsRepoErr != nil {
+		return "", "", "", manifestsRepoErr
+	}
+	return projectDir, sourceDir, manifestsDir, nil
+}
+
+func seedSourceRepo(
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	projectDir, sourceDir string,
+	touched *[]string,
+) error {
+	sourceReadme := filepath.Join(sourceDir, "README.md")
+	sourceReadmeBody := fmt.Appendf(nil, "# %s source\n\nRuntime: %s\n", spec.Name, spec.Runtime)
+	readmeCreated, err := writeFileIfMissing(
+		sourceReadme,
+		sourceReadmeBody,
+	)
+	if err != nil {
+		return err
+	}
+	recordTouched(projectDir, touched, sourceReadme, readmeCreated)
+
+	sourceMain := filepath.Join(sourceDir, "main.go")
+	sourceMainBody := fmt.Appendf(nil, `package main
 
 import "fmt"
 
 func main() { fmt.Println("hello from %s") }
-`, spec.Name)), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if created {
-			touched = append(touched, relPath(projectDir, sourceMain))
-		}
-
-		manifestsReadme := filepath.Join(manifestsDir, "README.md")
-		created, err = writeFileIfMissing(manifestsReadme, []byte(fmt.Sprintf("# %s manifests\n\nTarget image: local/%s:latest\n", spec.Name, safeName(spec.Name))), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if created {
-			touched = append(touched, relPath(projectDir, manifestsReadme))
-		}
-
-		sourceRepoMeta := filepath.Join(sourceDir, ".paas", "repo.json")
-		updated, err := upsertFile(sourceRepoMeta, mustJSON(map[string]any{
-			"project_id": msg.ProjectID,
-			"repo":       "source",
-			"path":       sourceDir,
-			"branch":     "main",
-		}), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if updated {
-			touched = append(touched, relPath(projectDir, sourceRepoMeta))
-		}
-
-		manifestsRepoMeta := filepath.Join(manifestsDir, ".paas", "repo.json")
-		updated, err = upsertFile(manifestsRepoMeta, mustJSON(map[string]any{
-			"project_id": msg.ProjectID,
-			"repo":       "manifests",
-			"path":       manifestsDir,
-			"branch":     "main",
-		}), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if updated {
-			touched = append(touched, relPath(projectDir, manifestsRepoMeta))
-		}
-
-		if _, err := gitCommitIfChanged(sourceDir, fmt.Sprintf("platform-sync: bootstrap source repo (%s)", shortID(msg.OpID))); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if _, err := gitCommitIfChanged(manifestsDir, fmt.Sprintf("platform-sync: bootstrap manifests repo (%s)", shortID(msg.OpID))); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-
-		webhookURL := sourceWebhookEndpoint()
-		if err := installSourceWebhookHooks(sourceDir, msg.ProjectID, webhookURL); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		webhookMeta := filepath.Join(sourceDir, ".paas", "webhook.json")
-		updated, err = upsertFile(webhookMeta, mustJSON(map[string]any{
-			"project_id": msg.ProjectID,
-			"repo":       "source",
-			"branch":     "main",
-			"endpoint":   webhookURL,
-			"hooks":      []string{"post-commit", "post-merge"},
-		}), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if updated {
-			touched = append(touched, relPath(projectDir, webhookMeta))
-		}
-		if _, err := gitCommitIfChanged(sourceDir, fmt.Sprintf("platform-sync: configure source webhook (%s)", shortID(msg.OpID))); err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-
-		sourceHead, _ := gitRevParse(sourceDir, "HEAD")
-		manifestsHead, _ := gitRevParse(manifestsDir, "HEAD")
-		bootstrapInfo := filepath.Join(projectDir, "repos", "bootstrap-local.json")
-		updated, err = upsertFile(bootstrapInfo, mustJSON(map[string]any{
-			"project_id":         msg.ProjectID,
-			"source_repo_path":   sourceDir,
-			"source_branch":      "main",
-			"source_head":        sourceHead,
-			"manifests_repo":     manifestsDir,
-			"manifests_branch":   "main",
-			"manifests_head":     manifestsHead,
-			"webhook_endpoint":   webhookURL,
-			"webhook_event_repo": "source",
-		}), 0o644)
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), touched)
-			return res, err
-		}
-		if updated {
-			touched = append(touched, relPath(projectDir, bootstrapInfo))
-		}
-
-		res.Message = "bootstrapped local source/manifests git repos and installed source webhook"
-		res.Artifacts = uniqueSorted(touched)
-
-	case OpDelete:
-		a1, err := artifacts.WriteFile(msg.ProjectID, "repos/teardown-plan.txt",
-			[]byte("archive source repo\narchive manifests repo\nremove project workspace\n"))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		res.Message = "repository teardown plan generated"
-		res.Artifacts = []string{a1}
-
-	default:
-		err := fmt.Errorf("unknown op kind: %s", msg.Kind)
-		_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), "", err.Error(), nil)
-		return res, err
+`, spec.Name)
+	mainCreated, err := writeFileIfMissing(sourceMain, sourceMainBody)
+	if err != nil {
+		return err
 	}
+	recordTouched(projectDir, touched, sourceMain, mainCreated)
 
-	_ = markOpStepEnd(ctx, store, msg.OpID, "repoBootstrap", time.Now().UTC(), res.Message, "", res.Artifacts)
-	return res, nil
+	sourceRepoMeta := filepath.Join(sourceDir, ".paas", "repo.json")
+	metaUpdated, err := upsertFile(sourceRepoMeta, mustJSON(map[string]any{
+		"project_id": msg.ProjectID,
+		"repo":       "source",
+		"path":       sourceDir,
+		"branch":     branchMain,
+	}))
+	if err != nil {
+		return err
+	}
+	recordTouched(projectDir, touched, sourceRepoMeta, metaUpdated)
+	return nil
 }
 
-func imageBuilderWorkerAction(ctx context.Context, store *Store, artifacts ArtifactStore, msg ProjectOpMsg) (WorkerResultMsg, error) {
+func seedManifestsRepo(
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	projectDir, manifestsDir string,
+	touched *[]string,
+) error {
+	manifestsReadme := filepath.Join(manifestsDir, "README.md")
+	manifestsReadmeBody := fmt.Appendf(
+		nil,
+		"# %s manifests\n\nTarget image: local/%s:latest\n",
+		spec.Name,
+		safeName(spec.Name),
+	)
+	readmeCreated, err := writeFileIfMissing(
+		manifestsReadme,
+		manifestsReadmeBody,
+	)
+	if err != nil {
+		return err
+	}
+	recordTouched(projectDir, touched, manifestsReadme, readmeCreated)
+
+	manifestsRepoMeta := filepath.Join(manifestsDir, ".paas", "repo.json")
+	metaUpdated, err := upsertFile(manifestsRepoMeta, mustJSON(map[string]any{
+		"project_id": msg.ProjectID,
+		"repo":       "manifests",
+		"path":       manifestsDir,
+		"branch":     branchMain,
+	}))
+	if err != nil {
+		return err
+	}
+	recordTouched(projectDir, touched, manifestsRepoMeta, metaUpdated)
+	return nil
+}
+
+func commitBootstrapSeeds(
+	ctx context.Context,
+	msg ProjectOpMsg,
+	sourceDir, manifestsDir string,
+) error {
+	_, sourceCommitErr := gitCommitIfChanged(
+		ctx,
+		sourceDir,
+		fmt.Sprintf("platform-sync: bootstrap source repo (%s)", shortID(msg.OpID)),
+	)
+	if sourceCommitErr != nil {
+		return sourceCommitErr
+	}
+	_, manifestsCommitErr := gitCommitIfChanged(
+		ctx,
+		manifestsDir,
+		fmt.Sprintf("platform-sync: bootstrap manifests repo (%s)", shortID(msg.OpID)),
+	)
+	return manifestsCommitErr
+}
+
+func configureSourceWebhook(
+	ctx context.Context,
+	msg ProjectOpMsg,
+	projectDir, sourceDir string,
+	touched *[]string,
+) (string, error) {
+	webhookURL := sourceWebhookEndpoint()
+	if err := installSourceWebhookHooks(sourceDir, msg.ProjectID, webhookURL); err != nil {
+		return "", err
+	}
+	webhookMeta := filepath.Join(sourceDir, ".paas", "webhook.json")
+	updated, err := upsertFile(webhookMeta, mustJSON(map[string]any{
+		"project_id": msg.ProjectID,
+		"repo":       "source",
+		"branch":     branchMain,
+		"endpoint":   webhookURL,
+		"hooks":      []string{"post-commit", "post-merge"},
+	}))
+	if err != nil {
+		return "", err
+	}
+	recordTouched(projectDir, touched, webhookMeta, updated)
+	_, commitErr := gitCommitIfChanged(
+		ctx,
+		sourceDir,
+		fmt.Sprintf("platform-sync: configure source webhook (%s)", shortID(msg.OpID)),
+	)
+	if commitErr != nil {
+		return "", commitErr
+	}
+	return webhookURL, nil
+}
+
+func writeBootstrapSummary(
+	ctx context.Context,
+	msg ProjectOpMsg,
+	projectDir, sourceDir, manifestsDir, webhookURL string,
+	touched *[]string,
+) error {
+	sourceHead, _ := gitRevParse(ctx, sourceDir, "HEAD")
+	manifestsHead, _ := gitRevParse(ctx, manifestsDir, "HEAD")
+	bootstrapInfo := filepath.Join(projectDir, "repos", "bootstrap-local.json")
+	updated, err := upsertFile(bootstrapInfo, mustJSON(map[string]any{
+		"project_id":         msg.ProjectID,
+		"source_repo_path":   sourceDir,
+		"source_branch":      branchMain,
+		"source_head":        sourceHead,
+		"manifests_repo":     manifestsDir,
+		"manifests_branch":   branchMain,
+		"manifests_head":     manifestsHead,
+		"webhook_endpoint":   webhookURL,
+		"webhook_event_repo": "source",
+	}))
+	if err != nil {
+		return err
+	}
+	recordTouched(projectDir, touched, bootstrapInfo, updated)
+	return nil
+}
+
+func recordTouched(projectDir string, touched *[]string, fullPath string, changed bool) {
+	if !changed {
+		return
+	}
+	*touched = append(*touched, relPath(projectDir, fullPath))
+}
+
+func imageBuilderWorkerAction(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (WorkerResultMsg, error) {
 	stepStart := time.Now().UTC()
-	res := WorkerResultMsg{Message: "image builder worker starting"}
-	_ = markOpStepStart(ctx, store, msg.OpID, "imageBuilder", stepStart, "build and publish image to local daemon")
+	res := newWorkerResultMsg("image builder worker starting")
+	_ = markOpStepStart(
+		ctx,
+		store,
+		msg.OpID,
+		"imageBuilder",
+		stepStart,
+		"build and publish image to local daemon",
+	)
 
 	spec := normalizeProjectSpec(msg.Spec)
 	imageTag := fmt.Sprintf("local/%s:%s", safeName(spec.Name), shortID(msg.OpID))
+	outcome := newRepoBootstrapOutcome()
+	var err error
 
 	switch msg.Kind {
 	case OpCreate, OpUpdate, OpCI:
-		a1, err := artifacts.WriteFile(msg.ProjectID, "build/Dockerfile", []byte(fmt.Sprintf(`FROM alpine:3.20
+		outcome, err = runImageBuilderBuild(artifacts, msg, spec, imageTag)
+	case OpDelete:
+		outcome, err = runImageBuilderDelete(artifacts, msg.ProjectID, msg.OpID)
+	default:
+		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
+	}
+	if err != nil {
+		_ = markOpStepEnd(
+			ctx,
+			store,
+			msg.OpID,
+			"imageBuilder",
+			time.Now().UTC(),
+			"",
+			err.Error(),
+			outcome.artifacts,
+		)
+		return res, err
+	}
+
+	res.Message = outcome.message
+	res.Artifacts = outcome.artifacts
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		msg.OpID,
+		"imageBuilder",
+		time.Now().UTC(),
+		res.Message,
+		"",
+		res.Artifacts,
+	)
+	return res, nil
+}
+
+func runImageBuilderBuild(
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	imageTag string,
+) (repoBootstrapOutcome, error) {
+	dockerfileBody := fmt.Appendf(nil, `FROM alpine:3.20
 WORKDIR /app
 COPY . .
 CMD ["sh", "-c", "echo running %s (%s) && sleep infinity"]
-`, spec.Name, spec.Runtime)))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "imageBuilder", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		a2, err := artifacts.WriteFile(msg.ProjectID, "build/publish-local-daemon.json", mustJSON(map[string]any{
+`, spec.Name, spec.Runtime)
+	dockerfilePath, err := artifacts.WriteFile(msg.ProjectID, "build/Dockerfile", dockerfileBody)
+	if err != nil {
+		return newRepoBootstrapOutcome(), err
+	}
+	publishPath, err := artifacts.WriteFile(
+		msg.ProjectID,
+		"build/publish-local-daemon.json",
+		mustJSON(map[string]any{
 			"op_id":         msg.OpID,
 			"project_id":    msg.ProjectID,
 			"image":         imageTag,
 			"runtime":       spec.Runtime,
 			"published_at":  time.Now().UTC().Format(time.RFC3339),
 			"daemon_target": "local",
-		}))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "imageBuilder", time.Now().UTC(), "", err.Error(), []string{a1})
-			return res, err
-		}
-		a3, err := artifacts.WriteFile(msg.ProjectID, "build/image.txt", []byte(imageTag+"\n"))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "imageBuilder", time.Now().UTC(), "", err.Error(), []string{a1, a2})
-			return res, err
-		}
-		res.Message = "container image built and published to local daemon"
-		res.Artifacts = []string{a1, a2, a3}
-
-	case OpDelete:
-		a1, err := artifacts.WriteFile(msg.ProjectID, "build/image-prune.txt", []byte(fmt.Sprintf("prune local image for project=%s op=%s\n", msg.ProjectID, msg.OpID)))
-		if err != nil {
-			_ = markOpStepEnd(ctx, store, msg.OpID, "imageBuilder", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		res.Message = "container prune plan generated"
-		res.Artifacts = []string{a1}
-
-	default:
-		err := fmt.Errorf("unknown op kind: %s", msg.Kind)
-		_ = markOpStepEnd(ctx, store, msg.OpID, "imageBuilder", time.Now().UTC(), "", err.Error(), nil)
-		return res, err
+		}),
+	)
+	if err != nil {
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: []string{dockerfilePath},
+		}, err
 	}
-
-	_ = markOpStepEnd(ctx, store, msg.OpID, "imageBuilder", time.Now().UTC(), res.Message, "", res.Artifacts)
-	return res, nil
+	imagePath, err := artifacts.WriteFile(msg.ProjectID, "build/image.txt", []byte(imageTag+"\n"))
+	if err != nil {
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: []string{dockerfilePath, publishPath},
+		}, err
+	}
+	return repoBootstrapOutcome{
+		message:   "container image built and published to local daemon",
+		artifacts: []string{dockerfilePath, publishPath, imagePath},
+	}, nil
 }
 
-func manifestRendererWorkerAction(ctx context.Context, store *Store, artifacts ArtifactStore, msg ProjectOpMsg) (WorkerResultMsg, error) {
+func runImageBuilderDelete(
+	artifacts ArtifactStore,
+	projectID, opID string,
+) (repoBootstrapOutcome, error) {
+	pruneBody := fmt.Appendf(nil, "prune local image for project=%s op=%s\n", projectID, opID)
+	prunePath, err := artifacts.WriteFile(projectID, "build/image-prune.txt", pruneBody)
+	if err != nil {
+		return newRepoBootstrapOutcome(), err
+	}
+	return repoBootstrapOutcome{
+		message:   "container prune plan generated",
+		artifacts: []string{prunePath},
+	}, nil
+}
+
+func manifestRendererWorkerAction(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (WorkerResultMsg, error) {
 	stepStart := time.Now().UTC()
-	res := WorkerResultMsg{Message: "manifest renderer worker starting"}
-	_ = markOpStepStart(ctx, store, msg.OpID, "manifestRenderer", stepStart, "render kubernetes deployment manifests")
+	res := newWorkerResultMsg("manifest renderer worker starting")
+	_ = markOpStepStart(
+		ctx,
+		store,
+		msg.OpID,
+		"manifestRenderer",
+		stepStart,
+		"render kubernetes deployment manifests",
+	)
 
 	spec := normalizeProjectSpec(msg.Spec)
 	imageTag := fmt.Sprintf("local/%s:%s", safeName(spec.Name), shortID(msg.OpID))
+	outcome := newRepoBootstrapOutcome()
+	var err error
 
 	switch msg.Kind {
 	case OpCreate, OpUpdate, OpCI:
-		deployment := renderDeploymentManifest(spec, imageTag)
-		service := renderServiceManifest(spec)
-
-		a1, err := artifacts.WriteFile(msg.ProjectID, "deploy/deployment.yaml", []byte(deployment))
-		if err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		a2, err := artifacts.WriteFile(msg.ProjectID, "deploy/service.yaml", []byte(service))
-		if err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), []string{a1})
-			return res, err
-		}
-		a3, err := artifacts.WriteFile(msg.ProjectID, "repos/manifests/deployment.yaml", []byte(deployment))
-		if err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), []string{a1, a2})
-			return res, err
-		}
-		a4, err := artifacts.WriteFile(msg.ProjectID, "repos/manifests/service.yaml", []byte(service))
-		if err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), []string{a1, a2, a3})
-			return res, err
-		}
-		manifestsDir := manifestsRepoDir(artifacts, msg.ProjectID)
-		if err := ensureLocalGitRepo(manifestsDir); err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), []string{a1, a2, a3, a4})
-			return res, err
-		}
-		if _, err := gitCommitIfChanged(manifestsDir, fmt.Sprintf("platform-sync: render manifests (%s)", shortID(msg.OpID))); err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), []string{a1, a2, a3, a4})
-			return res, err
-		}
-
-		if p, err := store.GetProject(ctx, msg.ProjectID); err == nil {
-			p.Spec = spec
-			p.Status = ProjectStatus{
-				Phase:      "Ready",
-				UpdatedAt:  time.Now().UTC(),
-				LastOpID:   msg.OpID,
-				LastOpKind: string(msg.Kind),
-				Message:    "ready",
-			}
-			_ = store.PutProject(ctx, p)
-		}
-
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
-		res.Message = "rendered kubernetes deployment manifests"
-		res.Artifacts = []string{a1, a2, a3, a4}
-
+		outcome, err = runManifestRendererApply(ctx, store, artifacts, msg, spec, imageTag)
 	case OpDelete:
-		auditDir := filepath.Join(filepath.Dir(artifacts.ProjectDir(msg.ProjectID)), "_audit")
-		_ = os.MkdirAll(auditDir, 0o755)
-		_ = os.WriteFile(filepath.Join(auditDir, fmt.Sprintf("%s.deleted.txt", msg.ProjectID)),
-			[]byte(fmt.Sprintf("project=%s deleted at %s op=%s\n", msg.ProjectID, time.Now().UTC().Format(time.RFC3339), msg.OpID)),
-			0o644,
-		)
-
-		if err := artifacts.RemoveProject(msg.ProjectID); err != nil {
-			_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-			_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), nil)
-			return res, err
-		}
-		_ = store.DeleteProject(ctx, msg.ProjectID)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
-		res.Message = "project deleted and artifacts cleaned"
-		res.Artifacts = []string{}
-
+		outcome, err = runManifestRendererDelete(ctx, store, artifacts, msg)
 	default:
-		err := fmt.Errorf("unknown op kind: %s", msg.Kind)
+		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
+	}
+	if err != nil {
 		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-		_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), "", err.Error(), nil)
+		_ = markOpStepEnd(
+			ctx,
+			store,
+			msg.OpID,
+			"manifestRenderer",
+			time.Now().UTC(),
+			"",
+			err.Error(),
+			outcome.artifacts,
+		)
 		return res, err
 	}
 
-	_ = markOpStepEnd(ctx, store, msg.OpID, "manifestRenderer", time.Now().UTC(), res.Message, "", res.Artifacts)
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
+	res.Message = outcome.message
+	res.Artifacts = outcome.artifacts
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		msg.OpID,
+		"manifestRenderer",
+		time.Now().UTC(),
+		res.Message,
+		"",
+		res.Artifacts,
+	)
 	return res, nil
 }
 
+func runManifestRendererApply(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	imageTag string,
+) (repoBootstrapOutcome, error) {
+	deployment := renderDeploymentManifest(spec, imageTag)
+	service := renderServiceManifest(spec)
+	renderedArtifacts, err := writeRenderedManifestFiles(
+		artifacts,
+		msg.ProjectID,
+		deployment,
+		service,
+	)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, err
+	}
+	manifestsDir := manifestsRepoDir(artifacts, msg.ProjectID)
+	repoErr := ensureLocalGitRepo(ctx, manifestsDir)
+	if repoErr != nil {
+		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, repoErr
+	}
+	_, commitErr := gitCommitIfChanged(
+		ctx,
+		manifestsDir,
+		fmt.Sprintf("platform-sync: render manifests (%s)", shortID(msg.OpID)),
+	)
+	if commitErr != nil {
+		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, commitErr
+	}
+	updateProjectReadyState(ctx, store, msg, spec)
+	return repoBootstrapOutcome{
+		message:   "rendered kubernetes deployment manifests",
+		artifacts: renderedArtifacts,
+	}, nil
+}
+
+func writeRenderedManifestFiles(
+	artifacts ArtifactStore,
+	projectID, deployment, service string,
+) ([]string, error) {
+	a1, err := artifacts.WriteFile(projectID, "deploy/deployment.yaml", []byte(deployment))
+	if err != nil {
+		return nil, err
+	}
+	a2, err := artifacts.WriteFile(projectID, "deploy/service.yaml", []byte(service))
+	if err != nil {
+		return []string{a1}, err
+	}
+	a3, err := artifacts.WriteFile(projectID, "repos/manifests/deployment.yaml", []byte(deployment))
+	if err != nil {
+		return []string{a1, a2}, err
+	}
+	a4, err := artifacts.WriteFile(projectID, "repos/manifests/service.yaml", []byte(service))
+	if err != nil {
+		return []string{a1, a2, a3}, err
+	}
+	return []string{a1, a2, a3, a4}, nil
+}
+
+func updateProjectReadyState(
+	ctx context.Context,
+	store *Store,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+) {
+	project, getErr := store.GetProject(ctx, msg.ProjectID)
+	if getErr != nil {
+		return
+	}
+	project.Spec = spec
+	project.Status = ProjectStatus{
+		Phase:      projectPhaseReady,
+		UpdatedAt:  time.Now().UTC(),
+		LastOpID:   msg.OpID,
+		LastOpKind: string(msg.Kind),
+		Message:    "ready",
+	}
+	_ = store.PutProject(ctx, project)
+}
+
+func runManifestRendererDelete(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (repoBootstrapOutcome, error) {
+	writeDeleteAudit(artifacts, msg.ProjectID, msg.OpID)
+	removeErr := artifacts.RemoveProject(msg.ProjectID)
+	if removeErr != nil {
+		return repoBootstrapOutcome{}, removeErr
+	}
+	_ = store.DeleteProject(ctx, msg.ProjectID)
+	return repoBootstrapOutcome{
+		message:   "project deleted and artifacts cleaned",
+		artifacts: []string{},
+	}, nil
+}
+
+func writeDeleteAudit(artifacts ArtifactStore, projectID, opID string) {
+	auditDir := filepath.Join(filepath.Dir(artifacts.ProjectDir(projectID)), "_audit")
+	_ = os.MkdirAll(auditDir, dirModePrivateRead)
+	_ = os.WriteFile(
+		filepath.Join(auditDir, fmt.Sprintf("%s.deleted.txt", projectID)),
+		fmt.Appendf(
+			nil,
+			"project=%s deleted at %s op=%s\n",
+			projectID,
+			time.Now().UTC().Format(time.RFC3339),
+			opID,
+		),
+		fileModePrivate,
+	)
+}
+
 func shortID(id string) string {
-	if len(id) <= 12 {
+	if len(id) <= shortIDLength {
 		return id
 	}
-	return id[:12]
+	return id[:shortIDLength]
 }
 
 func sortedKeys[K ~string, V any](m map[K]V) []K {
@@ -1465,7 +2064,7 @@ func sortedKeys[K ~string, V any](m map[K]V) []K {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -1515,7 +2114,7 @@ func preferredEnvironment(spec ProjectSpec) (string, map[string]string) {
 		return "default", map[string]string{}
 	}
 	first := names[0]
-	return string(first), spec.Environments[first].Vars
+	return first, spec.Environments[first].Vars
 }
 
 func renderDeploymentManifest(spec ProjectSpec, image string) string {
@@ -1603,7 +2202,13 @@ func safeName(s string) string {
 // Operation bookkeeping helpers
 ////////////////////////////////////////////////////////////////////////////////
 
-func markOpStepStart(ctx context.Context, store *Store, opID, worker string, startedAt time.Time, msg string) error {
+func markOpStepStart(
+	ctx context.Context,
+	store *Store,
+	opID, worker string,
+	startedAt time.Time,
+	msg string,
+) error {
 	op, err := store.GetOp(ctx, opID)
 	if err != nil {
 		return err
@@ -1612,12 +2217,22 @@ func markOpStepStart(ctx context.Context, store *Store, opID, worker string, sta
 	op.Steps = append(op.Steps, OpStep{
 		Worker:    worker,
 		StartedAt: startedAt,
+		EndedAt:   time.Time{},
 		Message:   msg,
+		Error:     "",
+		Artifacts: nil,
 	})
 	return store.PutOp(ctx, op)
 }
 
-func markOpStepEnd(ctx context.Context, store *Store, opID, worker string, endedAt time.Time, message, stepErr string, artifacts []string) error {
+func markOpStepEnd(
+	ctx context.Context,
+	store *Store,
+	opID, worker string,
+	endedAt time.Time,
+	message, stepErr string,
+	artifacts []string,
+) error {
 	op, err := store.GetOp(ctx, opID)
 	if err != nil {
 		return err
@@ -1642,7 +2257,13 @@ func markOpStepEnd(ctx context.Context, store *Store, opID, worker string, ended
 	return store.PutOp(ctx, op)
 }
 
-func finalizeOp(ctx context.Context, store *Store, opID, projectID string, kind OperationKind, status, errMsg string) error {
+func finalizeOp(
+	ctx context.Context,
+	store *Store,
+	opID, projectID string,
+	kind OperationKind,
+	status, errMsg string,
+) error {
 	op, err := store.GetOp(ctx, opID)
 	if err != nil {
 		return err
@@ -1650,26 +2271,28 @@ func finalizeOp(ctx context.Context, store *Store, opID, projectID string, kind 
 	op.Status = status
 	op.Error = errMsg
 	op.Finished = time.Now().UTC()
-	if err := store.PutOp(ctx, op); err != nil {
-		return err
+	putErr := store.PutOp(ctx, op)
+	if putErr != nil {
+		return putErr
 	}
 
 	// Best-effort: update project status (except delete where record might be removed later)
 	p, err := store.GetProject(ctx, projectID)
 	if err != nil {
-		return nil
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return nil
+		}
+		return err
 	}
 	switch {
 	case kind == OpDelete && status == "running":
-		p.Status.Phase = "Deleting"
+		p.Status.Phase = projectPhaseDel
 	case status == "error":
-		p.Status.Phase = "Error"
+		p.Status.Phase = projectPhaseError
 		p.Status.Message = errMsg
 	case status == "done":
-		if kind == OpDelete {
-			// Project will be deleted from KV by final worker.
-		} else {
-			p.Status.Phase = "Ready"
+		if kind != OpDelete {
+			p.Status.Phase = projectPhaseReady
 			p.Status.Message = "ready"
 		}
 	}
@@ -1715,6 +2338,7 @@ func (a *API) routes() http.Handler {
 
 type statusRecorder struct {
 	http.ResponseWriter
+
 	status int
 }
 
@@ -1731,10 +2355,13 @@ func (s *statusRecorder) Write(p []byte) (int, error) {
 }
 
 func (a *API) withRequestLogging(next http.Handler) http.Handler {
-	apiLog := appLog.Source("api")
+	apiLog := appLoggerForProcess().Source("api")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
-		rec := &statusRecorder{ResponseWriter: w}
+		rec := &statusRecorder{
+			ResponseWriter: w,
+			status:         0,
+		}
 		next.ServeHTTP(rec, r)
 		if rec.status == 0 {
 			rec.status = http.StatusOK
@@ -1742,9 +2369,9 @@ func (a *API) withRequestLogging(next http.Handler) http.Handler {
 		dur := time.Since(started).Round(time.Millisecond)
 		msg := fmt.Sprintf("%s %s -> %d (%s)", r.Method, r.URL.Path, rec.status, dur)
 		switch {
-		case rec.status >= 500:
+		case rec.status >= httpServerErrThreshold:
 			apiLog.Errorf("%s", msg)
-		case rec.status >= 400:
+		case rec.status >= httpClientErrThreshold:
 			apiLog.Warnf("%s", msg)
 		default:
 			apiLog.Infof("%s", msg)
@@ -1755,7 +2382,7 @@ func (a *API) withRequestLogging(next http.Handler) http.Handler {
 type RegistrationEvent struct {
 	Action    string      `json:"action"` // create|update|delete
 	ProjectID string      `json:"project_id,omitempty"`
-	Spec      ProjectSpec `json:"spec,omitempty"`
+	Spec      ProjectSpec `json:"spec"`
 }
 
 type SourceRepoWebhookEvent struct {
@@ -1766,7 +2393,10 @@ type SourceRepoWebhookEvent struct {
 	Commit    string `json:"commit,omitempty"`
 }
 
-func (a *API) createProjectFromSpec(ctx context.Context, spec ProjectSpec) (Project, Operation, WorkerResultMsg, error) {
+func (a *API) createProjectFromSpec(
+	ctx context.Context,
+	spec ProjectSpec,
+) (Project, Operation, WorkerResultMsg, error) {
 	spec = normalizeProjectSpec(spec)
 	if err := validateProjectSpec(spec); err != nil {
 		return Project{}, Operation{}, WorkerResultMsg{}, err
@@ -1787,8 +2417,9 @@ func (a *API) createProjectFromSpec(ctx context.Context, spec ProjectSpec) (Proj
 			Message:    "queued",
 		},
 	}
-	if err := a.store.PutProject(ctx, p); err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, fmt.Errorf("failed to persist project")
+	putErr := a.store.PutProject(ctx, p)
+	if putErr != nil {
+		return Project{}, Operation{}, WorkerResultMsg{}, errors.New("failed to persist project")
 	}
 
 	op, final, err := a.runOp(ctx, OpCreate, projectID, spec)
@@ -1799,7 +2430,11 @@ func (a *API) createProjectFromSpec(ctx context.Context, spec ProjectSpec) (Proj
 	return p, op, final, nil
 }
 
-func (a *API) updateProjectFromSpec(ctx context.Context, projectID string, spec ProjectSpec) (Project, Operation, WorkerResultMsg, error) {
+func (a *API) updateProjectFromSpec(
+	ctx context.Context,
+	projectID string,
+	spec ProjectSpec,
+) (Project, Operation, WorkerResultMsg, error) {
 	spec = normalizeProjectSpec(spec)
 	if err := validateProjectSpec(spec); err != nil {
 		return Project{}, Operation{}, WorkerResultMsg{}, err
@@ -1813,8 +2448,9 @@ func (a *API) updateProjectFromSpec(ctx context.Context, projectID string, spec 
 	p.Status.Phase = "Reconciling"
 	p.Status.Message = "queued update"
 	p.Status.UpdatedAt = time.Now().UTC()
-	if err := a.store.PutProject(ctx, p); err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, fmt.Errorf("failed to persist project")
+	putErr := a.store.PutProject(ctx, p)
+	if putErr != nil {
+		return Project{}, Operation{}, WorkerResultMsg{}, errors.New("failed to persist project")
 	}
 
 	op, final, err := a.runOp(ctx, OpUpdate, projectID, spec)
@@ -1825,17 +2461,20 @@ func (a *API) updateProjectFromSpec(ctx context.Context, projectID string, spec 
 	return p, op, final, nil
 }
 
-func (a *API) deleteProject(ctx context.Context, projectID string) (Operation, WorkerResultMsg, error) {
+func (a *API) deleteProject(
+	ctx context.Context,
+	projectID string,
+) (Operation, WorkerResultMsg, error) {
 	p, err := a.store.GetProject(ctx, projectID)
 	if err != nil {
 		return Operation{}, WorkerResultMsg{}, err
 	}
-	p.Status.Phase = "Deleting"
+	p.Status.Phase = projectPhaseDel
 	p.Status.Message = "queued delete"
 	p.Status.UpdatedAt = time.Now().UTC()
 	_ = a.store.PutProject(ctx, p)
 
-	op, final, err := a.runOp(ctx, OpDelete, projectID, ProjectSpec{})
+	op, final, err := a.runOp(ctx, OpDelete, projectID, zeroProjectSpec())
 	if err != nil {
 		return Operation{}, WorkerResultMsg{}, err
 	}
@@ -1847,76 +2486,105 @@ func (a *API) handleRegistrationEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var evt RegistrationEvent
-	if err := json.NewDecoder(r.Body).Decode(&evt); err != nil {
+	evt, err := decodeRegistrationEvent(r)
+	if err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	evt.Action = strings.TrimSpace(strings.ToLower(evt.Action))
-
 	switch evt.Action {
 	case "create":
-		project, op, final, err := a.createProjectFromSpec(r.Context(), evt.Spec)
-		if err != nil {
-			if strings.Contains(err.Error(), "must") || strings.Contains(err.Error(), "invalid") {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project": project,
-			"op":      op,
-			"final":   final,
-		})
+		a.handleRegistrationCreate(w, r, evt.Spec)
 	case "update":
-		projectID := strings.TrimSpace(evt.ProjectID)
-		if projectID == "" {
-			http.Error(w, "project_id required", http.StatusBadRequest)
-			return
-		}
-		project, op, final, err := a.updateProjectFromSpec(r.Context(), projectID, evt.Spec)
-		if err != nil {
-			if errors.Is(err, jetstream.ErrKeyNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			if strings.Contains(err.Error(), "must") || strings.Contains(err.Error(), "invalid") {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project": project,
-			"op":      op,
-			"final":   final,
-		})
+		a.handleRegistrationUpdate(w, r, evt.ProjectID, evt.Spec)
 	case "delete":
-		projectID := strings.TrimSpace(evt.ProjectID)
-		if projectID == "" {
-			http.Error(w, "project_id required", http.StatusBadRequest)
-			return
-		}
-		op, final, err := a.deleteProject(r.Context(), projectID)
-		if err != nil {
-			if errors.Is(err, jetstream.ErrKeyNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"deleted": true,
-			"op":      op,
-			"final":   final,
-		})
+		a.handleRegistrationDelete(w, r, evt.ProjectID)
 	default:
 		http.Error(w, "action must be create, update, or delete", http.StatusBadRequest)
 	}
+}
+
+func decodeRegistrationEvent(r *http.Request) (RegistrationEvent, error) {
+	var evt RegistrationEvent
+	if err := json.NewDecoder(r.Body).Decode(&evt); err != nil {
+		return RegistrationEvent{}, err
+	}
+	evt.Action = strings.TrimSpace(strings.ToLower(evt.Action))
+	return evt, nil
+}
+
+func (a *API) handleRegistrationCreate(w http.ResponseWriter, r *http.Request, spec ProjectSpec) {
+	project, op, final, err := a.createProjectFromSpec(r.Context(), spec)
+	if err != nil {
+		writeRegistrationError(w, err)
+		return
+	}
+	writeProjectOpFinalResponse(w, project, op, final)
+}
+
+func (a *API) handleRegistrationUpdate(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectID string,
+	spec ProjectSpec,
+) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		http.Error(w, "project_id required", http.StatusBadRequest)
+		return
+	}
+	project, op, final, err := a.updateProjectFromSpec(r.Context(), projectID, spec)
+	if err != nil {
+		writeRegistrationError(w, err)
+		return
+	}
+	writeProjectOpFinalResponse(w, project, op, final)
+}
+
+func (a *API) handleRegistrationDelete(w http.ResponseWriter, r *http.Request, projectID string) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		http.Error(w, "project_id required", http.StatusBadRequest)
+		return
+	}
+	op, final, err := a.deleteProject(r.Context(), projectID)
+	if err != nil {
+		writeRegistrationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": true,
+		"op":      op,
+		"final":   final,
+	})
+}
+
+func writeProjectOpFinalResponse(
+	w http.ResponseWriter,
+	project Project,
+	op Operation,
+	final WorkerResultMsg,
+) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project": project,
+		"op":      op,
+		"final":   final,
+	})
+}
+
+func writeRegistrationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, jetstream.ErrKeyNotFound):
+		http.Error(w, "not found", http.StatusNotFound)
+	case isValidationError(err):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func isValidationError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "must") || strings.Contains(msg, "invalid")
 }
 
 func normalizeBranchValue(v string) string {
@@ -1929,7 +2597,7 @@ func normalizeBranchValue(v string) string {
 func isMainBranchWebhook(branch, ref string) bool {
 	// Support either plain branch names ("main") or refs ("refs/heads/main")
 	// from webhook providers and accept either field if present.
-	return normalizeBranchValue(branch) == "main" || normalizeBranchValue(ref) == "main"
+	return normalizeBranchValue(branch) == branchMain || normalizeBranchValue(ref) == branchMain
 }
 
 func (a *API) handleSourceRepoWebhook(w http.ResponseWriter, r *http.Request) {
@@ -2025,7 +2693,8 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 				Message:    "queued",
 			},
 		}
-		if err := a.store.PutProject(r.Context(), p); err != nil {
+		putErr := a.store.PutProject(r.Context(), p)
+		if putErr != nil {
 			http.Error(w, "failed to persist project", http.StatusInternalServerError)
 			return
 		}
@@ -2050,122 +2719,133 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleProjectByID(w http.ResponseWriter, r *http.Request) {
-	// /api/projects/{id}
+	projectID, ok := a.resolveProjectIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		a.handleProjectGetByID(w, r, projectID)
+	case http.MethodPut:
+		a.handleProjectUpdateByID(w, r, projectID)
+	case http.MethodDelete:
+		a.handleProjectDeleteByID(w, r, projectID)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *API) resolveProjectIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if !strings.HasPrefix(r.URL.Path, "/api/projects/") {
 		http.NotFound(w, r)
-		return
+		return "", false
 	}
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/")
 	if rest == "" {
 		http.NotFound(w, r)
-		return
+		return "", false
 	}
 	parts := strings.Split(rest, "/")
 	if len(parts) > 1 {
-		// Route /api/projects/{id}/artifacts...
 		if parts[1] == "artifacts" {
 			a.handleProjectArtifacts(w, r)
-			return
+			return "", false
 		}
-		// Reject unknown subresources under /api/projects/{id}/...
 		http.NotFound(w, r)
-		return
+		return "", false
 	}
-
 	projectID := strings.TrimSpace(parts[0])
 	if projectID == "" {
 		http.Error(w, "bad project id", http.StatusBadRequest)
+		return "", false
+	}
+	return projectID, true
+}
+
+func (a *API) handleProjectGetByID(w http.ResponseWriter, r *http.Request, projectID string) {
+	project, ok := a.getProjectOrWriteError(w, r, projectID)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, project)
+}
+
+func (a *API) handleProjectUpdateByID(w http.ResponseWriter, r *http.Request, projectID string) {
+	var spec ProjectSpec
+	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	spec = normalizeProjectSpec(spec)
+	if err := validateProjectSpec(spec); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		p, err := a.store.GetProject(r.Context(), projectID)
-		if err != nil {
-			if errors.Is(err, jetstream.ErrKeyNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "failed to read project", http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, p)
-
-	case http.MethodPut:
-		var spec ProjectSpec
-		if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
-			http.Error(w, "invalid json", http.StatusBadRequest)
-			return
-		}
-		spec = normalizeProjectSpec(spec)
-		if err := validateProjectSpec(spec); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		p, err := a.store.GetProject(r.Context(), projectID)
-		if err != nil {
-			if errors.Is(err, jetstream.ErrKeyNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "failed to read project", http.StatusInternalServerError)
-			return
-		}
-
-		p.Spec = spec
-		p.Status.Phase = "Reconciling"
-		p.Status.Message = "queued update"
-		p.Status.UpdatedAt = time.Now().UTC()
-		if err := a.store.PutProject(r.Context(), p); err != nil {
-			http.Error(w, "failed to persist project", http.StatusInternalServerError)
-			return
-		}
-
-		op, final, err := a.runOp(r.Context(), OpUpdate, projectID, spec)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		p, _ = a.store.GetProject(r.Context(), projectID)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project": p,
-			"op":      op,
-			"final":   final,
-		})
-
-	case http.MethodDelete:
-		// Mark deleting early
-		p, err := a.store.GetProject(r.Context(), projectID)
-		if err != nil {
-			if errors.Is(err, jetstream.ErrKeyNotFound) {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "failed to read project", http.StatusInternalServerError)
-			return
-		}
-		p.Status.Phase = "Deleting"
-		p.Status.Message = "queued delete"
-		p.Status.UpdatedAt = time.Now().UTC()
-		_ = a.store.PutProject(r.Context(), p)
-
-		op, final, err := a.runOp(r.Context(), OpDelete, projectID, ProjectSpec{})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"deleted": true,
-			"op":      op,
-			"final":   final,
-		})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	project, ok := a.getProjectOrWriteError(w, r, projectID)
+	if !ok {
+		return
 	}
+	project.Spec = spec
+	project.Status.Phase = "Reconciling"
+	project.Status.Message = "queued update"
+	project.Status.UpdatedAt = time.Now().UTC()
+	putErr := a.store.PutProject(r.Context(), project)
+	if putErr != nil {
+		http.Error(w, "failed to persist project", http.StatusInternalServerError)
+		return
+	}
+
+	op, final, err := a.runOp(r.Context(), OpUpdate, projectID, spec)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	project, _ = a.store.GetProject(r.Context(), projectID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project": project,
+		"op":      op,
+		"final":   final,
+	})
+}
+
+func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, projectID string) {
+	project, ok := a.getProjectOrWriteError(w, r, projectID)
+	if !ok {
+		return
+	}
+	project.Status.Phase = projectPhaseDel
+	project.Status.Message = "queued delete"
+	project.Status.UpdatedAt = time.Now().UTC()
+	_ = a.store.PutProject(r.Context(), project)
+
+	op, final, err := a.runOp(r.Context(), OpDelete, projectID, zeroProjectSpec())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": true,
+		"op":      op,
+		"final":   final,
+	})
+}
+
+func (a *API) getProjectOrWriteError(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectID string,
+) (Project, bool) {
+	project, err := a.store.GetProject(r.Context(), projectID)
+	if err == nil {
+		return project, true
+	}
+	if errors.Is(err, jetstream.ErrKeyNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return Project{}, false
+	}
+	http.Error(w, "failed to read project", http.StatusInternalServerError)
+	return Project{}, false
 }
 
 func (a *API) handleProjectArtifacts(w http.ResponseWriter, r *http.Request) {
@@ -2195,7 +2875,7 @@ func (a *API) handleProjectArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// list
-	if len(parts) == 2 {
+	if len(parts) == projectRelPathPartsMin {
 		files, err := a.artifacts.ListFiles(projectID)
 		if err != nil {
 			http.Error(w, "failed to list artifacts", http.StatusInternalServerError)
@@ -2220,8 +2900,10 @@ func (a *API) handleProjectArtifacts(w http.ResponseWriter, r *http.Request) {
 
 	// Minimal content type handling
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(relPath)))
-	_, _ = w.Write(data)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().
+		Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(relPath)))
+	http.ServeContent(w, r, filepath.Base(relPath), time.Time{}, bytes.NewReader(data))
 }
 
 func (a *API) handleOpByID(w http.ResponseWriter, r *http.Request) {
@@ -2248,8 +2930,13 @@ func (a *API) handleOpByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, op)
 }
 
-func (a *API) runOp(ctx context.Context, kind OperationKind, projectID string, spec ProjectSpec) (Operation, WorkerResultMsg, error) {
-	apiLog := appLog.Source("api")
+func (a *API) runOp(
+	ctx context.Context,
+	kind OperationKind,
+	projectID string,
+	spec ProjectSpec,
+) (Operation, WorkerResultMsg, error) {
+	apiLog := appLoggerForProcess().Source("api")
 	opID := newID()
 	now := time.Now().UTC()
 
@@ -2259,7 +2946,9 @@ func (a *API) runOp(ctx context.Context, kind OperationKind, projectID string, s
 		Kind:      kind,
 		ProjectID: projectID,
 		Requested: now,
+		Finished:  time.Time{},
 		Status:    "queued",
+		Error:     "",
 		Steps:     []OpStep{},
 	}
 	if err := a.store.PutOp(ctx, op); err != nil {
@@ -2299,6 +2988,7 @@ func (a *API) runOp(ctx context.Context, kind OperationKind, projectID string, s
 		Kind:      kind,
 		ProjectID: projectID,
 		Spec:      spec,
+		Err:       "",
 		At:        now,
 	}
 	b, _ := json.Marshal(msg)
@@ -2306,8 +2996,9 @@ func (a *API) runOp(ctx context.Context, kind OperationKind, projectID string, s
 	if kind == OpCI {
 		startSubject = subjectBootstrapDone
 	}
+	finalizeCtx := context.WithoutCancel(ctx)
 	if err := a.nc.Publish(startSubject, b); err != nil {
-		_ = finalizeOp(context.Background(), a.store, opID, projectID, kind, "error", err.Error())
+		_ = finalizeOp(finalizeCtx, a.store, opID, projectID, kind, "error", err.Error())
 		apiLog.Errorf("publish failed op=%s kind=%s project=%s: %v", opID, kind, projectID, err)
 		return Operation{}, WorkerResultMsg{}, fmt.Errorf("publish op: %w", err)
 	}
@@ -2320,14 +3011,22 @@ func (a *API) runOp(ctx context.Context, kind OperationKind, projectID string, s
 	var final WorkerResultMsg
 	select {
 	case <-waitCtx.Done():
-		_ = finalizeOp(context.Background(), a.store, opID, projectID, kind, "error", "timeout waiting for workers")
+		_ = finalizeOp(
+			finalizeCtx,
+			a.store,
+			opID,
+			projectID,
+			kind,
+			"error",
+			"timeout waiting for workers",
+		)
 		apiLog.Errorf("timeout op=%s kind=%s project=%s", opID, kind, projectID)
-		return Operation{}, WorkerResultMsg{}, fmt.Errorf("timeout waiting for workers")
+		return Operation{}, WorkerResultMsg{}, errors.New("timeout waiting for workers")
 	case final = <-ch:
 	}
 
 	if final.Err != "" {
-		_ = finalizeOp(context.Background(), a.store, opID, projectID, kind, "error", final.Err)
+		_ = finalizeOp(finalizeCtx, a.store, opID, projectID, kind, "error", final.Err)
 		apiLog.Errorf("op=%s failed in %s: %s", opID, final.Worker, final.Err)
 		return Operation{}, final, errors.New(final.Err)
 	}
@@ -2382,7 +3081,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 ////////////////////////////////////////////////////////////////////////////////
 
 func main() {
-	mainLog := appLog.Source("main")
+	mainLog := appLoggerForProcess().Source("main")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -2402,23 +3101,27 @@ func main() {
 	if err != nil {
 		mainLog.Fatalf("connect nats: %v", err)
 	}
-	defer nc.Drain()
+	defer func() {
+		if derr := nc.Drain(); derr != nil {
+			mainLog.Warnf("nats drain error: %v", derr)
+		}
+	}()
 
 	js, err := jetstream.New(nc)
 	if err != nil {
 		mainLog.Fatalf("jetstream: %v", err)
 	}
 
-	kv := &KV{js: js}
-	store, err := newStore(ctx, kv)
+	store, err := newStore(ctx, js)
 	if err != nil {
 		mainLog.Fatalf("store: %v", err)
 	}
 
 	// 3) Artifacts root
 	artifacts := NewFSArtifacts(defaultArtifactsRoot)
-	if err := os.MkdirAll(defaultArtifactsRoot, 0o755); err != nil {
-		mainLog.Fatalf("mkdir artifacts root: %v", err)
+	mkdirErr := os.MkdirAll(defaultArtifactsRoot, dirModePrivateRead)
+	if mkdirErr != nil {
+		mainLog.Fatalf("mkdir artifacts root: %v", mkdirErr)
 	}
 
 	// 4) Start worker pipeline
@@ -2428,9 +3131,10 @@ func main() {
 		NewImageBuilderWorker(natsURL, artifacts),
 		NewManifestRendererWorker(natsURL, artifacts),
 	}
-	for _, w := range workers {
-		if err := w.Start(ctx); err != nil {
-			mainLog.Fatalf("start worker: %v", err)
+	for _, worker := range workers {
+		startErr := worker.Start(ctx)
+		if startErr != nil {
+			mainLog.Fatalf("start worker: %v", startErr)
 		}
 	}
 
@@ -2440,10 +3144,15 @@ func main() {
 	if err != nil {
 		mainLog.Fatalf("subscribe final: %v", err)
 	}
-	defer finalSub.Unsubscribe()
+	defer func() {
+		if uerr := finalSub.Unsubscribe(); uerr != nil {
+			mainLog.Warnf("final subscription unsubscribe error: %v", uerr)
+		}
+	}()
 
-	if err := nc.Flush(); err != nil {
-		mainLog.Fatalf("flush: %v", err)
+	flushErr := nc.Flush()
+	if flushErr != nil {
+		mainLog.Fatalf("flush: %v", flushErr)
 	}
 
 	// 6) HTTP server
@@ -2456,7 +3165,7 @@ func main() {
 	srv := &http.Server{
 		Addr:              httpAddr,
 		Handler:           api.routes(),
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: defaultReadHeaderWait,
 	}
 
 	mainLog.Infof("NATS: %s", natsURL)
@@ -2464,16 +3173,8 @@ func main() {
 	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
 	mainLog.Infof("Try: create/update/delete projects; delete cleans project artifacts dir")
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		mainLog.Fatalf("http server: %v", err)
+	listenErr := srv.ListenAndServe()
+	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
+		mainLog.Fatalf("http server: %v", listenErr)
 	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// (Optional) tiny helper endpoint dev tooling could use (not wired into mux above)
-////////////////////////////////////////////////////////////////////////////////
-
-func copyStream(dst io.Writer, src io.Reader) error {
-	_, err := io.Copy(dst, src)
-	return err
 }
