@@ -11,10 +11,12 @@
 !LICENSE
 !Makefile
 !README.md
+!AGENTS.md
 !CODEMAP.md
 !TASKMAP.yaml
 !docs/**/*.md
 !*.go
+!**/*.go
 !**/testdata/*.json
 !**/testdata/*.yaml
 !**/testdata/*.csv

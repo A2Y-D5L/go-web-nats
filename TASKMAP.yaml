@@ -1,6 +1,7 @@
 version: 1
 read_order:
   - main.go
+  - cmd/server/main.go
   - config.go
   - model.go
   - messages.go
@@ -17,28 +18,30 @@ tasks:
       - api_types.go
       - api_runop.go
     tests:
-      - main_test.go
+      - api_handlers_test.go
   - id: api.projects
     files:
       - api_projects.go
       - api_artifacts_ops.go
       - api_types.go
     tests:
-      - main_test.go
+      - api_handlers_test.go
+      - artifacts_fs_test.go
   - id: api.webhooks
     files:
       - api_webhooks.go
       - api_runop.go
       - workers_action_webhook_hooks.go
     tests:
-      - main_test.go
+      - api_webhooks_test.go
+      - workers_git_test.go
   - id: workers.registration
     files:
       - workers_action_registration.go
       - workers_render.go
       - ops_bookkeeping.go
     tests:
-      - main_test.go
+      - workers_messages_test.go
   - id: workers.bootstrap
     files:
       - workers_action_bootstrap.go
@@ -48,20 +51,20 @@ tasks:
       - workers_action_webhook_hooks.go
       - workers_render.go
     tests:
-      - main_test.go
+      - workers_git_test.go
   - id: workers.build
     files:
       - workers_action_build.go
       - workers_render.go
     tests:
-      - main_test.go
+      - workers_messages_test.go
   - id: workers.deploy
     files:
       - workers_action_deploy.go
       - workers_render.go
       - ops_bookkeeping.go
     tests:
-      - main_test.go
+      - workers_messages_test.go
   - id: workers.runtime
     files:
       - workers_defs.go
@@ -70,26 +73,32 @@ tasks:
       - messages.go
       - nats_subscriptions.go
     tests:
-      - main_test.go
+      - waiters_test.go
+      - workers_messages_test.go
   - id: persistence
     files:
       - store.go
       - infra_nats.go
       - model.go
     tests:
-      - main_test.go
+      - model_spec_test.go
   - id: artifacts
     files:
       - artifacts_fs.go
       - api_artifacts_ops.go
     tests:
-      - main_test.go
+      - artifacts_fs_test.go
+      - api_handlers_test.go
   - id: startup
     files:
       - main.go
+      - cmd/server/main.go
       - config.go
       - ui_embed.go
       - nats_subscriptions.go
+      - AGENTS.md
+      - CODEMAP.md
+      - TASKMAP.yaml
 verification:
   command: make check
   required: true

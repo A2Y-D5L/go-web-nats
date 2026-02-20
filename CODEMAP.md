@@ -2,22 +2,26 @@
 
 This repository is intentionally organized so an LLM can load only the files needed for a task.
 
+Primary agent contract: `AGENTS.md`
+
 ## Read Order (Fastest Context Build)
 
 1. `main.go`
-2. `config.go`
-3. `model.go`
-4. `messages.go`
-5. `workers_defs.go`
-6. `workers_loop.go`
-7. `api_types.go`
-8. `api_runop.go`
-9. `store.go`
-10. `artifacts_fs.go`
+2. `cmd/server/main.go`
+3. `config.go`
+4. `model.go`
+5. `messages.go`
+6. `workers_defs.go`
+7. `workers_loop.go`
+8. `api_types.go`
+9. `api_runop.go`
+10. `store.go`
+11. `artifacts_fs.go`
 
 ## File Responsibilities
 
-- `main.go`: process bootstrap, structured/color logger, worker startup, HTTP server startup.
+- `main.go`: platform runtime bootstrap (`Run`) and structured/color logging.
+- `cmd/server/main.go`: executable entrypoint.
 - `ui_embed.go`: embedded static web assets.
 - `config.go`: global constants and runtime defaults.
 - `model.go`: domain types (`Project`, `Operation`) and spec validation/normalization.
@@ -48,6 +52,16 @@ This repository is intentionally organized so an LLM can load only the files nee
 - `nats_subscriptions.go`: final worker result subscription for waking API waiters.
 - `utils.go`: small shared helpers (`newID`, JSON write utilities).
 
+## Test Files
+
+- `waiters_test.go`: waiter hub concurrency and delivery behavior.
+- `api_handlers_test.go`: project/artifact handler routing behavior.
+- `api_webhooks_test.go`: webhook branch filter behavior.
+- `workers_messages_test.go`: worker/result message compatibility.
+- `model_spec_test.go`: spec normalization/validation/rendering behavior.
+- `workers_git_test.go`: git bootstrap + hook script behavior.
+- `artifacts_fs_test.go`: filesystem artifact listing safety behavior.
+
 ## Task-Oriented Entry Points
 
 - Add/modify API endpoint: start in `api_types.go`, then the matching `api_*.go` file.
@@ -60,6 +74,7 @@ This repository is intentionally organized so an LLM can load only the files nee
 ## Agent Rules of Thumb
 
 - Prefer editing one task file at a time (`api_*` or `workers_action_*`), then run `make check`.
-- Avoid editing `main.go` unless changing startup/bootstrap/logging behavior.
+- Avoid editing `main.go` or `cmd/server/main.go` unless changing startup/bootstrap/logging behavior.
 - Treat `model.go` and `messages.go` as contracts; update call sites in the same change.
 - Ignore runtime-generated state under `data/` and `.tmp/` when reading context.
+- Prefer fast scoped checks first: `make test-api`, `make test-workers`, `make test-store`, `make test-model`.

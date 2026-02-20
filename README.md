@@ -7,6 +7,14 @@ Single-binary Go demo platform:
 - starts an embedded NATS+JetStream backend
 - executes project operations through a worker pipeline
 
+## Agent-First Context Files
+
+- `AGENTS.md`: primary operational contract for coding agents
+- `CODEMAP.md`: code ownership and entrypoint map
+- `TASKMAP.yaml`: machine-readable task-to-file mapping
+- `docs/AGENT_PLAYBOOK.md`: concrete task recipes
+- `docs/API_CONTRACTS.md`: canonical request/response contract reference
+
 ## What It Demonstrates
 
 - Registration-driven project lifecycle (`create`, `update`, `delete`)
@@ -160,7 +168,7 @@ Commands:
 ```bash
 go mod tidy
 go test ./...
-go run .
+go run ./cmd/server
 ```
 
 Open:

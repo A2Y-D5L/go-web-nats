@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"context"
@@ -149,10 +149,10 @@ func appLoggerForProcess() *appLogger {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Main
+// Entrypoint
 ////////////////////////////////////////////////////////////////////////////////
 
-func main() {
+func Run() {
 	mainLog := appLoggerForProcess().Source("main")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

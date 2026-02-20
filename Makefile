@@ -29,7 +29,8 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -pa
 	tools tidy \
 	prepare-go-env \
 	fmt fmt-check \
-	vet lint lint-fix test test-race cover js-check check precommit \
+	agent-check \
+	vet lint lint-fix test test-api test-workers test-store test-model test-race cover js-check check precommit \
 	run dev wait-api \
 	api-list api-create api-webhook \
 	smoke-registration demo-commit \
@@ -93,6 +94,18 @@ lint-fix: prepare-go-env ## Run golangci-lint with auto-fix where supported
 test: prepare-go-env ## Run unit tests
 	$(GO) test ./...
 
+test-api: prepare-go-env ## Run API-focused tests
+	$(GO) test ./... -run '^TestAPI_'
+
+test-workers: prepare-go-env ## Run worker-focused tests
+	$(GO) test ./... -run '^TestWorkers_'
+
+test-store: prepare-go-env ## Run store/artifact-focused tests
+	$(GO) test ./... -run '^TestStore_'
+
+test-model: prepare-go-env ## Run model/spec-focused tests
+	$(GO) test ./... -run '^TestModel_'
+
 test-race: prepare-go-env ## Run tests with race detector
 	$(GO) test -race ./...
 
@@ -104,12 +117,40 @@ cover: prepare-go-env ## Run tests with coverage report
 js-check: ## Syntax-check frontend JS
 	$(NODE) --check web/app.js
 
-check: fmt-check lint vet test js-check ## Run all local quality checks
+agent-check: ## Validate agent context files and task-map references
+	@set -euo pipefail; \
+	required_files="AGENTS.md CODEMAP.md TASKMAP.yaml docs/AGENT_PLAYBOOK.md docs/API_CONTRACTS.md README.md"; \
+	for f in $$required_files; do \
+		if [[ ! -f "$$f" ]]; then \
+			echo "Missing required agent context file: $$f"; \
+			exit 1; \
+		fi; \
+	done; \
+	for marker in AGENTS.md CODEMAP.md TASKMAP.yaml; do \
+		if ! grep -q "$$marker" README.md; then \
+			echo "README.md missing agent context reference: $$marker"; \
+			exit 1; \
+		fi; \
+	done; \
+	if ! grep -q "Primary agent contract:" CODEMAP.md; then \
+		echo "CODEMAP.md missing primary contract marker."; \
+		exit 1; \
+	fi; \
+	refs="$$(grep -Eo '[A-Za-z0-9_./-]+\.(go|md|yaml)' TASKMAP.yaml | sort -u)"; \
+	for ref in $$refs; do \
+		if [[ ! -e "$$ref" ]]; then \
+			echo "TASKMAP.yaml references missing path: $$ref"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "Agent context files are consistent."
+
+check: fmt-check agent-check lint vet test js-check ## Run all local quality checks
 
 precommit: check ## Alias for check
 
 run: ## Run API/UI server locally
-	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" $(GO) run .
+	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" $(GO) run ./cmd/server
 
 dev: run ## Alias for run
 
