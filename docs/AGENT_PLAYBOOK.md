@@ -6,6 +6,9 @@ Task lookup helpers:
 
 - `make task-list`
 - `make task-show TASK=<task-id>`
+- `make task-files TASK=<task-id>`
+- `make task-tests TASK=<task-id>`
+- `make task-audit TASK=<task-id>`
 
 ## Add/Change API Endpoint
 
@@ -67,3 +70,11 @@ Task lookup helpers:
 - `make agent-check` is green when agent context files changed.
 - No broad `nolint` additions.
 - `CODEMAP.md` / `TASKMAP.yaml` updated when ownership boundaries change.
+
+## Agent Context Updates
+
+1. Update all impacted files together: `AGENTS.md`, `CODEMAP.md`, `TASKMAP.yaml`, `docs/AGENT_PLAYBOOK.md`.
+2. Run `make task-audit TASK=docs.context` for scoped context verification.
+3. If API behavior changed, update `docs/API_CONTRACTS.md`.
+4. If workflow/commands changed, update `README.md`.
+5. Run `make agent-check`, then `make check`.

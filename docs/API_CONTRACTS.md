@@ -31,7 +31,15 @@ Request body:
 }
 ```
 
+Rules:
+
+- `action` must be one of `create`, `update`, `delete`.
+- `project_id` is required for `update` and `delete`.
+- `spec` is validated for `create` and `update`; it is ignored for `delete`.
+
 Success (`create` / `update`) response:
+
+- Status: `200 OK`
 
 ```json
 {
@@ -42,6 +50,8 @@ Success (`create` / `update`) response:
 ```
 
 Success (`delete`) response:
+
+- Status: `200 OK`
 
 ```json
 {
@@ -77,6 +87,8 @@ Behavior:
 
 Accepted response:
 
+- Status: `202 Accepted`
+
 ```json
 {
   "accepted": true,
@@ -88,6 +100,8 @@ Accepted response:
 ```
 
 Ignored response:
+
+- Status: `202 Accepted`
 
 ```json
 {
@@ -108,6 +122,12 @@ Endpoints:
 
 `POST` and `PUT` accept `ProjectSpec` directly as request JSON.
 
+Common status codes:
+
+- Success: `200 OK`
+- Validation errors: `400 Bad Request`
+- Not found (by id): `404 Not Found`
+
 ## Operations
 
 Endpoint:
@@ -115,6 +135,12 @@ Endpoint:
 - `GET /api/ops/{opID}`
 
 Response is an `Operation` object with step-level worker details.
+
+Common status codes:
+
+- Success: `200 OK`
+- Invalid id: `400 Bad Request`
+- Not found: `404 Not Found`
 
 ## Artifacts
 

@@ -30,7 +30,7 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -pa
 	prepare-go-env \
 	fmt fmt-check \
 	agent-check \
-	task-list task-show task-files task-tests \
+	task-list task-show task-files task-tests task-audit \
 	vet lint lint-fix test test-api test-workers test-store test-model test-race cover js-check check precommit \
 	run dev wait-api \
 	api-list api-create api-webhook \
@@ -120,14 +120,14 @@ js-check: ## Syntax-check frontend JS
 
 agent-check: ## Validate agent context files and task-map references
 	@set -euo pipefail; \
-	required_files="AGENTS.md CODEMAP.md TASKMAP.yaml docs/AGENT_PLAYBOOK.md docs/API_CONTRACTS.md README.md"; \
+	required_files="AGENTS.md CODEMAP.md TASKMAP.yaml docs/AGENT_PLAYBOOK.md docs/API_CONTRACTS.md README.md scripts/taskmap.sh"; \
 	for f in $$required_files; do \
 		if [[ ! -f "$$f" ]]; then \
 			echo "Missing required agent context file: $$f"; \
 			exit 1; \
 		fi; \
 	done; \
-	for marker in AGENTS.md CODEMAP.md TASKMAP.yaml; do \
+	for marker in AGENTS.md CODEMAP.md TASKMAP.yaml docs/AGENT_PLAYBOOK.md docs/API_CONTRACTS.md; do \
 		if ! grep -q "$$marker" README.md; then \
 			echo "README.md missing agent context reference: $$marker"; \
 			exit 1; \
@@ -137,12 +137,45 @@ agent-check: ## Validate agent context files and task-map references
 		echo "CODEMAP.md missing primary contract marker."; \
 		exit 1; \
 	fi; \
-	refs="$$(grep -Eo '[A-Za-z0-9_./-]+\.(go|md|yaml)' TASKMAP.yaml | sort -u)"; \
+	refs="$$(grep -Eo '[A-Za-z0-9_./-]+\.(go|md|ya?ml|sh)' TASKMAP.yaml | sort -u)"; \
 	for ref in $$refs; do \
 		if [[ ! -e "$$ref" ]]; then \
 			echo "TASKMAP.yaml references missing path: $$ref"; \
 			exit 1; \
 		fi; \
+	done; \
+	task_ids="$$(./scripts/taskmap.sh list)"; \
+	for task_id in $$task_ids; do \
+		./scripts/taskmap.sh files "$$task_id" >/dev/null; \
+		./scripts/taskmap.sh tests "$$task_id" >/dev/null; \
+	done; \
+	taskmap_all_files="$$(mktemp)"; \
+	taskmap_go_files="$$(mktemp)"; \
+	repo_go_files="$$(mktemp)"; \
+	trap 'rm -f "$$taskmap_all_files" "$$taskmap_go_files" "$$repo_go_files"' EXIT; \
+	while IFS= read -r task_id; do \
+		./scripts/taskmap.sh files "$$task_id" >> "$$taskmap_all_files"; \
+	done < <(./scripts/taskmap.sh list); \
+	: > "$$taskmap_go_files"; \
+	rg '\.go$$' "$$taskmap_all_files" | sort -u > "$$taskmap_go_files" || true; \
+	rg --files -g '*.go' -g '!vendor/**' -g '!data/**' -g '!.tmp/**' | sort -u > "$$repo_go_files"; \
+	unmapped_non_test_go="$$(comm -23 "$$repo_go_files" "$$taskmap_go_files" | rg -v '_test\.go$$' || true)"; \
+	if [[ -n "$$unmapped_non_test_go" ]]; then \
+		echo "TASKMAP.yaml missing non-test Go file ownership:"; \
+		echo "$$unmapped_non_test_go"; \
+		exit 1; \
+	fi; \
+	for doc in AGENTS.md CODEMAP.md; do \
+		doc_refs="$$(grep -Eo '\`[^`]+\.(go|md|ya?ml|sh)\`' "$$doc" | tr -d '\`' | sort -u || true)"; \
+		for ref in $$doc_refs; do \
+			if [[ "$$ref" == *'*'* ]]; then \
+				continue; \
+			fi; \
+			if [[ ! -e "$$ref" ]]; then \
+				echo "$$doc references missing path: $$ref"; \
+				exit 1; \
+			fi; \
+		done; \
 	done; \
 	echo "Agent context files are consistent."
 
@@ -172,6 +205,46 @@ task-tests: ## Show test files for a task (TASK=<task-id>)
 		exit 1; \
 	fi; \
 	./scripts/taskmap.sh tests "$(TASK)"
+
+task-audit: prepare-go-env ## Run scoped verification for a task (TASK=<task-id>)
+	@set -euo pipefail; \
+	if [[ -z "$(TASK)" ]]; then \
+		echo "TASK is required. Example: make task-audit TASK=api.webhooks"; \
+		exit 1; \
+	fi; \
+	echo "Auditing task $(TASK)..."; \
+	./scripts/taskmap.sh show "$(TASK)"; \
+	files="$$(./scripts/taskmap.sh files "$(TASK)" || true)"; \
+	for f in $$files; do \
+		if [[ ! -e "$$f" ]]; then \
+			echo "Mapped file missing: $$f"; \
+			exit 1; \
+		fi; \
+	done; \
+	tests="$$(./scripts/taskmap.sh tests "$(TASK)" || true)"; \
+	test_names=""; \
+	for tf in $$tests; do \
+		if [[ ! -f "$$tf" ]]; then \
+			echo "Mapped test file missing: $$tf"; \
+			exit 1; \
+		fi; \
+		names="$$(rg -No 'func (Test[A-Za-z0-9_]+)\(' "$$tf" | sed -E 's/.*func (Test[A-Za-z0-9_]+)\(.*/\1/' || true)"; \
+		if [[ -n "$$names" ]]; then \
+			test_names="$$test_names $$names"; \
+		fi; \
+	done; \
+	if [[ -n "$$test_names" ]]; then \
+		regex="^($$(echo "$$test_names" | tr ' ' '\n' | sed '/^$$/d' | sort -u | paste -sd'|' -))$$"; \
+		echo "Running scoped tests: $$regex"; \
+		$(GO) test ./... -run "$$regex"; \
+	else \
+		echo "No mapped tests for task $(TASK); skipping scoped go test."; \
+	fi; \
+	if [[ "$(TASK)" == "docs.context" ]]; then \
+		echo "Running agent-check for docs.context..."; \
+		$(MAKE) agent-check; \
+	fi; \
+	echo "Task audit passed for $(TASK)."
 
 check: fmt-check agent-check lint vet test js-check ## Run all local quality checks
 

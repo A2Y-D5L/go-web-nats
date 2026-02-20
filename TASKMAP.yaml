@@ -15,12 +15,14 @@ read_order:
   - api_types.go
   - api_runop.go
   - store.go
+  - artifacts_fs.go
 tasks:
   - id: api.registration
     files:
       - api_registration.go
       - api_types.go
       - api_runop.go
+      - utils.go
     tests:
       - api_handlers_test.go
   - id: api.projects
@@ -76,6 +78,7 @@ tasks:
       - workers_resultmsg.go
       - messages.go
       - nats_subscriptions.go
+      - waiters.go
     tests:
       - waiters_test.go
       - workers_messages_test.go
@@ -93,6 +96,17 @@ tasks:
     tests:
       - artifacts_fs_test.go
       - api_handlers_test.go
+  - id: docs.context
+    files:
+      - AGENTS.md
+      - CODEMAP.md
+      - TASKMAP.yaml
+      - docs/AGENT_PLAYBOOK.md
+      - docs/API_CONTRACTS.md
+      - README.md
+      - Makefile
+      - scripts/taskmap.sh
+    tests: []
   - id: startup
     files:
       - main.go
@@ -104,10 +118,8 @@ tasks:
       - config_filesystem.go
       - ui_embed.go
       - nats_subscriptions.go
-      - scripts/taskmap.sh
-      - AGENTS.md
-      - CODEMAP.md
-      - TASKMAP.yaml
+      - infra_nats.go
+      - Makefile
 verification:
   command: make check
   required: true

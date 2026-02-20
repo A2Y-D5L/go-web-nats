@@ -11,7 +11,12 @@ Operational runbook for coding agents working in this repository.
 
 1. Read `CODEMAP.md`.
 2. Read `TASKMAP.yaml` and pick the closest `tasks[].id`.
-   - Optional helper: `make task-list` then `make task-show TASK=<id>`.
+   - Optional helpers:
+     - `make task-list`
+     - `make task-show TASK=<id>`
+     - `make task-files TASK=<id>`
+     - `make task-tests TASK=<id>`
+     - `make task-audit TASK=<id>`
 3. Read `docs/API_CONTRACTS.md` when touching any `api_*.go` endpoint behavior.
 4. Edit only files listed for that task unless a boundary change is required.
 5. Run `make check` before finishing.
@@ -65,8 +70,17 @@ Operational runbook for coding agents working in this repository.
 
 - Full gate (required): `make check`
 - Fast loop:
+  - `make task-files TASK=<id>`
+  - `make task-tests TASK=<id>`
+  - `make task-audit TASK=<id>`
+  - `make test-api` / `make test-workers` / `make test-store` / `make test-model`
   - `make lint`
   - `go test ./...`
+
+## Context Sync Rule
+
+- When moving/renaming/splitting files, update `CODEMAP.md`, `TASKMAP.yaml`, and `docs/AGENT_PLAYBOOK.md` in the same change.
+- Run `make agent-check` immediately after doc/context updates, then run `make check`.
 
 ## Testing Expectations
 

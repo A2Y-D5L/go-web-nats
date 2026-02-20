@@ -19,6 +19,9 @@ Quick task scoping commands:
 
 - `make task-list`
 - `make task-show TASK=api.webhooks`
+- `make task-files TASK=workers.bootstrap`
+- `make task-tests TASK=workers.runtime`
+- `make task-audit TASK=api.webhooks`
 
 ## What It Demonstrates
 
