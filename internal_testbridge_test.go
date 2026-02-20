@@ -97,6 +97,10 @@ func MarkSourceCommitSeenForTest(api *API, projectID, commit string) (bool, erro
 	return api.markSourceCommitSeen(projectID, commit)
 }
 
+func ProjectSupportsEnvironmentForTest(spec ProjectSpec, env string) bool {
+	return projectSupportsEnvironment(spec, env)
+}
+
 func EnsureLocalGitRepoForTest(ctx context.Context, dir string) error {
 	return ensureLocalGitRepo(ctx, dir)
 }
@@ -186,6 +190,46 @@ func RunImageBuilderBuildWithBackendForTest(
 		[]string{dockerfilePath},
 	)
 	return outcome.message, outcome.artifacts, runErr
+}
+
+func RunManifestApplyForTest(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	imageTag string,
+	targetEnv string,
+) (string, []string, error) {
+	outcome, err := runManifestApplyForEnvironment(
+		ctx,
+		nil,
+		artifacts,
+		msg,
+		spec,
+		imageTag,
+		targetEnv,
+	)
+	return outcome.message, outcome.artifacts, err
+}
+
+func RunManifestPromotionForTest(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	fromEnv string,
+	toEnv string,
+) (string, []string, error) {
+	outcome, err := runManifestPromotionForEnvironments(
+		ctx,
+		nil,
+		artifacts,
+		msg,
+		spec,
+		fromEnv,
+		toEnv,
+	)
+	return outcome.message, outcome.artifacts, err
 }
 
 type testBuildKitBackend struct {

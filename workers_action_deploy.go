@@ -2,10 +2,21 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
+)
+
+const (
+	manifestsRepoBaseDir           = "repos/manifests/base"
+	manifestsRepoOverlaysDir       = "repos/manifests/overlays"
+	manifestsRepoRootKustomization = "repos/manifests/kustomization.yaml"
+	overlayDeploymentPatchFile     = "deployment-patch.yaml"
+	overlayImageMarkerFile         = "image.txt"
 )
 
 func manifestRendererWorkerAction(
@@ -22,7 +33,7 @@ func manifestRendererWorkerAction(
 		msg.OpID,
 		"manifestRenderer",
 		stepStart,
-		"render kubernetes deployment manifests",
+		"render and deploy dev manifests from kustomize overlays",
 	)
 
 	spec := normalizeProjectSpec(msg.Spec)
@@ -32,9 +43,19 @@ func manifestRendererWorkerAction(
 
 	switch msg.Kind {
 	case OpCreate, OpUpdate, OpCI:
-		outcome, err = runManifestRendererApply(ctx, store, artifacts, msg, spec, imageTag)
+		outcome, err = runManifestApplyForEnvironment(
+			ctx,
+			store,
+			artifacts,
+			msg,
+			spec,
+			imageTag,
+			defaultDeployEnvironment,
+		)
 	case OpDelete:
 		outcome, err = runManifestRendererDelete(ctx, store, artifacts, msg)
+	case OpDeploy, OpPromote:
+		err = fmt.Errorf("manifest renderer does not handle %s operations", msg.Kind)
 	default:
 		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
 	}
@@ -69,72 +90,388 @@ func manifestRendererWorkerAction(
 	return res, nil
 }
 
-func runManifestRendererApply(
+func deploymentWorkerAction(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (WorkerResultMsg, error) {
+	stepStart := time.Now().UTC()
+	res := newWorkerResultMsg("deployment worker starting")
+	_ = markOpStepStart(
+		ctx,
+		store,
+		msg.OpID,
+		"deployer",
+		stepStart,
+		"deploy manifests for a single environment",
+	)
+
+	if msg.Kind != OpDeploy {
+		err := fmt.Errorf("deployment worker only handles %s operations", OpDeploy)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
+		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
+		return res, err
+	}
+
+	targetEnv := resolveDeployEnvironment(msg.DeployEnv)
+	if targetEnv != defaultDeployEnvironment {
+		err := fmt.Errorf("deployment environment %q not supported; use promotion for higher environments", targetEnv)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
+		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
+		return res, err
+	}
+
+	imageTag, err := readBuildImageTagForDeployment(artifacts, msg.ProjectID)
+	if err != nil {
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
+		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
+		return res, err
+	}
+
+	spec := normalizeProjectSpec(msg.Spec)
+	outcome, err := runManifestApplyForEnvironment(
+		ctx,
+		store,
+		artifacts,
+		msg,
+		spec,
+		imageTag,
+		targetEnv,
+	)
+	if err != nil {
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
+		_ = markOpStepEnd(
+			ctx,
+			store,
+			msg.OpID,
+			"deployer",
+			time.Now().UTC(),
+			"",
+			err.Error(),
+			outcome.artifacts,
+		)
+		return res, err
+	}
+
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
+	res.Message = outcome.message
+	res.Artifacts = outcome.artifacts
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		msg.OpID,
+		"deployer",
+		time.Now().UTC(),
+		res.Message,
+		"",
+		res.Artifacts,
+	)
+	return res, nil
+}
+
+func runManifestApplyForEnvironment(
 	ctx context.Context,
 	store *Store,
 	artifacts ArtifactStore,
 	msg ProjectOpMsg,
 	spec ProjectSpec,
 	imageTag string,
+	targetEnv string,
 ) (repoBootstrapOutcome, error) {
-	manifests, err := renderKustomizedProjectManifests(spec, imageTag)
+	targetEnv = normalizeEnvironmentName(targetEnv)
+	if targetEnv == "" {
+		targetEnv = defaultDeployEnvironment
+	}
+	if !isValidEnvironmentName(targetEnv) {
+		return repoBootstrapOutcome{}, fmt.Errorf("invalid deployment environment %q", targetEnv)
+	}
+
+	imageByEnv, err := loadManifestImageTags(artifacts, msg.ProjectID, spec)
 	if err != nil {
 		return repoBootstrapOutcome{}, err
 	}
-	renderedArtifacts, err := writeRenderedManifestFiles(
+	imageByEnv[targetEnv] = strings.TrimSpace(imageTag)
+
+	kustomizeArtifacts, err := writeKustomizeRepoFiles(artifacts, msg.ProjectID, spec, imageByEnv)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: kustomizeArtifacts}, err
+	}
+	rendered, err := renderEnvironmentManifestsFromRepo(artifacts, msg.ProjectID, targetEnv)
+	if err != nil {
+		return repoBootstrapOutcome{message: "", artifacts: kustomizeArtifacts}, err
+	}
+	deployArtifacts, err := writeRenderedEnvArtifacts(
 		artifacts,
 		msg.ProjectID,
-		manifests,
+		filepath.ToSlash(filepath.Join("deploy", targetEnv)),
+		rendered,
 	)
 	if err != nil {
-		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, err
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: append(kustomizeArtifacts, deployArtifacts...),
+		}, err
 	}
+
 	manifestsDir := manifestsRepoDir(artifacts, msg.ProjectID)
 	repoErr := ensureLocalGitRepo(ctx, manifestsDir)
 	if repoErr != nil {
-		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, repoErr
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: append(kustomizeArtifacts, deployArtifacts...),
+		}, repoErr
 	}
 	_, commitErr := gitCommitIfChanged(
 		ctx,
 		manifestsDir,
-		fmt.Sprintf("platform-sync: render manifests (%s)", shortID(msg.OpID)),
+		fmt.Sprintf("platform-sync: deploy %s manifests (%s)", targetEnv, shortID(msg.OpID)),
 	)
 	if commitErr != nil {
-		return repoBootstrapOutcome{message: "", artifacts: renderedArtifacts}, commitErr
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: append(kustomizeArtifacts, deployArtifacts...),
+		}, commitErr
 	}
+
 	updateProjectReadyState(ctx, store, msg, spec)
+	allArtifacts := append([]string{}, kustomizeArtifacts...)
+	allArtifacts = append(allArtifacts, deployArtifacts...)
 	return repoBootstrapOutcome{
-		message:   "rendered kubernetes deployment manifests",
-		artifacts: renderedArtifacts,
+		message:   fmt.Sprintf("deployed kustomize manifests for %s environment", targetEnv),
+		artifacts: uniqueSorted(allArtifacts),
 	}, nil
 }
 
-func writeRenderedManifestFiles(
+func writeKustomizeRepoFiles(
 	artifacts ArtifactStore,
 	projectID string,
-	manifests renderedProjectManifests,
+	spec ProjectSpec,
+	imageByEnv map[string]string,
 ) ([]string, error) {
-	manifestFiles := []struct {
+	spec = normalizeProjectSpec(spec)
+	files := []struct {
 		path string
 		data string
 	}{
-		{path: "deploy/deployment.yaml", data: manifests.deployment},
-		{path: "deploy/service.yaml", data: manifests.service},
-		{path: "deploy/rendered.yaml", data: manifests.rendered},
-		{path: "repos/manifests/deployment.yaml", data: manifests.deployment},
-		{path: "repos/manifests/service.yaml", data: manifests.service},
-		{path: "repos/manifests/kustomization.yaml", data: manifests.kustomization},
-		{path: "repos/manifests/rendered.yaml", data: manifests.rendered},
+		{
+			path: filepath.ToSlash(filepath.Join(manifestsRepoBaseDir, manifestFileDeployment)),
+			data: renderBaseDeploymentManifest(spec),
+		},
+		{
+			path: filepath.ToSlash(filepath.Join(manifestsRepoBaseDir, manifestFileService)),
+			data: renderServiceManifest(spec),
+		},
+		{
+			path: filepath.ToSlash(filepath.Join(manifestsRepoBaseDir, manifestFileKustomization)),
+			data: renderBaseKustomizationManifest(),
+		},
+		{
+			path: manifestsRepoRootKustomization,
+			data: renderRootKustomizationManifest(defaultDeployEnvironment),
+		},
 	}
-	written := make([]string, 0, len(manifestFiles))
-	for _, manifestFile := range manifestFiles {
-		artifactPath, err := artifacts.WriteFile(projectID, manifestFile.path, []byte(manifestFile.data))
+
+	envs := desiredManifestEnvironments(spec)
+	for _, env := range envs {
+		envImage := strings.TrimSpace(imageByEnv[env])
+		if envImage == "" {
+			envImage = defaultManifestImage(spec)
+		}
+		overlayDir := filepath.ToSlash(filepath.Join(manifestsRepoOverlaysDir, env))
+		files = append(files,
+			struct {
+				path string
+				data string
+			}{
+				path: filepath.ToSlash(filepath.Join(overlayDir, manifestFileKustomization)),
+				data: renderOverlayKustomizationManifest(envImage),
+			},
+			struct {
+				path string
+				data string
+			}{
+				path: filepath.ToSlash(filepath.Join(overlayDir, overlayDeploymentPatchFile)),
+				data: renderDeploymentEnvPatch(spec, env),
+			},
+			struct {
+				path string
+				data string
+			}{
+				path: filepath.ToSlash(filepath.Join(overlayDir, overlayImageMarkerFile)),
+				data: envImage + "\n",
+			},
+		)
+	}
+
+	written := make([]string, 0, len(files))
+	for _, file := range files {
+		artifactPath, err := artifacts.WriteFile(projectID, file.path, []byte(file.data))
 		if err != nil {
 			return written, err
 		}
 		written = append(written, artifactPath)
 	}
-	return written, nil
+	return uniqueSorted(written), nil
+}
+
+func renderRootKustomizationManifest(defaultEnv string) string {
+	return fmt.Sprintf(`apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - overlays/%s
+`, defaultEnv)
+}
+
+func desiredManifestEnvironments(spec ProjectSpec) []string {
+	spec = normalizeProjectSpec(spec)
+	seen := map[string]struct{}{defaultDeployEnvironment: {}}
+	for env := range spec.Environments {
+		seen[normalizeEnvironmentName(env)] = struct{}{}
+	}
+	envs := make([]string, 0, len(seen))
+	for env := range seen {
+		if env == "" {
+			continue
+		}
+		envs = append(envs, env)
+	}
+	slices.Sort(envs)
+	return envs
+}
+
+func defaultManifestImage(spec ProjectSpec) string {
+	spec = normalizeProjectSpec(spec)
+	return fmt.Sprintf("local/%s:latest", safeName(spec.Name))
+}
+
+func loadManifestImageTags(
+	artifacts ArtifactStore,
+	projectID string,
+	spec ProjectSpec,
+) (map[string]string, error) {
+	envs := desiredManifestEnvironments(spec)
+	if len(envs) == 0 {
+		envs = []string{defaultDeployEnvironment}
+	}
+	imageByEnv := make(map[string]string, len(envs))
+	fallback := defaultManifestImage(spec)
+	for _, env := range envs {
+		relPath := filepath.ToSlash(filepath.Join(manifestsRepoOverlaysDir, env, overlayImageMarkerFile))
+		raw, err := artifacts.ReadFile(projectID, relPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				imageByEnv[env] = fallback
+				continue
+			}
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if trimmed == "" {
+			trimmed = fallback
+		}
+		imageByEnv[env] = trimmed
+	}
+	return imageByEnv, nil
+}
+
+func renderEnvironmentManifestsFromRepo(
+	artifacts ArtifactStore,
+	projectID string,
+	env string,
+) (renderedProjectManifests, error) {
+	env = normalizeEnvironmentName(env)
+	overlayPath := filepath.Join(manifestsRepoDir(artifacts, projectID), "overlays", env)
+	rendered, err := runKustomizeBuildAtPath(overlayPath)
+	if err != nil {
+		return renderedProjectManifests{}, err
+	}
+	deployment, service, err := splitRenderedManifests(rendered)
+	if err != nil {
+		return renderedProjectManifests{}, err
+	}
+	return renderedProjectManifests{
+		deployment:    deployment,
+		service:       service,
+		kustomization: "",
+		rendered:      string(rendered),
+	}, nil
+}
+
+func writeRenderedEnvArtifacts(
+	artifacts ArtifactStore,
+	projectID string,
+	prefix string,
+	rendered renderedProjectManifests,
+) ([]string, error) {
+	prefix = strings.Trim(strings.TrimSpace(prefix), "/")
+	files := []struct {
+		path string
+		data string
+	}{
+		{path: filepath.ToSlash(filepath.Join(prefix, manifestFileDeployment)), data: rendered.deployment},
+		{path: filepath.ToSlash(filepath.Join(prefix, manifestFileService)), data: rendered.service},
+		{path: filepath.ToSlash(filepath.Join(prefix, "rendered.yaml")), data: rendered.rendered},
+	}
+	written := make([]string, 0, len(files))
+	for _, file := range files {
+		artifactPath, err := artifacts.WriteFile(projectID, file.path, []byte(file.data))
+		if err != nil {
+			return written, err
+		}
+		written = append(written, artifactPath)
+	}
+	return uniqueSorted(written), nil
+}
+
+func resolveDeployEnvironment(raw string) string {
+	env := normalizeEnvironmentName(raw)
+	if env == "" {
+		return defaultDeployEnvironment
+	}
+	return env
+}
+
+func readBuildImageTagForDeployment(artifacts ArtifactStore, projectID string) (string, error) {
+	raw, err := artifacts.ReadFile(projectID, imageBuildTagPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("no build image found; run create/update/ci before deploy")
+		}
+		return "", err
+	}
+	imageTag := strings.TrimSpace(string(raw))
+	if imageTag == "" {
+		return "", errors.New("no build image found; run create/update/ci before deploy")
+	}
+	return imageTag, nil
+}
+
+func readRenderedEnvImageTag(
+	artifacts ArtifactStore,
+	projectID string,
+	env string,
+) (string, error) {
+	env = normalizeEnvironmentName(env)
+	if env == "" {
+		return "", nil
+	}
+	path := filepath.ToSlash(filepath.Join("deploy", env, manifestFileDeployment))
+	raw, err := artifacts.ReadFile(projectID, path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		image, ok := strings.CutPrefix(trimmed, "image:")
+		if ok {
+			return strings.TrimSpace(image), nil
+		}
+	}
+	return "", nil
 }
 
 func updateProjectReadyState(
@@ -143,6 +480,9 @@ func updateProjectReadyState(
 	msg ProjectOpMsg,
 	spec ProjectSpec,
 ) {
+	if store == nil {
+		return
+	}
 	project, getErr := store.GetProject(ctx, msg.ProjectID)
 	if getErr != nil {
 		return
@@ -169,7 +509,9 @@ func runManifestRendererDelete(
 	if removeErr != nil {
 		return repoBootstrapOutcome{}, removeErr
 	}
-	_ = store.DeleteProject(ctx, msg.ProjectID)
+	if store != nil {
+		_ = store.DeleteProject(ctx, msg.ProjectID)
+	}
 	return repoBootstrapOutcome{
 		message:   "project deleted and artifacts cleaned",
 		artifacts: []string{},

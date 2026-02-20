@@ -1,7 +1,7 @@
 package platform
 
 ////////////////////////////////////////////////////////////////////////////////
-// Subjects (register -> bootstrap -> build -> deploy chain) + KV buckets
+// Subjects (register -> bootstrap -> build -> deploy chain) + process channels + KV buckets
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
@@ -13,6 +13,12 @@ const (
 	subjectBootstrapDone    = "paas.project.op.bootstrap.done"
 	subjectBuildDone        = "paas.project.op.build.done"
 	subjectDeployDone       = "paas.project.op.deploy.done"
+
+	// Standalone process subjects.
+	subjectDeploymentStart = "paas.project.process.deployment.start"
+	subjectDeploymentDone  = "paas.project.process.deployment.done"
+	subjectPromotionStart  = "paas.project.process.promotion.start"
+	subjectPromotionDone   = "paas.project.process.promotion.done"
 
 	// KV buckets.
 	kvBucketProjects = "paas_projects"

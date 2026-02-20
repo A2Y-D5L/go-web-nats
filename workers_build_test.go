@@ -229,6 +229,9 @@ func testBuildInputs() (platform.ProjectOpMsg, platform.ProjectSpec, string) {
 		Kind:      platform.OpCreate,
 		ProjectID: "proj-1",
 		Spec:      spec,
+		DeployEnv: "",
+		FromEnv:   "",
+		ToEnv:     "",
 		Err:       "",
 		At:        time.Now().UTC(),
 	}

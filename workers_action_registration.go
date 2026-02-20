@@ -30,6 +30,11 @@ func registrationWorkerAction(
 			message:   "registration skipped for ci operation",
 			artifacts: nil,
 		}
+	case OpDeploy, OpPromote:
+		outcome = repoBootstrapOutcome{
+			message:   "registration skipped for deployment/promotion operation",
+			artifacts: nil,
+		}
 	default:
 		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
 	}

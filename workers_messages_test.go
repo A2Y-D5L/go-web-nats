@@ -2,9 +2,12 @@
 package platform_test
 
 import (
+	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	platform "github.com/a2y-d5l/go-web-nats"
 )
@@ -81,5 +84,152 @@ func TestWorkers_RenderKustomizedProjectManifests(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "kind: Deployment") || !strings.Contains(rendered, "kind: Service") {
 		t.Fatalf("combined rendered manifest missing resources: %s", rendered)
+	}
+}
+
+func TestWorkers_ManifestApplyWritesKustomizeTreeAndDevRenderOnly(t *testing.T) {
+	artifacts := platform.NewFSArtifacts(t.TempDir())
+	spec := platform.ProjectSpec{
+		APIVersion: platform.ProjectAPIVersionForTest,
+		Kind:       platform.ProjectKindForTest,
+		Name:       "svc",
+		Runtime:    "go_1.26",
+		Environments: map[string]platform.EnvConfig{
+			"dev":     {Vars: map[string]string{"LOG_LEVEL": "debug"}},
+			"staging": {Vars: map[string]string{"LOG_LEVEL": "warn"}},
+		},
+		NetworkPolicies: platform.NetworkPolicies{
+			Ingress: "internal",
+			Egress:  "internal",
+		},
+	}
+	msg := platform.ProjectOpMsg{
+		OpID:      "op-deploy-dev",
+		Kind:      platform.OpCreate,
+		ProjectID: "proj-manifests-dev",
+		Spec:      spec,
+		At:        time.Now().UTC(),
+	}
+
+	message, touched, err := platform.RunManifestApplyForTest(
+		context.Background(),
+		artifacts,
+		msg,
+		spec,
+		"local/svc:dev12345",
+		"dev",
+	)
+	if err != nil {
+		t.Fatalf("run manifest apply: %v", err)
+	}
+	if !strings.Contains(message, "dev environment") {
+		t.Fatalf("unexpected deploy message: %q", message)
+	}
+	for _, want := range []string{
+		"repos/manifests/base/deployment.yaml",
+		"repos/manifests/base/service.yaml",
+		"repos/manifests/base/kustomization.yaml",
+		"repos/manifests/overlays/dev/kustomization.yaml",
+		"repos/manifests/overlays/dev/deployment-patch.yaml",
+		"repos/manifests/overlays/staging/kustomization.yaml",
+		"deploy/dev/rendered.yaml",
+	} {
+		if !slices.Contains(touched, want) {
+			t.Fatalf("expected touched artifact %q, got %v", want, touched)
+		}
+	}
+	if slices.Contains(touched, "deploy/staging/rendered.yaml") {
+		t.Fatalf("staging manifests must not be rendered during deploy apply: %v", touched)
+	}
+	devMarker, readErr := artifacts.ReadFile(msg.ProjectID, "repos/manifests/overlays/dev/image.txt")
+	if readErr != nil {
+		t.Fatalf("read dev image marker: %v", readErr)
+	}
+	if strings.TrimSpace(string(devMarker)) != "local/svc:dev12345" {
+		t.Fatalf("unexpected dev image marker: %q", strings.TrimSpace(string(devMarker)))
+	}
+	devDeployment, readErr := artifacts.ReadFile(msg.ProjectID, "deploy/dev/deployment.yaml")
+	if readErr != nil {
+		t.Fatalf("read dev deployment: %v", readErr)
+	}
+	if !strings.Contains(string(devDeployment), "image: local/svc:dev12345") {
+		t.Fatalf("expected dev deployment image tag, got: %s", string(devDeployment))
+	}
+}
+
+func TestWorkers_ManifestPromotionRendersHigherEnvOnlyDuringPromotion(t *testing.T) {
+	artifacts := platform.NewFSArtifacts(t.TempDir())
+	spec := platform.ProjectSpec{
+		APIVersion: platform.ProjectAPIVersionForTest,
+		Kind:       platform.ProjectKindForTest,
+		Name:       "svc",
+		Runtime:    "go_1.26",
+		Environments: map[string]platform.EnvConfig{
+			"dev":     {Vars: map[string]string{"LOG_LEVEL": "debug"}},
+			"staging": {Vars: map[string]string{"LOG_LEVEL": "warn"}},
+		},
+		NetworkPolicies: platform.NetworkPolicies{
+			Ingress: "internal",
+			Egress:  "internal",
+		},
+	}
+
+	deployMsg := platform.ProjectOpMsg{
+		OpID:      "op-deploy-dev",
+		Kind:      platform.OpCreate,
+		ProjectID: "proj-promote",
+		Spec:      spec,
+		At:        time.Now().UTC(),
+	}
+	_, _, err := platform.RunManifestApplyForTest(
+		context.Background(),
+		artifacts,
+		deployMsg,
+		spec,
+		"local/svc:dev98765",
+		"dev",
+	)
+	if err != nil {
+		t.Fatalf("run initial dev deploy: %v", err)
+	}
+	if _, readErr := artifacts.ReadFile(deployMsg.ProjectID, "deploy/staging/rendered.yaml"); readErr == nil {
+		t.Fatal("staging rendered manifest should not exist before promotion")
+	}
+
+	promoteMsg := platform.ProjectOpMsg{
+		OpID:      "op-promote-staging",
+		Kind:      platform.OpPromote,
+		ProjectID: deployMsg.ProjectID,
+		Spec:      spec,
+		At:        time.Now().UTC(),
+	}
+	message, touched, err := platform.RunManifestPromotionForTest(
+		context.Background(),
+		artifacts,
+		promoteMsg,
+		spec,
+		"dev",
+		"staging",
+	)
+	if err != nil {
+		t.Fatalf("run promotion: %v", err)
+	}
+	if !strings.Contains(message, "dev to staging") {
+		t.Fatalf("unexpected promotion message: %q", message)
+	}
+	for _, want := range []string{
+		"deploy/staging/rendered.yaml",
+		"promotions/dev-to-staging/rendered.yaml",
+	} {
+		if !slices.Contains(touched, want) {
+			t.Fatalf("expected promotion artifact %q, got %v", want, touched)
+		}
+	}
+	stagingDeployment, readErr := artifacts.ReadFile(deployMsg.ProjectID, "deploy/staging/deployment.yaml")
+	if readErr != nil {
+		t.Fatalf("read staging deployment: %v", readErr)
+	}
+	if !strings.Contains(string(stagingDeployment), "image: local/svc:dev98765") {
+		t.Fatalf("expected promoted staging deployment image tag, got: %s", string(stagingDeployment))
 	}
 }

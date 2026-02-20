@@ -35,7 +35,7 @@ type ProjectStatus struct {
 	Phase      string    `json:"phase"`        // Ready | Reconciling | Deleting | Error
 	UpdatedAt  time.Time `json:"updated_at"`   //
 	LastOpID   string    `json:"last_op_id"`   //
-	LastOpKind string    `json:"last_op_kind"` // create|update|delete|ci
+	LastOpKind string    `json:"last_op_kind"` // create|update|delete|ci|deploy|promote
 	Message    string    `json:"message,omitempty"`
 }
 
@@ -50,10 +50,12 @@ type Project struct {
 type OperationKind string
 
 const (
-	OpCreate OperationKind = "create"
-	OpUpdate OperationKind = "update"
-	OpDelete OperationKind = "delete"
-	OpCI     OperationKind = "ci"
+	OpCreate  OperationKind = "create"
+	OpUpdate  OperationKind = "update"
+	OpDelete  OperationKind = "delete"
+	OpCI      OperationKind = "ci"
+	OpDeploy  OperationKind = "deploy"
+	OpPromote OperationKind = "promote"
 )
 
 type OpStep struct {

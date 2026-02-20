@@ -32,6 +32,8 @@ type (
 	RepoBootstrapWorker    struct{ WorkerBase }
 	ImageBuilderWorker     struct{ WorkerBase }
 	ManifestRendererWorker struct{ WorkerBase }
+	DeploymentWorker       struct{ WorkerBase }
+	PromotionWorker        struct{ WorkerBase }
 )
 
 func NewRegistrationWorker(natsURL string, artifacts ArtifactStore) *RegistrationWorker {
@@ -82,6 +84,30 @@ func NewManifestRendererWorker(natsURL string, artifacts ArtifactStore) *Manifes
 	}
 }
 
+func NewDeploymentWorker(natsURL string, artifacts ArtifactStore) *DeploymentWorker {
+	return &DeploymentWorker{
+		WorkerBase: newWorkerBase(
+			"deployer",
+			natsURL,
+			subjectDeploymentStart,
+			subjectDeploymentDone,
+			artifacts,
+		),
+	}
+}
+
+func NewPromotionWorker(natsURL string, artifacts ArtifactStore) *PromotionWorker {
+	return &PromotionWorker{
+		WorkerBase: newWorkerBase(
+			"promoter",
+			natsURL,
+			subjectPromotionStart,
+			subjectPromotionDone,
+			artifacts,
+		),
+	}
+}
+
 func (w *RegistrationWorker) Start(ctx context.Context) error {
 	return startWorker(
 		ctx,
@@ -127,6 +153,30 @@ func (w *ManifestRendererWorker) Start(ctx context.Context) error {
 		w.subjectOut,
 		w.artifacts,
 		manifestRendererWorkerAction,
+	)
+}
+
+func (w *DeploymentWorker) Start(ctx context.Context) error {
+	return startWorker(
+		ctx,
+		w.name,
+		w.natsURL,
+		w.subjectIn,
+		w.subjectOut,
+		w.artifacts,
+		deploymentWorkerAction,
+	)
+}
+
+func (w *PromotionWorker) Start(ctx context.Context) error {
+	return startWorker(
+		ctx,
+		w.name,
+		w.natsURL,
+		w.subjectIn,
+		w.subjectOut,
+		w.artifacts,
+		promotionWorkerAction,
 	)
 }
 

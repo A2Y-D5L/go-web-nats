@@ -102,3 +102,29 @@ func TestAPI_MarkSourceCommitSeen(t *testing.T) {
 		t.Fatal("expected blank commit to bypass dedupe")
 	}
 }
+
+func TestAPI_ProjectSupportsEnvironment(t *testing.T) {
+	spec := platform.NormalizeProjectSpecForTest(platform.ProjectSpec{
+		APIVersion: platform.ProjectAPIVersionForTest,
+		Kind:       platform.ProjectKindForTest,
+		Name:       "svc",
+		Runtime:    "go_1.26",
+		Environments: map[string]platform.EnvConfig{
+			"staging": {Vars: map[string]string{}},
+		},
+		NetworkPolicies: platform.NetworkPolicies{
+			Ingress: "internal",
+			Egress:  "internal",
+		},
+	})
+
+	if !platform.ProjectSupportsEnvironmentForTest(spec, "dev") {
+		t.Fatal("expected dev to be supported by default deployment environment")
+	}
+	if !platform.ProjectSupportsEnvironmentForTest(spec, "staging") {
+		t.Fatal("expected staging to be supported from project spec")
+	}
+	if platform.ProjectSupportsEnvironmentForTest(spec, "prod") {
+		t.Fatal("expected prod to be unsupported when not defined in spec")
+	}
+}

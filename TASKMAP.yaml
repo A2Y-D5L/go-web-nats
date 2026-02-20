@@ -28,10 +28,12 @@ tasks:
   - id: api.projects
     files:
       - api_projects.go
+      - api_processes.go
       - api_artifacts_ops.go
       - api_types.go
     tests:
       - api_handlers_test.go
+      - api_webhooks_test.go
       - artifacts_fs_test.go
   - id: api.webhooks
     files:
@@ -72,6 +74,7 @@ tasks:
   - id: workers.deploy
     files:
       - workers_action_deploy.go
+      - workers_action_promotion.go
       - workers_render.go
       - ops_bookkeeping.go
     tests:

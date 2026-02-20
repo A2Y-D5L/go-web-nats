@@ -11,6 +11,9 @@ type ProjectOpMsg struct {
 	Kind      OperationKind `json:"kind"`
 	ProjectID string        `json:"project_id"`
 	Spec      ProjectSpec   `json:"spec"` // create/update only
+	DeployEnv string        `json:"deploy_env,omitempty"`
+	FromEnv   string        `json:"from_env,omitempty"`
+	ToEnv     string        `json:"to_env,omitempty"`
 	Err       string        `json:"err,omitempty"`
 	At        time.Time     `json:"at"`
 }
@@ -20,6 +23,9 @@ type WorkerResultMsg struct {
 	Kind      OperationKind `json:"kind"`
 	ProjectID string        `json:"project_id"`
 	Spec      ProjectSpec   `json:"spec"`
+	DeployEnv string        `json:"deploy_env,omitempty"`
+	FromEnv   string        `json:"from_env,omitempty"`
+	ToEnv     string        `json:"to_env,omitempty"`
 	Worker    string        `json:"worker"`
 	Message   string        `json:"message,omitempty"`
 	Err       string        `json:"err,omitempty"`
@@ -45,6 +51,9 @@ func newWorkerResultMsg(message string) WorkerResultMsg {
 		Kind:      "",
 		ProjectID: "",
 		Spec:      zeroProjectSpec(),
+		DeployEnv: "",
+		FromEnv:   "",
+		ToEnv:     "",
 		Worker:    "",
 		Message:   message,
 		Err:       "",

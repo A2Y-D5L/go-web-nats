@@ -115,7 +115,7 @@ func (a *API) triggerSourceRepoCI(
 		}, nil
 	}
 
-	op, _, err := a.runOp(ctx, OpCI, project.ID, project.Spec)
+	op, _, err := a.runOp(ctx, OpCI, project.ID, project.Spec, emptyOpRunOptions())
 	if err != nil {
 		return sourceRepoWebhookResult{}, err
 	}

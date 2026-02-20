@@ -55,12 +55,14 @@ Primary agent contract: `AGENTS.md`
 - `workers_action_buildkit_stub.go`: default non-BuildKit fallback backend (`!buildkit`) with graceful capability error output.
 - `workers_action_buildkit_moby.go`: BuildKit-tagged backend (`buildkit`) using Moby BuildKit client/frontend libraries.
 - `workers_action_deploy.go`: manifest renderer/deployer worker.
+- `workers_action_promotion.go`: standalone environment promotion worker.
 - `workers_render.go`: shared rendering and naming helpers.
 - `ops_bookkeeping.go`: operation step tracking and finalization helpers.
 - `api_types.go`: API container type, route wiring, request logging middleware, event payload types.
 - `api_registration.go`: registration endpoint handlers and helper flows.
 - `api_webhooks.go`: source webhook endpoint, branch filtering, and source-commit dedupe/trigger handling.
 - `api_projects.go`: project CRUD handlers.
+- `api_processes.go`: deployment and promotion event handlers.
 - `api_artifacts_ops.go`: artifact and op read endpoints.
 - `api_runop.go`: op orchestration path (publish, wait, finalize).
 - `nats_subscriptions.go`: final worker result subscription for waking API waiters.
@@ -81,6 +83,7 @@ Primary agent contract: `AGENTS.md`
 ## Task-Oriented Entry Points
 
 - Add/modify API endpoint: start in `api_types.go`, then the matching `api_*.go` file.
+- Add/modify deployment or promotion process APIs: start in `api_processes.go`, `api_runop.go`, and `config_subjects.go`.
 - Change pipeline behavior: start in `workers_action_*.go`.
 - Change worker pub/sub flow: `workers_defs.go`, `workers_loop.go`, `workers_resultmsg.go`, and `messages.go`.
 - Change persistence behavior: `store.go`.

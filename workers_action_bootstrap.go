@@ -49,6 +49,11 @@ func repoBootstrapWorkerAction(
 			message:   "repo bootstrap skipped for ci operation",
 			artifacts: nil,
 		}
+	case OpDeploy, OpPromote:
+		outcome = repoBootstrapOutcome{
+			message:   "repo bootstrap skipped for deployment/promotion operation",
+			artifacts: nil,
+		}
 	default:
 		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
 	}

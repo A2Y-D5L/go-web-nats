@@ -13,6 +13,9 @@ func skipWorkerResult(opMsg ProjectOpMsg, workerName string) WorkerResultMsg {
 	res.Kind = opMsg.Kind
 	res.ProjectID = opMsg.ProjectID
 	res.Spec = opMsg.Spec
+	res.DeployEnv = opMsg.DeployEnv
+	res.FromEnv = opMsg.FromEnv
+	res.ToEnv = opMsg.ToEnv
 	res.Worker = workerName
 	res.Err = opMsg.Err
 	res.At = time.Now().UTC()
@@ -29,6 +32,9 @@ func finalizeWorkerResult(
 	res.Kind = opMsg.Kind
 	res.ProjectID = opMsg.ProjectID
 	res.Spec = opMsg.Spec
+	res.DeployEnv = opMsg.DeployEnv
+	res.FromEnv = opMsg.FromEnv
+	res.ToEnv = opMsg.ToEnv
 	if res.Err == "" {
 		res.Err = opMsg.Err
 	}

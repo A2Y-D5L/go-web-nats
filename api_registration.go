@@ -32,7 +32,7 @@ func (a *API) createProjectFromSpec(
 			UpdatedAt:  now,
 			LastOpID:   "",
 			LastOpKind: "",
-			Message:    "queued",
+			Message:    statusMessageQueued,
 		},
 	}
 	putErr := a.store.PutProject(ctx, p)
@@ -40,7 +40,7 @@ func (a *API) createProjectFromSpec(
 		return Project{}, Operation{}, WorkerResultMsg{}, errors.New("failed to persist project")
 	}
 
-	op, final, err := a.runOp(ctx, OpCreate, projectID, spec)
+	op, final, err := a.runOp(ctx, OpCreate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
 		return Project{}, Operation{}, WorkerResultMsg{}, err
 	}
@@ -71,7 +71,7 @@ func (a *API) updateProjectFromSpec(
 		return Project{}, Operation{}, WorkerResultMsg{}, errors.New("failed to persist project")
 	}
 
-	op, final, err := a.runOp(ctx, OpUpdate, projectID, spec)
+	op, final, err := a.runOp(ctx, OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
 		return Project{}, Operation{}, WorkerResultMsg{}, err
 	}
@@ -88,11 +88,11 @@ func (a *API) deleteProject(
 		return Operation{}, WorkerResultMsg{}, err
 	}
 	p.Status.Phase = projectPhaseDel
-	p.Status.Message = "queued delete"
+	p.Status.Message = statusMessageDelQueue
 	p.Status.UpdatedAt = time.Now().UTC()
 	_ = a.store.PutProject(ctx, p)
 
-	op, final, err := a.runOp(ctx, OpDelete, projectID, zeroProjectSpec())
+	op, final, err := a.runOp(ctx, OpDelete, projectID, zeroProjectSpec(), emptyOpRunOptions())
 	if err != nil {
 		return Operation{}, WorkerResultMsg{}, err
 	}

@@ -116,6 +116,73 @@ Ignored response:
 }
 ```
 
+## Deployment Events
+
+Endpoint:
+
+- `POST /api/events/deployment`
+
+Request body:
+
+```json
+{
+  "project_id": "project-id",
+  "environment": "dev"
+}
+```
+
+Rules:
+
+- `project_id` is required.
+- `environment` is optional and defaults to `dev`.
+- Only `dev` is accepted by deployment events; higher environments must use promotion events.
+
+Success response:
+
+- Status: `200 OK`
+
+```json
+{
+  "project": {},
+  "op": {},
+  "final": {}
+}
+```
+
+## Promotion Events
+
+Endpoint:
+
+- `POST /api/events/promotion`
+
+Request body:
+
+```json
+{
+  "project_id": "project-id",
+  "from_env": "dev",
+  "to_env": "staging"
+}
+```
+
+Rules:
+
+- `project_id`, `from_env`, and `to_env` are required.
+- `from_env` and `to_env` must differ.
+- Both environments must be defined for the project (except `dev`, which is always supported for deployment/promotion state).
+
+Success response:
+
+- Status: `200 OK`
+
+```json
+{
+  "project": {},
+  "op": {},
+  "final": {}
+}
+```
+
 ## Projects
 
 Endpoints:

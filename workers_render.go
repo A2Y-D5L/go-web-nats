@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,6 +24,7 @@ const (
 	manifestFileDeployment    = "deployment.yaml"
 	manifestFileService       = "service.yaml"
 	manifestFileKustomization = "kustomization.yaml"
+	manifestDefaultImageTag   = "latest"
 )
 
 func shortID(id string) string {
@@ -88,6 +90,80 @@ func preferredEnvironment(spec ProjectSpec) (string, map[string]string) {
 	}
 	first := names[0]
 	return first, spec.Environments[first].Vars
+}
+
+func environmentVarsFor(spec ProjectSpec, envName string) map[string]string {
+	spec = normalizeProjectSpec(spec)
+	if env, ok := spec.Environments[envName]; ok {
+		return mapsClone(env.Vars)
+	}
+	_, vars := preferredEnvironment(spec)
+	return mapsClone(vars)
+}
+
+func mapsClone(m map[string]string) map[string]string {
+	return maps.Clone(m)
+}
+
+func renderBaseDeploymentManifest(spec ProjectSpec) string {
+	spec = normalizeProjectSpec(spec)
+	name := safeName(spec.Name)
+	var b strings.Builder
+	fmt.Fprintf(&b, "apiVersion: apps/v1\n")
+	fmt.Fprintf(&b, "kind: Deployment\n")
+	fmt.Fprintf(&b, "metadata:\n")
+	fmt.Fprintf(&b, "  name: %s\n", name)
+	fmt.Fprintf(&b, "spec:\n")
+	fmt.Fprintf(&b, "  replicas: 1\n")
+	fmt.Fprintf(&b, "  selector:\n")
+	fmt.Fprintf(&b, "    matchLabels:\n")
+	fmt.Fprintf(&b, "      app: %s\n", name)
+	fmt.Fprintf(&b, "  template:\n")
+	fmt.Fprintf(&b, "    metadata:\n")
+	fmt.Fprintf(&b, "      labels:\n")
+	fmt.Fprintf(&b, "        app: %s\n", name)
+	fmt.Fprintf(&b, "      annotations:\n")
+	fmt.Fprintf(&b, "        platform.example.com/ingress: %s\n", spec.NetworkPolicies.Ingress)
+	fmt.Fprintf(&b, "        platform.example.com/egress: %s\n", spec.NetworkPolicies.Egress)
+	fmt.Fprintf(&b, "    spec:\n")
+	fmt.Fprintf(&b, "      containers:\n")
+	fmt.Fprintf(&b, "      - name: app\n")
+	fmt.Fprintf(&b, "        image: app-image\n")
+	fmt.Fprintf(&b, "        imagePullPolicy: IfNotPresent\n")
+	fmt.Fprintf(&b, "        ports:\n")
+	fmt.Fprintf(&b, "        - containerPort: 8080\n")
+	return b.String()
+}
+
+func renderDeploymentEnvPatch(spec ProjectSpec, envName string) string {
+	spec = normalizeProjectSpec(spec)
+	vars := environmentVarsFor(spec, envName)
+	name := safeName(spec.Name)
+	var b strings.Builder
+	fmt.Fprintf(&b, "apiVersion: apps/v1\n")
+	fmt.Fprintf(&b, "kind: Deployment\n")
+	fmt.Fprintf(&b, "metadata:\n")
+	fmt.Fprintf(&b, "  name: %s\n", name)
+	fmt.Fprintf(&b, "spec:\n")
+	fmt.Fprintf(&b, "  template:\n")
+	fmt.Fprintf(&b, "    metadata:\n")
+	fmt.Fprintf(&b, "      annotations:\n")
+	fmt.Fprintf(&b, "        platform.example.com/environment: %s\n", envName)
+	fmt.Fprintf(&b, "    spec:\n")
+	fmt.Fprintf(&b, "      containers:\n")
+	fmt.Fprintf(&b, "      - name: app\n")
+	keys := sortedKeys(vars)
+	fmt.Fprintf(&b, "        env:\n")
+	if len(keys) == 0 {
+		fmt.Fprintf(&b, "        - name: PLATFORM_ENVIRONMENT\n")
+		fmt.Fprintf(&b, "          value: %s\n", yamlQuoted(envName))
+		return b.String()
+	}
+	for _, k := range keys {
+		fmt.Fprintf(&b, "        - name: %s\n", k)
+		fmt.Fprintf(&b, "          value: %s\n", yamlQuoted(vars[k]))
+	}
+	return b.String()
 }
 
 func renderDeploymentManifest(spec ProjectSpec, image string) string {
@@ -171,12 +247,52 @@ func renderKustomizedProjectManifests(
 }
 
 func renderKustomizationManifest() string {
+	return renderBaseKustomizationManifest()
+}
+
+func renderBaseKustomizationManifest() string {
 	return `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - deployment.yaml
   - service.yaml
 `
+}
+
+func renderOverlayKustomizationManifest(image string) string {
+	name, tag := splitImageRef(image)
+	return fmt.Sprintf(`apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patchesStrategicMerge:
+  - deployment-patch.yaml
+images:
+  - name: app-image
+    newName: %s
+    newTag: %s
+`, name, tag)
+}
+
+func splitImageRef(image string) (string, string) {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "local/project", manifestDefaultImageTag
+	}
+	lastColon := strings.LastIndex(image, ":")
+	lastSlash := strings.LastIndex(image, "/")
+	if lastColon <= lastSlash {
+		return image, manifestDefaultImageTag
+	}
+	name := strings.TrimSpace(image[:lastColon])
+	tag := strings.TrimSpace(image[lastColon+1:])
+	if name == "" {
+		name = image
+	}
+	if tag == "" {
+		tag = manifestDefaultImageTag
+	}
+	return name, tag
 }
 
 func runKustomizeBuild(
@@ -210,9 +326,12 @@ func runKustomizeBuild(
 			return nil, fmt.Errorf("write kustomize input %s: %w", manifestFile.name, writeErr)
 		}
 	}
+	return runKustomizeBuildAtPath(tempDir)
+}
 
+func runKustomizeBuildAtPath(dir string) ([]byte, error) {
 	kustomizer := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
-	result, err := kustomizer.Run(filesys.MakeFsOnDisk(), tempDir)
+	result, err := kustomizer.Run(filesys.MakeFsOnDisk(), dir)
 	if err != nil {
 		return nil, fmt.Errorf("run kustomize build: %w", err)
 	}

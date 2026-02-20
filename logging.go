@@ -126,6 +126,10 @@ func sourceColor(source string) string {
 		return "93"
 	case "manifestRenderer":
 		return "32"
+	case "deployer":
+		return "92"
+	case "promoter":
+		return "96"
 	default:
 		palette := []string{"34", "35", "36", "92", "93", "95", "96"}
 		h := fnv.New32a()

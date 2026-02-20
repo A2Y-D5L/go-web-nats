@@ -16,4 +16,6 @@ const (
 	projectPhaseReady     = "Ready"
 	projectPhaseError     = "Error"
 	projectPhaseDel       = "Deleting"
+	statusMessageQueued   = "queued"
+	statusMessageDelQueue = "queued delete"
 )

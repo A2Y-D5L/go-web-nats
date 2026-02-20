@@ -45,7 +45,7 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 				UpdatedAt:  now,
 				LastOpID:   "",
 				LastOpKind: "",
-				Message:    "queued",
+				Message:    statusMessageQueued,
 			},
 		}
 		putErr := a.store.PutProject(r.Context(), p)
@@ -54,7 +54,7 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		op, final, err := a.runOp(r.Context(), OpCreate, projectID, spec)
+		op, final, err := a.runOp(r.Context(), OpCreate, projectID, spec, emptyOpRunOptions())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -151,7 +151,7 @@ func (a *API) handleProjectUpdateByID(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
-	op, final, err := a.runOp(r.Context(), OpUpdate, projectID, spec)
+	op, final, err := a.runOp(r.Context(), OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -170,11 +170,17 @@ func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	project.Status.Phase = projectPhaseDel
-	project.Status.Message = "queued delete"
+	project.Status.Message = statusMessageDelQueue
 	project.Status.UpdatedAt = time.Now().UTC()
 	_ = a.store.PutProject(r.Context(), project)
 
-	op, final, err := a.runOp(r.Context(), OpDelete, projectID, zeroProjectSpec())
+	op, final, err := a.runOp(
+		r.Context(),
+		OpDelete,
+		projectID,
+		zeroProjectSpec(),
+		emptyOpRunOptions(),
+	)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

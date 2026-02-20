@@ -33,6 +33,8 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("/api/projects", a.handleProjects)
 	mux.HandleFunc("/api/projects/", a.handleProjectByID)
 	mux.HandleFunc("/api/events/registration", a.handleRegistrationEvents)
+	mux.HandleFunc("/api/events/deployment", a.handleDeploymentEvents)
+	mux.HandleFunc("/api/events/promotion", a.handlePromotionEvents)
 	mux.HandleFunc("/api/webhooks/source", a.handleSourceRepoWebhook)
 
 	// Ops: read
@@ -96,4 +98,15 @@ type SourceRepoWebhookEvent struct {
 	Branch    string `json:"branch,omitempty"`
 	Ref       string `json:"ref,omitempty"` // e.g. refs/heads/main
 	Commit    string `json:"commit,omitempty"`
+}
+
+type DeploymentEvent struct {
+	ProjectID   string `json:"project_id"`
+	Environment string `json:"environment,omitempty"`
+}
+
+type PromotionEvent struct {
+	ProjectID string `json:"project_id"`
+	FromEnv   string `json:"from_env"`
+	ToEnv     string `json:"to_env"`
 }

@@ -13,7 +13,7 @@ Task lookup helpers:
 ## Add/Change API Endpoint
 
 1. Update route wiring in `api_types.go` if needed.
-2. Implement handler in the matching `api_*.go` file.
+2. Implement handler in the matching `api_*.go` file (`api_processes.go` for deploy/promotion events).
 3. Reuse `api_runop.go` for op orchestration (do not duplicate wait/publish logic).
 4. Add/adjust tests in `api_handlers_test.go` or `api_webhooks_test.go`.
 5. Run `make test-api`, then `make check`.
@@ -25,6 +25,7 @@ Task lookup helpers:
    - bootstrap: `workers_action_bootstrap.go` + helpers
    - build: `workers_action_build.go` + `workers_action_buildkit*.go` helpers
    - deploy: `workers_action_deploy.go`
+   - promotion: `workers_action_promotion.go`
 2. Keep shared helpers in:
    - git operations (go-git): `workers_action_git.go`
    - webhook hook script/install + optional commit watcher: `workers_action_webhook_hooks.go`

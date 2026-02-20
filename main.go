@@ -58,6 +58,8 @@ func Run() {
 		NewRepoBootstrapWorker(natsURL, artifacts),
 		NewImageBuilderWorker(natsURL, artifacts),
 		NewManifestRendererWorker(natsURL, artifacts),
+		NewDeploymentWorker(natsURL, artifacts),
+		NewPromotionWorker(natsURL, artifacts),
 	}
 	for _, worker := range workers {
 		startErr := worker.Start(ctx)
@@ -67,13 +69,15 @@ func Run() {
 	}
 
 	waiters := newWaiterHub()
-	finalSub, err := subscribeFinalResults(nc, waiters)
+	finalSubs, err := subscribeFinalResults(nc, waiters)
 	if err != nil {
 		mainLog.Fatalf("subscribe final: %v", err)
 	}
 	defer func() {
-		if uerr := finalSub.Unsubscribe(); uerr != nil {
-			mainLog.Warnf("final subscription unsubscribe error: %v", uerr)
+		for _, finalSub := range finalSubs {
+			if uerr := finalSub.Unsubscribe(); uerr != nil {
+				mainLog.Warnf("final subscription unsubscribe error: %v", uerr)
+			}
 		}
 	}()
 
