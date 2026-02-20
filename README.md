@@ -15,6 +15,11 @@ Single-binary Go demo platform:
 - `docs/AGENT_PLAYBOOK.md`: concrete task recipes
 - `docs/API_CONTRACTS.md`: canonical request/response contract reference
 
+Quick task scoping commands:
+
+- `make task-list`
+- `make task-show TASK=api.webhooks`
+
 ## What It Demonstrates
 
 - Registration-driven project lifecycle (`create`, `update`, `delete`)

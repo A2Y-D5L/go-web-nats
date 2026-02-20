@@ -2,6 +2,7 @@ version: 1
 read_order:
   - main.go
   - cmd/server/main.go
+  - logging.go
   - config.go
   - model.go
   - messages.go
@@ -93,9 +94,11 @@ tasks:
     files:
       - main.go
       - cmd/server/main.go
+      - logging.go
       - config.go
       - ui_embed.go
       - nats_subscriptions.go
+      - scripts/taskmap.sh
       - AGENTS.md
       - CODEMAP.md
       - TASKMAP.yaml

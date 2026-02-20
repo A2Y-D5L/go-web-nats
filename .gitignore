@@ -17,6 +17,7 @@
 !docs/**/*.md
 !*.go
 !**/*.go
+!scripts/**/*.sh
 !**/testdata/*.json
 !**/testdata/*.yaml
 !**/testdata/*.csv

@@ -11,6 +11,7 @@ Operational runbook for coding agents working in this repository.
 
 1. Read `CODEMAP.md`.
 2. Read `TASKMAP.yaml` and pick the closest `tasks[].id`.
+   - Optional helper: `make task-list` then `make task-show TASK=<id>`.
 3. Read `docs/API_CONTRACTS.md` when touching any `api_*.go` endpoint behavior.
 4. Edit only files listed for that task unless a boundary change is required.
 5. Run `make check` before finishing.
@@ -46,7 +47,8 @@ Operational runbook for coding agents working in this repository.
 - Rendering helpers: `workers_render.go`
 - Persistence: `store.go`
 - Op step/finalize bookkeeping: `ops_bookkeeping.go`
-- Bootstrapping/logging/process lifecycle: `main.go` and `cmd/server/main.go`
+- Bootstrapping/process lifecycle: `main.go` and `cmd/server/main.go`
+- Logging behavior and color/source formatting: `logging.go`
 
 ## Edit Strategy
 

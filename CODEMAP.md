@@ -8,19 +8,21 @@ Primary agent contract: `AGENTS.md`
 
 1. `main.go`
 2. `cmd/server/main.go`
-3. `config.go`
-4. `model.go`
-5. `messages.go`
-6. `workers_defs.go`
-7. `workers_loop.go`
-8. `api_types.go`
-9. `api_runop.go`
-10. `store.go`
-11. `artifacts_fs.go`
+3. `logging.go`
+4. `config.go`
+5. `model.go`
+6. `messages.go`
+7. `workers_defs.go`
+8. `workers_loop.go`
+9. `api_types.go`
+10. `api_runop.go`
+11. `store.go`
+12. `artifacts_fs.go`
 
 ## File Responsibilities
 
-- `main.go`: platform runtime bootstrap (`Run`) and structured/color logging.
+- `main.go`: platform runtime bootstrap (`Run`) and lifecycle wiring.
+- `logging.go`: structured/color logger and source/level formatting.
 - `cmd/server/main.go`: executable entrypoint.
 - `ui_embed.go`: embedded static web assets.
 - `config.go`: global constants and runtime defaults.
@@ -51,6 +53,7 @@ Primary agent contract: `AGENTS.md`
 - `api_runop.go`: op orchestration path (publish, wait, finalize).
 - `nats_subscriptions.go`: final worker result subscription for waking API waiters.
 - `utils.go`: small shared helpers (`newID`, JSON write utilities).
+- `scripts/taskmap.sh`: task lookup helper for reading `TASKMAP.yaml` quickly.
 
 ## Test Files
 
@@ -78,3 +81,4 @@ Primary agent contract: `AGENTS.md`
 - Treat `model.go` and `messages.go` as contracts; update call sites in the same change.
 - Ignore runtime-generated state under `data/` and `.tmp/` when reading context.
 - Prefer fast scoped checks first: `make test-api`, `make test-workers`, `make test-store`, `make test-model`.
+- Use task lookup helpers to scope context quickly: `make task-list`, `make task-show TASK=<id>`.

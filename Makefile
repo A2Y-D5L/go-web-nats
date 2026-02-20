@@ -30,6 +30,7 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -pa
 	prepare-go-env \
 	fmt fmt-check \
 	agent-check \
+	task-list task-show task-files task-tests \
 	vet lint lint-fix test test-api test-workers test-store test-model test-race cover js-check check precommit \
 	run dev wait-api \
 	api-list api-create api-webhook \
@@ -144,6 +145,33 @@ agent-check: ## Validate agent context files and task-map references
 		fi; \
 	done; \
 	echo "Agent context files are consistent."
+
+task-list: ## List task ids from TASKMAP.yaml
+	@./scripts/taskmap.sh list
+
+task-show: ## Show files/tests for a task (TASK=<task-id>)
+	@set -euo pipefail; \
+	if [[ -z "$(TASK)" ]]; then \
+		echo "TASK is required. Example: make task-show TASK=api.webhooks"; \
+		exit 1; \
+	fi; \
+	./scripts/taskmap.sh show "$(TASK)"
+
+task-files: ## Show file set for a task (TASK=<task-id>)
+	@set -euo pipefail; \
+	if [[ -z "$(TASK)" ]]; then \
+		echo "TASK is required. Example: make task-files TASK=workers.bootstrap"; \
+		exit 1; \
+	fi; \
+	./scripts/taskmap.sh files "$(TASK)"
+
+task-tests: ## Show test files for a task (TASK=<task-id>)
+	@set -euo pipefail; \
+	if [[ -z "$(TASK)" ]]; then \
+		echo "TASK is required. Example: make task-tests TASK=api.registration"; \
+		exit 1; \
+	fi; \
+	./scripts/taskmap.sh tests "$(TASK)"
 
 check: fmt-check agent-check lint vet test js-check ## Run all local quality checks
 

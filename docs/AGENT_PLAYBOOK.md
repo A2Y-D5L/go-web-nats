@@ -2,6 +2,11 @@
 
 Task recipes for fast, low-risk changes.
 
+Task lookup helpers:
+
+- `make task-list`
+- `make task-show TASK=<task-id>`
+
 ## Add/Change API Endpoint
 
 1. Update route wiring in `api_types.go` if needed.
@@ -50,9 +55,10 @@ Task recipes for fast, low-risk changes.
 
 1. Edit `main.go` for platform lifecycle changes.
 2. Edit `cmd/server/main.go` for executable entrypoint changes.
-3. Edit `infra_nats.go` for embedded NATS/JetStream boot changes.
-4. Keep logging behavior consistent.
-5. Run `make check`.
+3. Edit `logging.go` for log formatting/level/source color behavior.
+4. Edit `infra_nats.go` for embedded NATS/JetStream boot changes.
+5. Keep logging behavior consistent.
+6. Run `make check`.
 
 ## Definition of Done
 
