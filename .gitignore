@@ -27,3 +27,7 @@
 
 # Exceptions for allowed files:
 vendor/
+
+# Runtime-generated local artifacts and nested repos must never be committed.
+data/artifacts/**/repos/
+data/artifacts/**/repos/**
