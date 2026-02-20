@@ -1,0 +1,15 @@
+package platform
+
+import "os"
+
+////////////////////////////////////////////////////////////////////////////////
+// Filesystem and artifact path controls
+////////////////////////////////////////////////////////////////////////////////
+
+const (
+	fileModePrivate     os.FileMode = 0o600
+	fileModeExecPrivate os.FileMode = 0o700
+	dirModePrivateRead  os.FileMode = 0o750
+
+	projectRelPathPartsMin = 2
+)

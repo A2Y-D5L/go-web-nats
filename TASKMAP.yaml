@@ -3,7 +3,10 @@ read_order:
   - main.go
   - cmd/server/main.go
   - logging.go
-  - config.go
+  - config_runtime.go
+  - config_subjects.go
+  - config_domain.go
+  - config_filesystem.go
   - model.go
   - messages.go
   - workers_defs.go
@@ -95,7 +98,10 @@ tasks:
       - main.go
       - cmd/server/main.go
       - logging.go
-      - config.go
+      - config_runtime.go
+      - config_subjects.go
+      - config_domain.go
+      - config_filesystem.go
       - ui_embed.go
       - nats_subscriptions.go
       - scripts/taskmap.sh

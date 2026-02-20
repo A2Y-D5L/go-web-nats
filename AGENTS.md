@@ -49,6 +49,10 @@ Operational runbook for coding agents working in this repository.
 - Op step/finalize bookkeeping: `ops_bookkeeping.go`
 - Bootstrapping/process lifecycle: `main.go` and `cmd/server/main.go`
 - Logging behavior and color/source formatting: `logging.go`
+- Runtime defaults/timeouts: `config_runtime.go`
+- Subject/KV names: `config_subjects.go`
+- Domain defaults/phases: `config_domain.go`
+- File mode/path constants: `config_filesystem.go`
 
 ## Edit Strategy
 

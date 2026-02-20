@@ -9,15 +9,18 @@ Primary agent contract: `AGENTS.md`
 1. `main.go`
 2. `cmd/server/main.go`
 3. `logging.go`
-4. `config.go`
-5. `model.go`
-6. `messages.go`
-7. `workers_defs.go`
-8. `workers_loop.go`
-9. `api_types.go`
-10. `api_runop.go`
-11. `store.go`
-12. `artifacts_fs.go`
+4. `config_runtime.go`
+5. `config_subjects.go`
+6. `config_domain.go`
+7. `config_filesystem.go`
+8. `model.go`
+9. `messages.go`
+10. `workers_defs.go`
+11. `workers_loop.go`
+12. `api_types.go`
+13. `api_runop.go`
+14. `store.go`
+15. `artifacts_fs.go`
 
 ## File Responsibilities
 
@@ -25,7 +28,10 @@ Primary agent contract: `AGENTS.md`
 - `logging.go`: structured/color logger and source/level formatting.
 - `cmd/server/main.go`: executable entrypoint.
 - `ui_embed.go`: embedded static web assets.
-- `config.go`: global constants and runtime defaults.
+- `config_runtime.go`: runtime defaults/timeouts and HTTP/artifact roots.
+- `config_subjects.go`: NATS subjects and KV key/bucket names.
+- `config_domain.go`: project schema/domain defaults and phase constants.
+- `config_filesystem.go`: file mode and artifact path controls.
 - `model.go`: domain types (`Project`, `Operation`) and spec validation/normalization.
 - `messages.go`: NATS worker message schemas.
 - `infra_nats.go`: embedded NATS + JetStream bootstrap.
@@ -72,7 +78,7 @@ Primary agent contract: `AGENTS.md`
 - Change worker pub/sub flow: `workers_defs.go`, `workers_loop.go`, `workers_resultmsg.go`, and `messages.go`.
 - Change persistence behavior: `store.go`.
 - Change local artifact layout: `artifacts_fs.go`.
-- Change defaults/constants: `config.go`.
+- Change defaults/constants: start in `config_runtime.go`, `config_subjects.go`, `config_domain.go`, `config_filesystem.go`.
 
 ## Agent Rules of Thumb
 

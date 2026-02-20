@@ -34,7 +34,7 @@ Task lookup helpers:
 1. Edit worker startup/types in `workers_defs.go`.
 2. Edit subscription/dispatch logic in `workers_loop.go`.
 3. Edit result shaping in `workers_resultmsg.go`.
-4. Verify subject chain constants in `config.go`.
+4. Verify subject chain constants in `config_subjects.go`.
 5. Run `make test-workers`, then `make check`.
 
 ## Change Persistence/State
@@ -56,9 +56,10 @@ Task lookup helpers:
 1. Edit `main.go` for platform lifecycle changes.
 2. Edit `cmd/server/main.go` for executable entrypoint changes.
 3. Edit `logging.go` for log formatting/level/source color behavior.
-4. Edit `infra_nats.go` for embedded NATS/JetStream boot changes.
-5. Keep logging behavior consistent.
-6. Run `make check`.
+4. Edit `config_runtime.go` and `config_filesystem.go` for startup defaults/path behavior.
+5. Edit `infra_nats.go` for embedded NATS/JetStream boot changes.
+6. Keep logging behavior consistent.
+7. Run `make check`.
 
 ## Definition of Done
 
