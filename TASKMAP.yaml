@@ -101,6 +101,13 @@ tasks:
     tests:
       - artifacts_fs_test.go
       - api_handlers_test.go
+  - id: ui.frontend
+    files:
+      - web/index.html
+      - web/styles.css
+      - web/app.js
+      - ui_embed.go
+    tests: []
   - id: docs.context
     files:
       - AGENTS.md

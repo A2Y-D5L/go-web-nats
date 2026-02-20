@@ -1,141 +1,216 @@
-<!-- File: web/index.html -->
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PaaS Portal (Embedded NATS + Workers + Artifacts)</title>
+    <title>Platform Control Plane</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header>
-      <h1>PaaS Portal</h1>
-      <p class="muted">Registration events reconcile projects. Source repo `main` webhooks trigger CI (build, containerize, render manifests).</p>
-    </header>
+    <div class="app-shell">
+      <header class="hero" aria-label="Platform overview">
+        <p class="hero-eyebrow">Local-first platform demo</p>
+        <h1>Platform Control Plane</h1>
+        <p class="hero-subtitle">
+          Registration events reconcile projects, and source webhooks trigger CI from
+          <code>imageBuilder</code> into <code>manifestRenderer</code>.
+        </p>
+        <div class="hero-chips" role="list" aria-label="Core API pathways">
+          <span class="chip" role="listitem">POST /api/events/registration</span>
+          <span class="chip" role="listitem">POST /api/webhooks/source</span>
+          <span class="chip" role="listitem">Worker chain: registrar -> repoBootstrap -> imageBuilder -> manifestRenderer</span>
+        </div>
+      </header>
 
-    <main class="grid">
-      <section class="card">
-        <h2>Create project</h2>
-        <form id="createForm">
-          <label>API Version <input id="createAPIVersion" value="platform.example.com/v2" required /></label>
-          <label>Kind <input id="createKind" value="App" required /></label>
-          <label>Name <input id="createName" required placeholder="my-service" /></label>
-          <label>Runtime <input id="createRuntime" required placeholder="go_1.26" /></label>
-          <label>Capabilities (comma-separated) <input id="createCapabilities" placeholder="http,metrics" /></label>
-          <label>Network ingress
-            <select id="createIngress">
-              <option value="internal">internal</option>
-              <option value="none">none</option>
-            </select>
-          </label>
-          <label>Network egress
-            <select id="createEgress">
-              <option value="internal">internal</option>
-              <option value="none">none</option>
-            </select>
-          </label>
-          <label>Environments JSON
-            <textarea id="createEnvironments" rows="8"></textarea>
-          </label>
-          <button type="submit">Create</button>
-        </form>
+      <section class="system-strip" aria-label="System status">
+        <article class="metric-card">
+          <p class="metric-label">Platform Health</p>
+          <p id="healthLabel" class="metric-value">Starting</p>
+          <p id="healthMeta" class="metric-meta">Fetching projects</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Projects</p>
+          <p id="systemProjectCount" class="metric-value">0</p>
+          <p id="systemReadyCount" class="metric-meta">0 ready</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Active Operation</p>
+          <p id="systemActiveOp" class="metric-value">None</p>
+          <p id="systemActiveOpMeta" class="metric-meta">No operation selected</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Builder Mode</p>
+          <p id="systemBuilderMode" class="metric-value">buildkit</p>
+          <p id="systemBuilderMeta" class="metric-meta">Metadata artifacts not loaded</p>
+        </article>
       </section>
 
-      <section class="card">
-        <h2>Projects</h2>
-        <div class="toolbar">
-          <input id="projectSearch" placeholder="Search by name or ID (/)" />
-          <select id="phaseFilter">
-            <option value="all">All phases</option>
-            <option value="Ready">Ready</option>
-            <option value="Reconciling">Reconciling</option>
-            <option value="Deleting">Deleting</option>
-            <option value="Error">Error</option>
-          </select>
-          <select id="projectSort">
-            <option value="updated_desc">Recently updated</option>
-            <option value="name_asc">Name A-Z</option>
-            <option value="created_asc">Oldest first</option>
-          </select>
-        </div>
-        <div class="row">
-          <button id="refreshBtn">Refresh</button>
-          <div id="projectStats" class="muted"></div>
-        </div>
-        <div id="projects"></div>
-      </section>
+      <div id="appStatus" class="status-banner" role="status" aria-live="polite"></div>
 
-      <section class="card">
-        <h2>Selected project</h2>
-        <div id="selected" class="muted">None selected.</div>
+      <main class="workspace">
+        <section class="panel panel-projects" aria-label="Projects inventory">
+          <div class="panel-header">
+            <h2>Projects</h2>
+            <button id="refreshBtn" type="button" class="btn btn-subtle">Refresh</button>
+          </div>
 
-        <h3>Update</h3>
-        <form id="updateForm">
-          <label>API Version <input id="updateAPIVersion" required /></label>
-          <label>Kind <input id="updateKind" required /></label>
-          <label>Name <input id="updateName" required /></label>
-          <label>Runtime <input id="updateRuntime" required /></label>
-          <label>Capabilities (comma-separated) <input id="updateCapabilities" /></label>
-          <label>Network ingress
-            <select id="updateIngress">
-              <option value="internal">internal</option>
-              <option value="none">none</option>
-            </select>
-          </label>
-          <label>Network egress
-            <select id="updateEgress">
-              <option value="internal">internal</option>
-              <option value="none">none</option>
-            </select>
-          </label>
-          <label>Environments JSON
-            <textarea id="updateEnvironments" rows="8"></textarea>
-          </label>
-          <button type="submit">Update</button>
-        </form>
+          <div class="filter-grid">
+            <label class="field compact" for="projectSearch">
+              <span>Search</span>
+              <input id="projectSearch" placeholder="Name, ID, runtime (/)">
+            </label>
+            <label class="field compact" for="phaseFilter">
+              <span>Phase</span>
+              <select id="phaseFilter">
+                <option value="all">All phases</option>
+                <option value="Ready">Ready</option>
+                <option value="Reconciling">Reconciling</option>
+                <option value="Deleting">Deleting</option>
+                <option value="Error">Error</option>
+              </select>
+            </label>
+            <label class="field compact" for="projectSort">
+              <span>Sort</span>
+              <select id="projectSort">
+                <option value="updated_desc">Recently updated</option>
+                <option value="name_asc">Name A-Z</option>
+                <option value="created_asc">Oldest first</option>
+              </select>
+            </label>
+          </div>
 
-        <h3>Trigger CI webhook</h3>
-        <form id="webhookForm">
-          <label>Repo
-            <input id="webhookRepo" value="source" placeholder="source" />
-          </label>
-          <label>Branch
-            <input id="webhookBranch" value="main" placeholder="main" />
-          </label>
-          <label>Ref
-            <input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main" />
-          </label>
-          <label>Commit (optional)
-            <input id="webhookCommit" placeholder="abc123def456" />
-          </label>
-          <button type="submit">Trigger CI</button>
-        </form>
+          <p id="projectStats" class="helper-text">0 visible</p>
+          <div id="projects" class="project-list" role="listbox" aria-label="Projects list"></div>
+        </section>
 
-        <h3>Artifacts</h3>
-        <div class="row">
-          <button id="loadArtifactsBtn">Load artifacts</button>
-          <input id="artifactSearch" placeholder="Filter artifacts..." />
-        </div>
-        <div id="artifacts" class="files"></div>
-        <div class="row">
-          <button id="copyPreviewBtn" type="button" disabled>Copy preview</button>
-        </div>
-        <pre id="artifactPreview" class="pre muted">Select a file to preview.</pre>
+        <section class="panel panel-details" aria-label="Project details and actions">
+          <div class="panel-header">
+            <h2>Selected Project</h2>
+          </div>
 
-        <h3>Operation progress</h3>
-        <div id="opProgress"></div>
-        <div id="opTimeline" class="timeline"></div>
+          <div id="selected" class="project-summary muted">Select a project to inspect details and actions.</div>
 
-        <h3>Last operation</h3>
-        <pre id="lastOp" class="pre"></pre>
+          <div class="action-grid">
+            <article class="subpanel">
+              <h3>Create Project</h3>
+              <form id="createForm" class="form-grid">
+                <label class="field" for="createAPIVersion"><span>API Version</span><input id="createAPIVersion" required></label>
+                <label class="field" for="createKind"><span>Kind</span><input id="createKind" required></label>
+                <label class="field" for="createName"><span>Name</span><input id="createName" required placeholder="my-service"></label>
+                <label class="field" for="createRuntime"><span>Runtime</span><input id="createRuntime" required placeholder="go_1.26"></label>
+                <label class="field" for="createCapabilities"><span>Capabilities</span><input id="createCapabilities" placeholder="http,metrics"></label>
+                <label class="field" for="createIngress">
+                  <span>Network ingress</span>
+                  <select id="createIngress">
+                    <option value="internal">internal</option>
+                    <option value="none">none</option>
+                  </select>
+                </label>
+                <label class="field" for="createEgress">
+                  <span>Network egress</span>
+                  <select id="createEgress">
+                    <option value="internal">internal</option>
+                    <option value="none">none</option>
+                  </select>
+                </label>
+                <label class="field field-full" for="createEnvironments">
+                  <span>Environments JSON</span>
+                  <textarea id="createEnvironments" rows="8"></textarea>
+                </label>
+                <button type="submit" class="btn btn-primary">Create</button>
+              </form>
+            </article>
 
-        <div class="danger">
-          <button id="deleteBtn">Delete project</button>
-        </div>
+            <article class="subpanel">
+              <h3>Update Project</h3>
+              <form id="updateForm" class="form-grid">
+                <label class="field" for="updateAPIVersion"><span>API Version</span><input id="updateAPIVersion" required></label>
+                <label class="field" for="updateKind"><span>Kind</span><input id="updateKind" required></label>
+                <label class="field" for="updateName"><span>Name</span><input id="updateName" required></label>
+                <label class="field" for="updateRuntime"><span>Runtime</span><input id="updateRuntime" required></label>
+                <label class="field" for="updateCapabilities"><span>Capabilities</span><input id="updateCapabilities"></label>
+                <label class="field" for="updateIngress">
+                  <span>Network ingress</span>
+                  <select id="updateIngress">
+                    <option value="internal">internal</option>
+                    <option value="none">none</option>
+                  </select>
+                </label>
+                <label class="field" for="updateEgress">
+                  <span>Network egress</span>
+                  <select id="updateEgress">
+                    <option value="internal">internal</option>
+                    <option value="none">none</option>
+                  </select>
+                </label>
+                <label class="field field-full" for="updateEnvironments">
+                  <span>Environments JSON</span>
+                  <textarea id="updateEnvironments" rows="8"></textarea>
+                </label>
+                <button type="submit" class="btn btn-primary">Update</button>
+              </form>
+            </article>
 
-        <div id="status" class="status"></div>
-      </section>
-    </main>
+            <article class="subpanel subpanel-stack">
+              <div>
+                <h3>Trigger CI Webhook</h3>
+                <form id="webhookForm" class="form-grid">
+                  <label class="field" for="webhookRepo"><span>Repo</span><input id="webhookRepo" value="source" placeholder="source"></label>
+                  <label class="field" for="webhookBranch"><span>Branch</span><input id="webhookBranch" value="main" placeholder="main"></label>
+                  <label class="field" for="webhookRef"><span>Ref</span><input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main"></label>
+                  <label class="field" for="webhookCommit"><span>Commit (optional)</span><input id="webhookCommit" placeholder="abc123def456"></label>
+                  <button type="submit" class="btn btn-primary">Trigger CI</button>
+                </form>
+              </div>
+
+              <div class="danger-zone">
+                <h3>Delete Project</h3>
+                <p>Deletes project records and local artifacts.</p>
+                <button id="deleteBtn" type="button" class="btn btn-danger">Delete project</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel panel-runtime" aria-label="Operations and artifacts">
+          <article class="subpanel">
+            <div class="panel-header">
+              <h2>Operation Timeline</h2>
+            </div>
+            <div id="opProgress"></div>
+            <div id="opTimeline" class="timeline"></div>
+            <div id="opInsights" class="insight-grid"></div>
+            <details id="opRawWrap" class="raw-details">
+              <summary>Last operation payload</summary>
+              <pre id="lastOp" class="codeblock"></pre>
+            </details>
+          </article>
+
+          <article class="subpanel">
+            <div class="panel-header">
+              <h2>Artifacts</h2>
+              <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Load</button>
+            </div>
+            <label class="field compact" for="artifactSearch">
+              <span>Filter artifacts</span>
+              <input id="artifactSearch" placeholder="build/, deploy/, repos/...">
+            </label>
+            <p id="artifactStats" class="helper-text">Artifacts not loaded</p>
+            <div id="buildkitSignal" class="buildkit-signal muted">BuildKit metadata unavailable until artifacts are loaded.</div>
+            <div id="artifacts" class="artifact-list"></div>
+            <div class="preview-head">
+              <p id="artifactPreviewMeta" class="helper-text">Preview unavailable</p>
+              <button id="copyPreviewBtn" type="button" class="btn btn-subtle" disabled>Copy preview</button>
+            </div>
+            <pre id="artifactPreview" class="codeblock muted">Select an artifact to preview.</pre>
+          </article>
+        </section>
+      </main>
+
+      <footer class="footer-note">
+        Keyboard shortcuts: <code>/</code> focus search, <code>r</code> refresh projects, <code>a</code> load artifacts.
+      </footer>
+    </div>
 
     <script src="/app.js"></script>
   </body>

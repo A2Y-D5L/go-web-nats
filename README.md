@@ -197,6 +197,22 @@ Config contracts are modeled from:
 - `deploy/service.yaml`
 - `deploy/rendered.yaml`
 
+## Frontend UX Highlights
+
+The embedded UI (`/`) now mirrors backend execution semantics directly:
+
+- system strip with project/health/op/build mode status
+- searchable/sortable project inventory with phase badges
+- selected-project action workspace for create/update/delete + source webhook CI
+- live operation timeline with ordered worker steps and duration/status details
+- artifact explorer with preview/download, BuildKit metadata signal, and imageBuilder output visibility
+
+Keyboard shortcuts:
+
+- `/` focuses project search
+- `r` refreshes projects
+- `a` loads artifacts for the selected project
+
 ## Run Locally
 
 Prereqs:

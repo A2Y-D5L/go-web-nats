@@ -28,6 +28,9 @@ Primary agent contract: `AGENTS.md`
 - `logging.go`: structured/color logger and source/level formatting.
 - `cmd/server/main.go`: executable entrypoint.
 - `ui_embed.go`: embedded static web assets.
+- `web/index.html`: semantic UI structure and panel composition for the embedded dashboard.
+- `web/styles.css`: frontend design tokens, layout system, and component/state styling.
+- `web/app.js`: client-side state, API calls, rendering, operation polling, and artifact preview logic.
 - `config_runtime.go`: runtime defaults/timeouts and HTTP/artifact roots.
 - `config_subjects.go`: NATS subjects and KV key/bucket names.
 - `config_domain.go`: project schema/domain defaults and phase constants.
@@ -82,6 +85,7 @@ Primary agent contract: `AGENTS.md`
 - Change worker pub/sub flow: `workers_defs.go`, `workers_loop.go`, `workers_resultmsg.go`, and `messages.go`.
 - Change persistence behavior: `store.go`.
 - Change local artifact layout: `artifacts_fs.go`.
+- Change frontend UX/UI behavior: start in `web/index.html`, `web/styles.css`, and `web/app.js`.
 - Change defaults/constants: start in `config_runtime.go`, `config_subjects.go`, `config_domain.go`, `config_filesystem.go`.
 - Change agent docs/context: start in `AGENTS.md`, `CODEMAP.md`, `TASKMAP.yaml`, `docs/AGENT_PLAYBOOK.md`.
 
@@ -92,5 +96,6 @@ Primary agent contract: `AGENTS.md`
 - Treat `model.go` and `messages.go` as contracts; update call sites in the same change.
 - Ignore runtime-generated state under `data/` and `.tmp/` when reading context.
 - Prefer fast scoped checks first: `make test-api`, `make test-workers`, `make test-store`, `make test-model`.
+- For frontend-only edits, run `make js-check` before `make check`.
 - Use task lookup helpers to scope context quickly: `make task-list`, `make task-show TASK=<id>`, `make task-files TASK=<id>`, `make task-tests TASK=<id>`.
 - Run scoped verification before full gate when iterating: `make task-audit TASK=<id>`.

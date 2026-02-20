@@ -59,6 +59,14 @@ Webhook-specific note:
 3. Validate artifact endpoints in `api_artifacts_ops.go`.
 4. Run `make test-store`, then `make check`.
 
+## Change Frontend UI/UX
+
+1. Edit `web/index.html` for semantic structure and accessibility.
+2. Edit `web/styles.css` using tokenized styles and responsive layout updates.
+3. Edit `web/app.js` for state management, API calls, rendering, and polling behavior.
+4. Keep endpoint contracts aligned with `docs/API_CONTRACTS.md`.
+5. Run `make js-check`, then `make check`.
+
 ## Startup/Infra Changes
 
 1. Edit `main.go` for platform lifecycle changes.
