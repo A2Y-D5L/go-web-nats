@@ -1,6 +1,7 @@
 # EmbeddedWebApp-HTTPAPI-BackendNATS
 
 Single-binary Go demo platform:
+
 - embeds a web frontend
 - runs an HTTP API
 - starts an embedded NATS+JetStream backend
@@ -26,6 +27,7 @@ Workers are named by responsibility:
 4. `manifestRenderer`
 
 Operation flow:
+
 - Registration operations (`create`, `update`, `delete`) run the full chain.
 - CI operations (`ci`) start at `imageBuilder` and then `manifestRenderer`.
 
@@ -34,6 +36,7 @@ Operation flow:
 ### 1) Registration events (frontend pathway)
 
 The frontend sends:
+
 - `POST /api/events/registration`
 
 Payload:
@@ -65,6 +68,7 @@ Payload:
 ### 2) Source webhook events (repo pathway)
 
 Webhook endpoint:
+
 - `POST /api/webhooks/source`
 
 Payload:
@@ -80,6 +84,7 @@ Payload:
 ```
 
 Rules:
+
 - only source repo webhooks are accepted (`repo` omitted or `source`)
 - only `main` branch triggers CI (supports `main`, `heads/main`, `refs/heads/main`)
 - accepted events trigger pipeline kind `ci`
@@ -87,22 +92,27 @@ Rules:
 ## Local Repos And Hooks
 
 On registration create/update, `repoBootstrap` now creates real local repos at:
+
 - `data/artifacts/<project-id>/repos/source`
 - `data/artifacts/<project-id>/repos/manifests`
 
 The source repo gets local hooks:
+
 - `.git/hooks/post-commit`
 - `.git/hooks/post-merge`
 
 Hook behavior:
+
 - triggers only on branch `main`
 - sends `POST /api/webhooks/source` to local API
 - ignores platform-managed commits with subject prefix `platform-sync:`
 
 Hook endpoint defaults to:
+
 - `http://127.0.0.1:8080/api/webhooks/source`
 
 Optional override:
+
 - `PAAS_LOCAL_API_BASE_URL` (example: `http://127.0.0.1:8080`)
 
 ## API Summary
@@ -124,6 +134,7 @@ Optional override:
 ## Project Spec Source
 
 Config contracts are modeled from:
+
 - `cfg/project-example.yaml`
 - `cfg/project-jsonschema.json`
 
@@ -141,6 +152,7 @@ Config contracts are modeled from:
 ## Run Locally
 
 Prereqs:
+
 - Go `1.25+` (module target is `1.25.0`)
 
 Commands:
@@ -152,6 +164,7 @@ go run .
 ```
 
 Open:
+
 - `http://127.0.0.1:8080`
 
 After creating a project, make a commit in the bootstrapped source repo to trigger CI locally:
