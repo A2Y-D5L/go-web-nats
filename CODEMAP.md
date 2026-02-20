@@ -42,9 +42,9 @@ Primary agent contract: `AGENTS.md`
 - `workers_loop.go`: worker subscription loop and message execution flow.
 - `workers_resultmsg.go`: worker result shaping/publish helpers.
 - `workers_action_registration.go`: registration worker + registration artifact writes.
-- `workers_action_git.go`: local git command helpers and repo initialization.
+- `workers_action_git.go`: in-process go-git helpers and local repo initialization.
 - `workers_action_files.go`: shared file upsert/missing-path helpers and sorted-path utilities.
-- `workers_action_webhook_hooks.go`: local API endpoint discovery and git hook script install/rendering.
+- `workers_action_webhook_hooks.go`: local API endpoint discovery, git hook script install/rendering, and optional source commit watcher.
 - `workers_action_bootstrap.go`: repo bootstrap worker orchestrator.
 - `workers_action_bootstrap_helpers.go`: repo bootstrap helper stages (seed/commit/webhook metadata).
 - `workers_action_build.go`: image builder worker.
@@ -53,7 +53,7 @@ Primary agent contract: `AGENTS.md`
 - `ops_bookkeeping.go`: operation step tracking and finalization helpers.
 - `api_types.go`: API container type, route wiring, request logging middleware, event payload types.
 - `api_registration.go`: registration endpoint handlers and helper flows.
-- `api_webhooks.go`: source webhook endpoint and branch filtering.
+- `api_webhooks.go`: source webhook endpoint, branch filtering, and source-commit dedupe/trigger handling.
 - `api_projects.go`: project CRUD handlers.
 - `api_artifacts_ops.go`: artifact and op read endpoints.
 - `api_runop.go`: op orchestration path (publish, wait, finalize).
@@ -68,7 +68,7 @@ Primary agent contract: `AGENTS.md`
 - `api_webhooks_test.go`: webhook branch filter behavior.
 - `workers_messages_test.go`: worker/result message compatibility.
 - `model_spec_test.go`: spec normalization/validation/rendering behavior.
-- `workers_git_test.go`: git bootstrap + hook script behavior.
+- `workers_git_test.go`: go-git bootstrap + hook script behavior.
 - `artifacts_fs_test.go`: filesystem artifact listing safety behavior.
 
 ## Task-Oriented Entry Points

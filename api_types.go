@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -14,6 +15,8 @@ type API struct {
 	store     *Store
 	artifacts ArtifactStore
 	waiters   *waiterHub
+
+	sourceTriggerMu sync.Mutex
 }
 
 func (a *API) routes() http.Handler {

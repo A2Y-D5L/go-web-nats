@@ -26,11 +26,15 @@ Task lookup helpers:
    - build: `workers_action_build.go`
    - deploy: `workers_action_deploy.go`
 2. Keep shared helpers in:
-   - git operations: `workers_action_git.go`
-   - webhook hook script/install: `workers_action_webhook_hooks.go`
+   - git operations (go-git): `workers_action_git.go`
+   - webhook hook script/install + optional commit watcher: `workers_action_webhook_hooks.go`
    - file/path utilities: `workers_action_files.go`
 3. Preserve op step bookkeeping calls (`markOpStepStart`/`markOpStepEnd`).
 4. Run `make test-workers`, then `make check`.
+
+Webhook-specific note:
+
+- If webhook trigger behavior changes, include `api_types.go` when API struct fields are added/updated and keep hook + watcher dedupe semantics aligned.
 
 ## Change Pipeline Runtime
 

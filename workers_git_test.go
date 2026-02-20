@@ -3,7 +3,6 @@ package platform_test
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,13 +23,12 @@ func TestWorkers_RenderSourceWebhookHookScript(t *testing.T) {
 	if !strings.Contains(script, "platform-sync:*") {
 		t.Fatalf("hook script missing platform-sync skip guard: %s", script)
 	}
+	if !strings.Contains(script, "command -v curl") {
+		t.Fatalf("hook script missing curl dependency check: %s", script)
+	}
 }
 
 func TestWorkers_EnsureLocalGitRepoAndCommit(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not found")
-	}
-
 	repo := filepath.Join(t.TempDir(), "source")
 	if err := platform.EnsureLocalGitRepoForTest(context.Background(), repo); err != nil {
 		t.Fatalf("ensure local git repo: %v", err)

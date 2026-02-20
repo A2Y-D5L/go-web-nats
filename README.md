@@ -29,6 +29,7 @@ Quick task scoping commands:
 - Source-repo webhook driven CI (`main` branch only)
 - Real local git repo bootstrapping for source + manifests repos
 - Local git hooks in source repo posting webhook events back to the API server
+- Optional in-process source commit watcher (can run alongside hooks)
 - Worker orchestration over NATS subjects
 - Persistent project/operation state in JetStream KV
 - Artifact generation and browsing from the UI
@@ -130,6 +131,12 @@ Hook endpoint defaults to:
 Optional override:
 
 - `PAAS_LOCAL_API_BASE_URL` (example: `http://127.0.0.1:8080`)
+- `PAAS_ENABLE_COMMIT_WATCHER` (`true|false`, default `false`) enables in-process polling watcher for source commits
+
+Trigger dedupe:
+
+- webhook and watcher paths share commit-level dedupe state per project
+- duplicate commit notifications are ignored with reason `ignored: commit already processed`
 
 ## API Summary
 
@@ -160,10 +167,13 @@ Config contracts are modeled from:
 - `registration/registration.json`
 - `repos/source/...`
 - `repos/manifests/...`
+- `repos/manifests/kustomization.yaml`
+- `repos/manifests/rendered.yaml`
 - `build/Dockerfile`
 - `build/publish-local-daemon.json`
 - `deploy/deployment.yaml`
 - `deploy/service.yaml`
+- `deploy/rendered.yaml`
 
 ## Run Locally
 

@@ -13,13 +13,14 @@ const (
 	// Where workers write artifacts.
 	defaultArtifactsRoot = "./data/artifacts"
 
-	defaultKVProjectHistory = 25
-	defaultKVOpsHistory     = 50
-	defaultStartupWait      = 10 * time.Second
-	defaultReadHeaderWait   = 5 * time.Second
-	apiWaitTimeout          = 45 * time.Second
-	gitOpTimeout            = 20 * time.Second
-	gitReadTimeout          = 10 * time.Second
+	defaultKVProjectHistory   = 25
+	defaultKVOpsHistory       = 50
+	defaultStartupWait        = 10 * time.Second
+	defaultReadHeaderWait     = 5 * time.Second
+	apiWaitTimeout            = 45 * time.Second
+	gitOpTimeout              = 20 * time.Second
+	gitReadTimeout            = 10 * time.Second
+	commitWatcherPollInterval = 2 * time.Second
 
 	shortIDLength          = 12
 	httpServerErrThreshold = 500

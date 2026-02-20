@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -82,24 +83,35 @@ func Run() {
 	}
 
 	api := &API{
-		nc:        nc,
-		store:     store,
-		artifacts: artifacts,
-		waiters:   waiters,
+		nc:              nc,
+		store:           store,
+		artifacts:       artifacts,
+		waiters:         waiters,
+		sourceTriggerMu: sync.Mutex{},
 	}
+	watcherStarted := startSourceCommitWatcher(ctx, api)
 	srv := &http.Server{
 		Addr:              httpAddr,
 		Handler:           api.routes(),
 		ReadHeaderTimeout: defaultReadHeaderWait,
 	}
 
-	mainLog.Infof("NATS: %s", natsURL)
-	mainLog.Infof("Portal: http://%s", httpAddr)
-	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
-	mainLog.Infof("Try: create/update/delete projects; delete cleans project artifacts dir")
+	logRuntimeStartup(mainLog, natsURL, watcherStarted)
 
 	listenErr := srv.ListenAndServe()
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 		mainLog.Fatalf("http server: %v", listenErr)
 	}
+}
+
+func logRuntimeStartup(mainLog sourceLogger, natsURL string, watcherStarted bool) {
+	mainLog.Infof("NATS: %s", natsURL)
+	mainLog.Infof("Portal: http://%s", httpAddr)
+	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
+	if watcherStarted {
+		mainLog.Infof("Source commit watcher: enabled")
+	} else {
+		mainLog.Infof("Source commit watcher: disabled (git hooks remain active)")
+	}
+	mainLog.Infof("Try: create/update/delete projects; delete cleans project artifacts dir")
 }

@@ -35,6 +35,7 @@ tasks:
       - artifacts_fs_test.go
   - id: api.webhooks
     files:
+      - api_types.go
       - api_webhooks.go
       - api_runop.go
       - workers_action_webhook_hooks.go

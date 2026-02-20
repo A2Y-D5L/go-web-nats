@@ -4,6 +4,7 @@ package platform
 import (
 	"context"
 	"net/http"
+	"sync"
 )
 
 const (
@@ -13,10 +14,11 @@ const (
 
 func NewTestAPI(artifacts ArtifactStore) *API {
 	return &API{
-		nc:        nil,
-		store:     nil,
-		artifacts: artifacts,
-		waiters:   nil,
+		nc:              nil,
+		store:           nil,
+		artifacts:       artifacts,
+		waiters:         nil,
+		sourceTriggerMu: sync.Mutex{},
 	}
 }
 
@@ -79,6 +81,18 @@ func (h *WaiterHubForTest) Deliver(opID string, msg WorkerResultMsg) {
 
 func RenderSourceWebhookHookScriptForTest(projectID, endpoint string) string {
 	return renderSourceWebhookHookScript(projectID, endpoint)
+}
+
+func CommitWatcherEnabledForTest() bool {
+	return commitWatcherEnabled()
+}
+
+func ShouldSkipSourceCommitMessageForTest(message string) bool {
+	return shouldSkipSourceCommitMessage(message)
+}
+
+func MarkSourceCommitSeenForTest(api *API, projectID, commit string) (bool, error) {
+	return api.markSourceCommitSeen(projectID, commit)
 }
 
 func EnsureLocalGitRepoForTest(ctx context.Context, dir string) error {

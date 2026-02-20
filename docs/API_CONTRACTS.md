@@ -84,6 +84,7 @@ Behavior:
 - Only source repo events are accepted (`repo` omitted or `source`).
 - Only `main` branch events trigger CI.
 - Accepted events enqueue operation kind `ci`.
+- Duplicate commit events for the same project are ignored (`reason: "ignored: commit already processed"`).
 
 Accepted response:
 
@@ -92,7 +93,8 @@ Accepted response:
 ```json
 {
   "accepted": true,
-  "trigger": "source.main.webhook",
+  "reason": "",
+  "trigger": "source.main.webhook | source.main.watcher",
   "project": "project-id",
   "op": {},
   "commit": "abc123"
@@ -106,7 +108,11 @@ Ignored response:
 ```json
 {
   "accepted": false,
-  "reason": "ignored: ..."
+  "reason": "ignored: ...",
+  "trigger": "source.main.webhook | source.main.watcher",
+  "project": "project-id",
+  "op": null,
+  "commit": "abc123"
 }
 ```
 

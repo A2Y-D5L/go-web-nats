@@ -12,6 +12,7 @@ const (
 	maxEnvVarValueLength  = 4096
 	networkPolicyInternal = "internal"
 	branchMain            = "main"
+	platformSyncPrefix    = "platform-sync:"
 	projectPhaseReady     = "Ready"
 	projectPhaseError     = "Error"
 	projectPhaseDel       = "Deleting"

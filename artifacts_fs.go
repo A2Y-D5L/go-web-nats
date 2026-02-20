@@ -107,7 +107,7 @@ func (a *FSArtifacts) ReadFile(projectID, relPath string) ([]byte, error) {
 	if !strings.HasPrefix(filepath.Clean(full), filepath.Clean(dir)+string(filepath.Separator)) {
 		return nil, errors.New("invalid relPath")
 	}
-	//nolint:gosec // full path is verified to stay inside the project directory.
+	//nolint:gosec // full path is validated to remain within project directory.
 	return os.ReadFile(full)
 }
 
