@@ -27,6 +27,7 @@ type asyncAPIFixture struct {
 	api      *API
 	nc       *nats.Conn
 	nsDir    string
+	nsDirTmp bool
 	nsCancel func()
 }
 
@@ -34,7 +35,8 @@ func newAsyncAPIFixture(t *testing.T, heartbeat time.Duration) *asyncAPIFixture 
 	t.Helper()
 
 	ctx := context.Background()
-	ns, natsURL, nsDir, err := startEmbeddedNATS()
+	t.Setenv(natsStoreDirEnv, natsStoreDirModeTemp)
+	ns, natsURL, nsDir, nsDirTmp, err := startEmbeddedNATS()
 	if err != nil {
 		t.Skipf("embedded nats is unavailable in this environment: %v", err)
 	}
@@ -43,7 +45,9 @@ func newAsyncAPIFixture(t *testing.T, heartbeat time.Duration) *asyncAPIFixture 
 	if err != nil {
 		ns.Shutdown()
 		ns.WaitForShutdown()
-		_ = os.RemoveAll(nsDir)
+		if nsDirTmp {
+			_ = os.RemoveAll(nsDir)
+		}
 		t.Skipf("nats connect unavailable in this environment: %v", err)
 	}
 
@@ -52,7 +56,9 @@ func newAsyncAPIFixture(t *testing.T, heartbeat time.Duration) *asyncAPIFixture 
 		_ = nc.Drain()
 		ns.Shutdown()
 		ns.WaitForShutdown()
-		_ = os.RemoveAll(nsDir)
+		if nsDirTmp {
+			_ = os.RemoveAll(nsDir)
+		}
 		t.Skipf("jetstream setup unavailable in this environment: %v", err)
 	}
 
@@ -61,7 +67,9 @@ func newAsyncAPIFixture(t *testing.T, heartbeat time.Duration) *asyncAPIFixture 
 		_ = nc.Drain()
 		ns.Shutdown()
 		ns.WaitForShutdown()
-		_ = os.RemoveAll(nsDir)
+		if nsDirTmp {
+			_ = os.RemoveAll(nsDir)
+		}
 		t.Skipf("store setup unavailable in this environment: %v", err)
 	}
 
@@ -82,13 +90,16 @@ func newAsyncAPIFixture(t *testing.T, heartbeat time.Duration) *asyncAPIFixture 
 		_ = nc.Drain()
 		ns.Shutdown()
 		ns.WaitForShutdown()
-		_ = os.RemoveAll(nsDir)
+		if nsDirTmp {
+			_ = os.RemoveAll(nsDir)
+		}
 	}
 
 	return &asyncAPIFixture{
 		api:      api,
 		nc:       nc,
 		nsDir:    nsDir,
+		nsDirTmp: nsDirTmp,
 		nsCancel: cleanup,
 	}
 }

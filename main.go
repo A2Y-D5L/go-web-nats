@@ -17,16 +17,10 @@ func Run() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ns, natsURL, jsDir, err := startEmbeddedNATS()
-	if err != nil {
-		mainLog.Fatalf("start embedded nats: %v", err)
-	}
-	defer func() {
-		ns.Shutdown()
-		ns.WaitForShutdown()
-		_ = os.RemoveAll(jsDir)
-	}()
+	natsURL, jsDir, jsDirEphemeral, stopNATS := startRuntimeNATS(mainLog)
+	defer stopNATS()
 
+	var err error
 	nc, err := nats.Connect(natsURL, nats.Name("api"))
 	if err != nil {
 		mainLog.Fatalf("connect nats: %v", err)
@@ -87,12 +81,27 @@ func Run() {
 		ReadHeaderTimeout: defaultReadHeaderWait,
 	}
 
-	logRuntimeStartup(mainLog, natsURL, watcherStarted, builderMode)
+	logRuntimeStartup(mainLog, natsURL, jsDir, jsDirEphemeral, watcherStarted, builderMode)
 
 	listenErr := srv.ListenAndServe()
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 		mainLog.Fatalf("http server: %v", listenErr)
 	}
+}
+
+func startRuntimeNATS(mainLog sourceLogger) (string, string, bool, func()) {
+	ns, natsURL, jsDir, jsDirEphemeral, err := startEmbeddedNATS()
+	if err != nil {
+		mainLog.Fatalf("start embedded nats: %v", err)
+	}
+	cleanup := func() {
+		ns.Shutdown()
+		ns.WaitForShutdown()
+		if jsDirEphemeral {
+			_ = os.RemoveAll(jsDir)
+		}
+	}
+	return natsURL, jsDir, jsDirEphemeral, cleanup
 }
 
 func startPlatformWorkers(
@@ -139,10 +148,17 @@ func newRuntimeAPI(
 func logRuntimeStartup(
 	mainLog sourceLogger,
 	natsURL string,
+	natsStoreDir string,
+	natsStoreEphemeral bool,
 	watcherStarted bool,
 	builderMode imageBuilderModeResolution,
 ) {
 	mainLog.Infof("NATS: %s", natsURL)
+	if natsStoreEphemeral {
+		mainLog.Infof("NATS store dir: %s (ephemeral)", natsStoreDir)
+	} else {
+		mainLog.Infof("NATS store dir: %s (persistent)", natsStoreDir)
+	}
 	mainLog.Infof("Portal: http://%s", httpAddr)
 	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
 	mainLog.Infof(

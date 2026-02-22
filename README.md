@@ -134,7 +134,7 @@ Operation state is available through:
 - `GET /api/ops/{opID}` for snapshot polling
 - `GET /api/ops/{opID}/events` for SSE streaming (`op.bootstrap`, `op.status`, `step.*`, `op.completed`/`op.failed`, `op.heartbeat`)
 
-SSE supports reconnect replay via `Last-Event-ID` against a bounded in-memory event history.
+SSE supports reconnect replay via `Last-Event-ID` against a bounded in-memory event history, and falls back to an authoritative `op.bootstrap` snapshot rebuilt from persisted operation state after process restarts.
 
 ## Local Repos And Hooks
 
@@ -164,6 +164,13 @@ Optional override:
 - `PAAS_ENABLE_COMMIT_WATCHER` (`true|false`, default `false`) enables in-process polling watcher for source commits
 - `PAAS_IMAGE_BUILDER_MODE` (`artifact|buildkit`, default `buildkit`)
 - `PAAS_BUILDKIT_ADDR` (optional, default `unix:///run/buildkit/buildkitd.sock` when BuildKit mode is enabled)
+- `PAAS_NATS_STORE_DIR` (default `./data/nats`; set to `temp` or `ephemeral` for prior temp-dir behavior)
+
+NATS/JetStream state persistence:
+
+- By default, embedded NATS reuses `./data/nats`, so project and operation KV state survives app restarts.
+- Older behavior used a temp JetStream dir removed on shutdown.
+- To force ephemeral runtime state, set `PAAS_NATS_STORE_DIR=temp` (or `ephemeral`).
 
 Image builder mode behavior:
 

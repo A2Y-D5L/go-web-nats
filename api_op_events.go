@@ -27,7 +27,7 @@ func (a *API) handleOpEvents(w http.ResponseWriter, r *http.Request, opID string
 	replay, live, needsBootstrap, unsubscribe := a.opEvents.subscribe(opID, lastEventID)
 	defer unsubscribe()
 
-	lastPayload := newOpEventBase(op)
+	lastPayload := newOpBootstrapSnapshot(op)
 	lastPayload.Sequence = a.opEvents.latestSequence(opID)
 	lastPayload.EventID = strconv.FormatInt(lastPayload.Sequence, 10)
 

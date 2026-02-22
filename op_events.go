@@ -20,6 +20,7 @@ const (
 	opStatusRunning = "running"
 	opStatusDone    = "done"
 	opStatusError   = "error"
+	opMessageFailed = "operation failed"
 
 	opEventSubscriberBuffer = 32
 	opTotalStepsFullChain   = 4
@@ -293,6 +294,69 @@ func newOpEventBase(op Operation) opEventPayload {
 	}
 }
 
+func newOpBootstrapSnapshot(op Operation) opEventPayload {
+	payload := newOpEventBase(op)
+	payload.At = opEventSnapshotTime(op)
+
+	if len(op.Steps) > 0 {
+		latestIdx := len(op.Steps) - 1
+		latest := op.Steps[latestIdx]
+		payload.Worker = strings.TrimSpace(latest.Worker)
+		payload.StepIndex = latestIdx + 1
+		payload.Message = strings.TrimSpace(latest.Message)
+		payload.Error = strings.TrimSpace(latest.Error)
+		payload.Artifacts = boundedOpEventArtifacts(latest.Artifacts)
+		if !latest.StartedAt.IsZero() && !latest.EndedAt.IsZero() && latest.EndedAt.After(latest.StartedAt) {
+			payload.DurationMS = latest.EndedAt.Sub(latest.StartedAt).Milliseconds()
+		}
+	}
+	if payload.Error == "" {
+		payload.Error = strings.TrimSpace(op.Error)
+	}
+	if payload.Error != "" {
+		payload.Hint = opFailureHint(payload.Error)
+	}
+
+	switch strings.TrimSpace(payload.Status) {
+	case statusMessageQueued:
+		if payload.Message == "" {
+			payload.Message = "operation accepted and queued"
+		}
+	case opStatusRunning:
+		if payload.Message == "" {
+			payload.Message = "operation in progress"
+		}
+	case opStatusDone:
+		if payload.Message == "" {
+			payload.Message = "operation completed"
+		}
+	case opStatusError:
+		if payload.Message == "" {
+			payload.Message = opMessageFailed
+		}
+	}
+	return payload
+}
+
+func opEventSnapshotTime(op Operation) time.Time {
+	if !op.Finished.IsZero() {
+		return op.Finished.UTC()
+	}
+	if len(op.Steps) > 0 {
+		latest := op.Steps[len(op.Steps)-1]
+		if !latest.EndedAt.IsZero() {
+			return latest.EndedAt.UTC()
+		}
+		if !latest.StartedAt.IsZero() {
+			return latest.StartedAt.UTC()
+		}
+	}
+	if !op.Requested.IsZero() {
+		return op.Requested.UTC()
+	}
+	return time.Now().UTC()
+}
+
 func emitOpBootstrap(h *opEventHub, op Operation, msg string) {
 	if h == nil {
 		return
@@ -371,7 +435,7 @@ func emitOpTerminal(h *opEventHub, op Operation) {
 			payload.Hint = opFailureHint(payload.Error)
 		}
 		if payload.Message == "" {
-			payload.Message = "operation failed"
+			payload.Message = opMessageFailed
 		}
 		h.publish(opEventFailed, payload)
 		return

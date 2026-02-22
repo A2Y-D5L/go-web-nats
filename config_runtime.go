@@ -21,8 +21,13 @@ const (
 	// Where workers write artifacts.
 	defaultArtifactsRoot = "./data/artifacts"
 	imageBuilderModeEnv  = "PAAS_IMAGE_BUILDER_MODE"
-	buildOpTimeout       = 2 * time.Minute
-	buildKitProbeTimeout = 500 * time.Millisecond
+	natsStoreDirEnv      = "PAAS_NATS_STORE_DIR"
+
+	defaultNATSStoreDir       = "./data/nats"
+	natsStoreDirModeTemp      = "temp"
+	natsStoreDirModeEphemeral = "ephemeral"
+	buildOpTimeout            = 2 * time.Minute
+	buildKitProbeTimeout      = 500 * time.Millisecond
 
 	imageBuilderModeArtifact imageBuilderMode = "artifact"
 	imageBuilderModeBuildKit imageBuilderMode = "buildkit"
@@ -87,6 +92,44 @@ func imageBuilderModeRequestFromEnv() (imageBuilderMode, bool, error) {
 }
 
 type buildkitProbeFunc func(ctx context.Context) error
+
+type natsStoreDirResolution struct {
+	storeDir    string
+	isEphemeral bool
+}
+
+func resolveNATSStoreDir() natsStoreDirResolution {
+	raw, exists := os.LookupEnv(natsStoreDirEnv)
+	return resolveNATSStoreDirRaw(raw, exists)
+}
+
+func resolveNATSStoreDirRaw(raw string, exists bool) natsStoreDirResolution {
+	if !exists {
+		return natsStoreDirResolution{
+			storeDir:    defaultNATSStoreDir,
+			isEphemeral: false,
+		}
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return natsStoreDirResolution{
+			storeDir:    defaultNATSStoreDir,
+			isEphemeral: false,
+		}
+	}
+	switch strings.ToLower(trimmed) {
+	case natsStoreDirModeTemp, natsStoreDirModeEphemeral:
+		return natsStoreDirResolution{
+			storeDir:    "",
+			isEphemeral: true,
+		}
+	default:
+		return natsStoreDirResolution{
+			storeDir:    trimmed,
+			isEphemeral: false,
+		}
+	}
+}
 
 func resolveEffectiveImageBuilderMode(ctx context.Context) imageBuilderModeResolution {
 	requestedMode, requestedExplicit, parseErr := imageBuilderModeRequestFromEnv()

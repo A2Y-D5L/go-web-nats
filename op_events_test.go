@@ -96,3 +96,137 @@ func TestOpEventHubTerminalTTLPrune(t *testing.T) {
 		t.Fatalf("expected terminal stream to be pruned after ttl, latest sequence=%d", got)
 	}
 }
+
+func TestNewOpBootstrapSnapshotReconstructsLatestStepFromStoredOp(t *testing.T) {
+	t.Parallel()
+
+	requestedAt := time.Date(2026, time.January, 2, 3, 4, 0, 0, time.UTC)
+	firstStarted := requestedAt.Add(1 * time.Minute)
+	firstEnded := firstStarted.Add(10 * time.Second)
+	secondStarted := firstEnded.Add(15 * time.Second)
+
+	op := Operation{
+		ID:        "op-bootstrap-running",
+		Kind:      OpCreate,
+		ProjectID: "project-running",
+		Delivery: DeliveryLifecycle{
+			Stage:       "",
+			Environment: "",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+		Requested: requestedAt,
+		Finished:  time.Time{},
+		Status:    opStatusRunning,
+		Error:     "",
+		Steps: []OpStep{
+			{
+				Worker:    "registrar",
+				StartedAt: firstStarted,
+				EndedAt:   firstEnded,
+				Message:   "registered project config",
+				Error:     "",
+				Artifacts: []string{"registration/project.yaml"},
+			},
+			{
+				Worker:    "repoBootstrap",
+				StartedAt: secondStarted,
+				EndedAt:   time.Time{},
+				Message:   "bootstrapping local repos",
+				Error:     "",
+				Artifacts: nil,
+			},
+		},
+	}
+
+	payload := newOpBootstrapSnapshot(op)
+	if payload.OpID != op.ID {
+		t.Fatalf("expected op id %q, got %q", op.ID, payload.OpID)
+	}
+	if payload.Status != opStatusRunning {
+		t.Fatalf("expected status %q, got %q", opStatusRunning, payload.Status)
+	}
+	if payload.Worker != "repoBootstrap" {
+		t.Fatalf("expected latest worker repoBootstrap, got %q", payload.Worker)
+	}
+	if payload.StepIndex != 2 {
+		t.Fatalf("expected latest step index 2, got %d", payload.StepIndex)
+	}
+	if payload.Message != "bootstrapping local repos" {
+		t.Fatalf("unexpected latest step message: %q", payload.Message)
+	}
+	if payload.TotalSteps != opTotalStepsFullChain {
+		t.Fatalf("expected total steps %d, got %d", opTotalStepsFullChain, payload.TotalSteps)
+	}
+	if payload.ProgressPercent != 25 {
+		t.Fatalf("expected progress 25, got %d", payload.ProgressPercent)
+	}
+	if !payload.At.Equal(secondStarted) {
+		t.Fatalf("expected snapshot timestamp %s, got %s", secondStarted, payload.At)
+	}
+}
+
+func TestNewOpBootstrapSnapshotUsesTerminalStateFromStoredOp(t *testing.T) {
+	t.Parallel()
+
+	requestedAt := time.Date(2026, time.January, 4, 10, 0, 0, 0, time.UTC)
+	stepStarted := requestedAt.Add(20 * time.Second)
+	stepEnded := stepStarted.Add(3 * time.Second)
+	finishedAt := stepEnded.Add(1 * time.Second)
+
+	op := Operation{
+		ID:        "op-bootstrap-error",
+		Kind:      OpDeploy,
+		ProjectID: "project-error",
+		Delivery: DeliveryLifecycle{
+			Stage:       "",
+			Environment: "",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+		Requested: requestedAt,
+		Finished:  finishedAt,
+		Status:    opStatusError,
+		Error:     "no build image found for deployment",
+		Steps: []OpStep{
+			{
+				Worker:    "manifestRenderer",
+				StartedAt: stepStarted,
+				EndedAt:   stepEnded,
+				Message:   "",
+				Error:     "",
+				Artifacts: []string{
+					"deploy/dev/rendered.yaml",
+					"deploy/dev/deployment.yaml",
+				},
+			},
+		},
+	}
+
+	payload := newOpBootstrapSnapshot(op)
+	if payload.Status != opStatusError {
+		t.Fatalf("expected status %q, got %q", opStatusError, payload.Status)
+	}
+	if payload.Message != "operation failed" {
+		t.Fatalf("expected failure message, got %q", payload.Message)
+	}
+	if payload.Error != op.Error {
+		t.Fatalf("expected op error %q, got %q", op.Error, payload.Error)
+	}
+	if payload.Hint == "" {
+		t.Fatal("expected non-empty hint for terminal error")
+	}
+	if !payload.At.Equal(finishedAt) {
+		t.Fatalf("expected finished timestamp %s, got %s", finishedAt, payload.At)
+	}
+	if payload.DurationMS != stepEnded.Sub(stepStarted).Milliseconds() {
+		t.Fatalf(
+			"expected duration %dms, got %dms",
+			stepEnded.Sub(stepStarted).Milliseconds(),
+			payload.DurationMS,
+		)
+	}
+	if len(payload.Artifacts) != 2 {
+		t.Fatalf("expected bootstrap artifacts from latest step, got %d", len(payload.Artifacts))
+	}
+}

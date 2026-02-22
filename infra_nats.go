@@ -40,10 +40,20 @@ func ensureKVBucket(
 	return nil
 }
 
-func startEmbeddedNATS() (*server.Server, string, string, error) {
-	storeDir, err := os.MkdirTemp("", "nats-js-*")
-	if err != nil {
-		return nil, "", "", err
+func startEmbeddedNATS() (*server.Server, string, string, bool, error) {
+	storeCfg := resolveNATSStoreDir()
+	storeDir := storeCfg.storeDir
+	var err error
+	if storeCfg.isEphemeral {
+		storeDir, err = os.MkdirTemp("", "nats-js-*")
+		if err != nil {
+			return nil, "", "", false, err
+		}
+	} else {
+		err = os.MkdirAll(storeDir, dirModePrivateRead)
+		if err != nil {
+			return nil, "", "", false, err
+		}
 	}
 	var opts server.Options
 	opts.ServerName = "embedded-paas"
@@ -55,16 +65,20 @@ func startEmbeddedNATS() (*server.Server, string, string, error) {
 
 	ns, err := server.NewServer(&opts)
 	if err != nil {
-		_ = os.RemoveAll(storeDir)
-		return nil, "", "", err
+		if storeCfg.isEphemeral {
+			_ = os.RemoveAll(storeDir)
+		}
+		return nil, "", "", false, err
 	}
 	ns.ConfigureLogger()
 	ns.Start()
 	if !ns.ReadyForConnections(defaultStartupWait) {
 		ns.Shutdown()
 		ns.WaitForShutdown()
-		_ = os.RemoveAll(storeDir)
-		return nil, "", "", errors.New("nats not ready")
+		if storeCfg.isEphemeral {
+			_ = os.RemoveAll(storeDir)
+		}
+		return nil, "", "", false, errors.New("nats not ready")
 	}
-	return ns, ns.ClientURL(), storeDir, nil
+	return ns, ns.ClientURL(), storeDir, storeCfg.isEphemeral, nil
 }
