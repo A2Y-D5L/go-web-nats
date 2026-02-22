@@ -129,6 +129,29 @@ async function requestAPI(method, url, body) {
   return payload;
 }
 
+async function loadSystemStatus({ silent = false } = {}) {
+  state.system.loading = true;
+  state.system.error = "";
+  renderSystemStrip();
+
+  try {
+    const response = await requestAPI("GET", "/api/system");
+    state.system.data = response && typeof response === "object" ? response : null;
+    renderSystemStrip();
+    if (!silent) {
+      setStatus("Runtime status refreshed.", "success");
+    }
+  } catch (error) {
+    state.system.error = error.message;
+    if (!silent) {
+      throw error;
+    }
+  } finally {
+    state.system.loading = false;
+    renderSystemStrip();
+  }
+}
+
 async function loadJourney({ silent = false } = {}) {
   const project = getSelectedProject();
   if (!project) {

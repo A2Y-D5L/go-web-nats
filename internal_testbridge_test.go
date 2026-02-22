@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -16,15 +17,96 @@ const (
 
 func NewTestAPI(artifacts ArtifactStore) *API {
 	return &API{
-		nc:                  nil,
-		store:               nil,
-		artifacts:           artifacts,
-		waiters:             nil,
-		opEvents:            nil,
-		opHeartbeatInterval: 0,
-		sourceTriggerMu:     sync.Mutex{},
-		projectStartLocksMu: sync.Mutex{},
-		projectStartLocks:   map[string]*sync.Mutex{},
+		nc:                   nil,
+		store:                nil,
+		artifacts:            artifacts,
+		waiters:              nil,
+		opEvents:             nil,
+		opHeartbeatInterval:  0,
+		runtimeVersion:       "",
+		runtimeHTTPAddr:      "",
+		runtimeArtifactsRoot: "",
+		runtimeBuilderMode: imageBuilderModeResolution{
+			requestedMode:     imageBuilderModeBuildKit,
+			requestedExplicit: false,
+			effectiveMode:     imageBuilderModeBuildKit,
+			requestedWarning:  "",
+			fallbackReason:    "",
+			policyError:       "",
+		},
+		runtimeCommitWatcherEnabled: false,
+		runtimeNATSEmbedded:         false,
+		runtimeNATSStoreDir:         "",
+		runtimeNATSStoreEphemeral:   false,
+		sourceTriggerMu:             sync.Mutex{},
+		projectStartLocksMu:         sync.Mutex{},
+		projectStartLocks:           map[string]*sync.Mutex{},
+	}
+}
+
+type RuntimeSystemConfigForTest struct {
+	Version              string
+	HTTPAddr             string
+	ArtifactsRoot        string
+	BuilderModeRequested string
+	BuilderModeEffective string
+	BuilderModeReason    string
+	CommitWatcherEnabled bool
+	NATSEmbedded         bool
+	NATSStoreDir         string
+	NATSStoreEphemeral   bool
+	SSEEnabled           bool
+	SSEReplayWindow      int
+	SSEHeartbeatInterval time.Duration
+}
+
+func ConfigureRuntimeSystemForTest(api *API, cfg RuntimeSystemConfigForTest) {
+	if api == nil {
+		return
+	}
+
+	requested, requestedErr := parseImageBuilderMode(cfg.BuilderModeRequested)
+	if requestedErr != nil {
+		requested = imageBuilderModeBuildKit
+	}
+	effective, effectiveErr := parseImageBuilderMode(cfg.BuilderModeEffective)
+	if effectiveErr != nil {
+		effective = requested
+	}
+
+	api.runtimeVersion = strings.TrimSpace(cfg.Version)
+	api.runtimeHTTPAddr = strings.TrimSpace(cfg.HTTPAddr)
+	api.runtimeArtifactsRoot = strings.TrimSpace(cfg.ArtifactsRoot)
+	api.runtimeBuilderMode = imageBuilderModeResolution{
+		requestedMode:     requested,
+		requestedExplicit: true,
+		effectiveMode:     effective,
+		requestedWarning:  "",
+		fallbackReason:    strings.TrimSpace(cfg.BuilderModeReason),
+		policyError:       "",
+	}
+	api.runtimeCommitWatcherEnabled = cfg.CommitWatcherEnabled
+	api.runtimeNATSEmbedded = cfg.NATSEmbedded
+	api.runtimeNATSStoreDir = strings.TrimSpace(cfg.NATSStoreDir)
+	api.runtimeNATSStoreEphemeral = cfg.NATSStoreEphemeral
+
+	if cfg.SSEEnabled {
+		replayWindow := cfg.SSEReplayWindow
+		if replayWindow <= 0 {
+			replayWindow = opEventsHistoryLimit
+		}
+		var store Store
+		api.store = &store
+		api.opEvents = newOpEventHub(replayWindow, time.Minute)
+	} else {
+		api.store = nil
+		api.opEvents = nil
+	}
+
+	if cfg.SSEHeartbeatInterval > 0 {
+		api.opHeartbeatInterval = cfg.SSEHeartbeatInterval
+	} else {
+		api.opHeartbeatInterval = opEventsHeartbeatInterval
 	}
 }
 
@@ -34,6 +116,18 @@ func InvokeHandleProjectByIDForTest(api *API, w http.ResponseWriter, r *http.Req
 
 func InvokeHandleProjectArtifactsForTest(api *API, w http.ResponseWriter, r *http.Request) {
 	api.handleProjectArtifacts(w, r)
+}
+
+func InvokeHandleSystemForTest(api *API, w http.ResponseWriter, r *http.Request) {
+	api.handleSystem(w, r)
+}
+
+func InvokeHandleHealthzForTest(api *API, w http.ResponseWriter, r *http.Request) {
+	api.handleHealthz(w, r)
+}
+
+func RoutesForTest(api *API) http.Handler {
+	return api.routes()
 }
 
 func IsMainBranchWebhookForTest(branch, ref string) bool {

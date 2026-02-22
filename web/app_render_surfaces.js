@@ -305,49 +305,83 @@ function renderArtifactsPanel() {
 }
 
 function renderSystemStrip() {
-  const selected = getSelectedProject();
   const readyCount = state.projects.filter((project) => project.status?.phase === "Ready").length;
 
   dom.text.systemProjectCount.textContent = String(state.projects.length);
   dom.text.systemReadyCount.textContent = `${readyCount} delivery-ready`;
 
-  const op = state.operation.payload;
-  if (op) {
-    dom.text.systemActiveOp.textContent = operationLabel(op.kind);
-    dom.text.systemActiveOpMeta.textContent = `${op.status || "pending"} • ${String(op.id || "").slice(0, 8)}`;
-  } else if (selected?.status?.last_op_kind) {
-    dom.text.systemActiveOp.textContent = operationLabel(selected.status.last_op_kind);
-    dom.text.systemActiveOpMeta.textContent = selected.status.last_op_id || "No activity id";
-  } else {
-    dom.text.systemActiveOp.textContent = "None selected";
-    dom.text.systemActiveOpMeta.textContent = "Choose an app to focus";
+  const system = state.system.data;
+  if (state.system.loading && !system) {
+    dom.text.healthLabel.textContent = "Loading";
+    dom.text.healthMeta.textContent = "Fetching runtime capability state";
+    dom.text.systemActiveOp.textContent = "Loading";
+    dom.text.systemActiveOpMeta.textContent = "Reading realtime transport status";
+    dom.text.systemBuilderMode.textContent = "Loading";
+    dom.text.systemBuilderMeta.textContent = "Reading builder mode";
+    return;
   }
 
-  const nextAction = currentJourney()?.next_action || null;
-  if (nextAction) {
-    dom.text.systemBuilderMode.textContent = nextAction.label || "No next action";
-    dom.text.systemBuilderMeta.textContent = nextAction.detail || "No follow-up needed.";
-  } else if (!selected) {
-    dom.text.systemBuilderMode.textContent = "Waiting";
-    dom.text.systemBuilderMeta.textContent = "Select an app to see guidance";
-  } else {
-    dom.text.systemBuilderMode.textContent = "Refresh needed";
-    dom.text.systemBuilderMeta.textContent = "Load journey snapshot to see next best step";
+  if (!system) {
+    dom.text.healthLabel.textContent = state.system.error ? "Unavailable" : "Unknown";
+    dom.text.healthMeta.textContent = state.system.error
+      ? "Runtime status endpoint failed"
+      : "Runtime status not loaded yet";
+    dom.text.systemActiveOp.textContent = "Unknown";
+    dom.text.systemActiveOpMeta.textContent = "Realtime transport data unavailable";
+    dom.text.systemBuilderMode.textContent = "Unknown";
+    dom.text.systemBuilderMeta.textContent = "Builder mode data unavailable";
+    return;
   }
 
-  const hasProjects = state.projects.length > 0;
-  const hasErrors = state.projects.some((project) => project.status?.phase === "Error");
+  const nats = system.nats && typeof system.nats === "object" ? system.nats : {};
+  const realtime = system.realtime && typeof system.realtime === "object" ? system.realtime : {};
 
-  if (!hasProjects) {
-    dom.text.healthLabel.textContent = "Idle";
-    dom.text.healthMeta.textContent = "No apps created yet";
-  } else if (hasErrors) {
-    dom.text.healthLabel.textContent = "Needs attention";
-    dom.text.healthMeta.textContent = "One or more apps need recovery";
-  } else {
-    dom.text.healthLabel.textContent = "Healthy";
-    dom.text.healthMeta.textContent = "App delivery journeys are progressing";
+  const sseEnabled = Boolean(realtime.sse_enabled);
+  const replayWindowNumber = Number(realtime.sse_replay_window);
+  const replayWindow = Number.isFinite(replayWindowNumber)
+    ? `${replayWindowNumber} events`
+    : String(realtime.sse_replay_window || "n/a");
+  const heartbeat = String(realtime.sse_heartbeat_interval || "n/a").trim() || "n/a";
+  dom.text.systemActiveOp.textContent = sseEnabled ? "SSE enabled" : "SSE unavailable";
+  dom.text.systemActiveOpMeta.textContent = `heartbeat ${heartbeat} • replay ${replayWindow}`;
+
+  const requestedMode = String(system.builder_mode_requested || "unknown").trim() || "unknown";
+  const effectiveMode = String(system.builder_mode_effective || "unknown").trim() || "unknown";
+  const builderMeta = [`requested ${requestedMode}`];
+  const builderReason = String(system.builder_mode_reason || "").trim();
+  const runtimeVersion = String(system.version || "").trim();
+  if (builderReason) {
+    builderMeta.push(builderReason);
   }
+  if (runtimeVersion) {
+    builderMeta.push(`version ${runtimeVersion}`);
+  }
+  dom.text.systemBuilderMode.textContent = effectiveMode;
+  dom.text.systemBuilderMeta.textContent = builderMeta.join(" • ");
+
+  const natsStoreMode = String(nats.store_dir_mode || "unknown").trim() || "unknown";
+  const natsEmbedded = Boolean(nats.embedded);
+  const httpAddr = String(system.http_addr || "").trim();
+  const artifactsRoot = String(system.artifacts_root || "").trim();
+  const watcherEnabled = Boolean(system.commit_watcher_enabled);
+  const serverTime = String(system.time || "").trim();
+
+  dom.text.healthLabel.textContent = httpAddr ? `HTTP ${httpAddr}` : "Runtime";
+  const healthMeta = [
+    `${natsEmbedded ? "embedded" : "external"} nats`,
+    `${natsStoreMode} store`,
+    watcherEnabled ? "watcher enabled" : "watcher disabled",
+  ];
+  if (artifactsRoot) {
+    healthMeta.push(`artifacts ${artifactsRoot}`);
+  }
+  if (serverTime) {
+    healthMeta.push(`updated ${toLocalTime(serverTime)}`);
+  }
+  if (state.system.error) {
+    healthMeta.push("last refresh failed");
+  }
+  dom.text.healthMeta.textContent = healthMeta.join(" • ");
 }
 
 function renderAll() {

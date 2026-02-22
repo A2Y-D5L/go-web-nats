@@ -18,6 +18,16 @@ type API struct {
 	opEvents  *opEventHub
 
 	opHeartbeatInterval time.Duration
+
+	runtimeVersion              string
+	runtimeHTTPAddr             string
+	runtimeArtifactsRoot        string
+	runtimeBuilderMode          imageBuilderModeResolution
+	runtimeCommitWatcherEnabled bool
+	runtimeNATSEmbedded         bool
+	runtimeNATSStoreDir         string
+	runtimeNATSStoreEphemeral   bool
+
 	sourceTriggerMu     sync.Mutex
 	projectStartLocksMu sync.Mutex
 	projectStartLocks   map[string]*sync.Mutex
@@ -41,6 +51,8 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("/api/events/promotion", a.handlePromotionEvents)
 	mux.HandleFunc("/api/events/release", a.handleReleaseEvents)
 	mux.HandleFunc("/api/webhooks/source", a.handleSourceRepoWebhook)
+	mux.HandleFunc("/api/system", a.handleSystem)
+	mux.HandleFunc("/api/healthz", a.handleHealthz)
 
 	// Ops: read
 	mux.HandleFunc("/api/ops/", a.handleOpByID)

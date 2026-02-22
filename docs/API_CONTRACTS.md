@@ -266,6 +266,62 @@ Conflict response (project has a queued/running operation):
 - Status: `409 Conflict`
 - Body uses the same shape as the conflict response above.
 
+## System Status
+
+Endpoint:
+
+- `GET /api/system`
+
+Purpose:
+
+- Returns runtime capability state so clients can render system transport/builder details without inferring from operation history or artifacts.
+
+Response:
+
+```json
+{
+  "version": "v0.0.0",
+  "http_addr": "127.0.0.1:8080",
+  "artifacts_root": "/path/to/artifacts",
+  "builder_mode_requested": "buildkit",
+  "builder_mode_effective": "artifact",
+  "builder_mode_reason": "buildkit support is unavailable in this binary",
+  "commit_watcher_enabled": false,
+  "nats": {
+    "embedded": true,
+    "store_dir": "./data/nats",
+    "store_dir_mode": "persistent | ephemeral"
+  },
+  "realtime": {
+    "sse_enabled": true,
+    "sse_replay_window": 256,
+    "sse_heartbeat_interval": "10s"
+  },
+  "time": "2026-02-22T12:34:56Z"
+}
+```
+
+Notes:
+
+- `builder_mode_reason` is included when requested/effective mode differ.
+- `realtime.sse_replay_window` is event-count based.
+- `time` is server UTC.
+
+## Health Probe
+
+Endpoint:
+
+- `GET /api/healthz`
+
+Response:
+
+```json
+{
+  "ok": true,
+  "time": "2026-02-22T12:34:56Z"
+}
+```
+
 ## Projects
 
 Endpoints:
@@ -429,6 +485,10 @@ Behavior:
 - Supports replay using `Last-Event-ID`.
 - If `Last-Event-ID` is missing or outside retained history, stream begins with an `op.bootstrap` snapshot event.
 - Emits heartbeat events (`op.heartbeat`) periodically to keep the stream alive.
+- Runtime transport capability details are discoverable via `GET /api/system`:
+  - `realtime.sse_enabled`
+  - `realtime.sse_replay_window`
+  - `realtime.sse_heartbeat_interval`
 
 Event types:
 

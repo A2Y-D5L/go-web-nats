@@ -234,6 +234,11 @@ const state = {
     message: "",
     tone: "info",
   },
+  system: {
+    loading: true,
+    error: "",
+    data: null,
+  },
   artifacts: {
     loading: false,
     loaded: false,

@@ -187,7 +187,10 @@ function closeWorkspace() {
 
 async function refreshProjects({ silent = false, preserveSelection = true } = {}) {
   const previousSelection = preserveSelection ? state.selectedProjectID : "";
-  const projects = await requestAPI("GET", "/api/projects");
+  const [projects] = await Promise.all([
+    requestAPI("GET", "/api/projects"),
+    loadSystemStatus({ silent: true }),
+  ]);
 
   state.projects = Array.isArray(projects) ? projects : [];
 

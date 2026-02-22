@@ -277,15 +277,30 @@ func TestOpEventsBootstrapRebuildsSnapshotAfterRestartWithoutHistory(t *testing.
 	hub := newOpEventHub(opEventsHistoryLimit, opEventsRetention)
 	fixtureTwo.store.setOpEvents(hub)
 	api := &API{
-		nc:                  fixtureTwo.nc,
-		store:               fixtureTwo.store,
-		artifacts:           NewFSArtifacts(t.TempDir()),
-		waiters:             newWaiterHub(),
-		opEvents:            hub,
-		opHeartbeatInterval: 5 * time.Second,
-		sourceTriggerMu:     sync.Mutex{},
-		projectStartLocksMu: sync.Mutex{},
-		projectStartLocks:   map[string]*sync.Mutex{},
+		nc:                   fixtureTwo.nc,
+		store:                fixtureTwo.store,
+		artifacts:            NewFSArtifacts(t.TempDir()),
+		waiters:              newWaiterHub(),
+		opEvents:             hub,
+		opHeartbeatInterval:  5 * time.Second,
+		runtimeVersion:       "",
+		runtimeHTTPAddr:      httpAddr,
+		runtimeArtifactsRoot: "",
+		runtimeBuilderMode: imageBuilderModeResolution{
+			requestedMode:     imageBuilderModeBuildKit,
+			requestedExplicit: false,
+			effectiveMode:     imageBuilderModeBuildKit,
+			requestedWarning:  "",
+			fallbackReason:    "",
+			policyError:       "",
+		},
+		runtimeCommitWatcherEnabled: false,
+		runtimeNATSEmbedded:         true,
+		runtimeNATSStoreDir:         fixtureTwo.storeDir,
+		runtimeNATSStoreEphemeral:   false,
+		sourceTriggerMu:             sync.Mutex{},
+		projectStartLocksMu:         sync.Mutex{},
+		projectStartLocks:           map[string]*sync.Mutex{},
 	}
 
 	srv := httptest.NewServer(api.routes())

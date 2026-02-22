@@ -67,7 +67,7 @@ function bindEvents() {
   });
 
   dom.buttons.refresh.addEventListener("click", async () => {
-    setStatus("Refreshing apps...", "info");
+    setStatus("Refreshing apps and runtime status...", "info");
     try {
       await refreshProjects({ silent: false, preserveSelection: true });
       if (getSelectedProject()) {
@@ -261,7 +261,7 @@ async function init() {
   bindEvents();
   renderAll();
 
-  setStatus("Loading apps...", "info");
+  setStatus("Loading apps and runtime status...", "info");
   try {
     await refreshProjects({ silent: true, preserveSelection: true });
     if (getSelectedProject()) {

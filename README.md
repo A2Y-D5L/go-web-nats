@@ -133,6 +133,7 @@ Operation state is available through:
 
 - `GET /api/ops/{opID}` for snapshot polling
 - `GET /api/ops/{opID}/events` for SSE streaming (`op.bootstrap`, `op.status`, `step.*`, `op.completed`/`op.failed`, `op.heartbeat`)
+- `GET /api/system` for transport capability status (`realtime.sse_enabled`, replay window, heartbeat interval)
 
 SSE supports reconnect replay via `Last-Event-ID` against a bounded in-memory event history, and falls back to an authoritative `op.bootstrap` snapshot rebuilt from persisted operation state after process restarts.
 
@@ -208,6 +209,8 @@ Trigger dedupe:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | UI |
+| `GET` | `/api/system` | Runtime capability and transport status |
+| `GET` | `/api/healthz` | Minimal liveness probe |
 | `GET` | `/api/projects` | List projects |
 | `GET` | `/api/projects/{id}` | Get project |
 | `PUT` | `/api/projects/{id}` | Legacy direct update |
@@ -254,8 +257,8 @@ Config contracts are modeled from:
 
 The embedded UI (`/`) now mirrors backend execution semantics directly:
 
-- system strip with project/health/op/build mode status
-- always-visible search/filter/sort controls for project inventory
+- system strip with runtime endpoint, realtime transport, and builder capability status from `/api/system`
+- landing search/filter/sort controls for project inventory
 - selected-project action workspace for create/update/delete + source webhook CI
 - one-click `Build latest source` primary action with advanced webhook payload overrides in an expandable section
 - explicit dev deploy with promotion/release transition guardrails
@@ -264,7 +267,7 @@ The embedded UI (`/`) now mirrors backend execution semantics directly:
 
 Keyboard shortcuts:
 
-- `/` focuses project search
+- `/` switches to landing and focuses project search
 - `r` refreshes projects
 - `a` loads artifacts for the selected project
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"runtime/debug"
+	"strings"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -78,8 +80,18 @@ func Run() {
 		mainLog.Fatalf("flush: %v", flushErr)
 	}
 
-	api := newRuntimeAPI(nc, store, artifacts, waiters, opEvents)
-	watcherStarted := startSourceCommitWatcher(ctx, api)
+	api, watcherStarted := newRuntimeAPIWithWatcher(
+		ctx,
+		nc,
+		store,
+		artifacts,
+		waiters,
+		opEvents,
+		builderMode,
+		artifactsRoot.root,
+		jsDir,
+		jsDirEphemeral,
+	)
 	srv := &http.Server{
 		Addr:              httpAddr,
 		Handler:           api.routes(),
@@ -146,18 +158,66 @@ func newRuntimeAPI(
 	artifacts ArtifactStore,
 	waiters *waiterHub,
 	opEvents *opEventHub,
+	builderMode imageBuilderModeResolution,
+	artifactsRoot string,
+	natsStoreDir string,
+	natsStoreEphemeral bool,
 ) *API {
 	return &API{
-		nc:                  nc,
-		store:               store,
-		artifacts:           artifacts,
-		waiters:             waiters,
-		opEvents:            opEvents,
-		opHeartbeatInterval: opEventsHeartbeatInterval,
-		sourceTriggerMu:     sync.Mutex{},
-		projectStartLocksMu: sync.Mutex{},
-		projectStartLocks:   map[string]*sync.Mutex{},
+		nc:                          nc,
+		store:                       store,
+		artifacts:                   artifacts,
+		waiters:                     waiters,
+		opEvents:                    opEvents,
+		opHeartbeatInterval:         opEventsHeartbeatInterval,
+		runtimeVersion:              runtimeBuildVersion(),
+		runtimeHTTPAddr:             httpAddr,
+		runtimeArtifactsRoot:        strings.TrimSpace(artifactsRoot),
+		runtimeBuilderMode:          builderMode,
+		runtimeCommitWatcherEnabled: false,
+		runtimeNATSEmbedded:         true,
+		runtimeNATSStoreDir:         strings.TrimSpace(natsStoreDir),
+		runtimeNATSStoreEphemeral:   natsStoreEphemeral,
+		sourceTriggerMu:             sync.Mutex{},
+		projectStartLocksMu:         sync.Mutex{},
+		projectStartLocks:           map[string]*sync.Mutex{},
 	}
+}
+
+func newRuntimeAPIWithWatcher(
+	ctx context.Context,
+	nc *nats.Conn,
+	store *Store,
+	artifacts ArtifactStore,
+	waiters *waiterHub,
+	opEvents *opEventHub,
+	builderMode imageBuilderModeResolution,
+	artifactsRoot string,
+	natsStoreDir string,
+	natsStoreEphemeral bool,
+) (*API, bool) {
+	api := newRuntimeAPI(
+		nc,
+		store,
+		artifacts,
+		waiters,
+		opEvents,
+		builderMode,
+		artifactsRoot,
+		natsStoreDir,
+		natsStoreEphemeral,
+	)
+	watcherStarted := startSourceCommitWatcher(ctx, api)
+	api.runtimeCommitWatcherEnabled = watcherStarted
+	return api, watcherStarted
+}
+
+func runtimeBuildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return ""
+	}
+	return strings.TrimSpace(info.Main.Version)
 }
 
 func logRuntimeStartup(

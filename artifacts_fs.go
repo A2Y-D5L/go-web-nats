@@ -54,10 +54,12 @@ func (a *FSArtifacts) WriteFile(projectID, relPath string, data []byte) (string,
 		return "", errors.New("invalid relPath")
 	}
 	full := filepath.Join(dir, relPath)
+	// #nosec G703 -- relPath is cleaned, validated, and anchored to project dir.
 	mkdirErr := os.MkdirAll(filepath.Dir(full), dirModePrivateRead)
 	if mkdirErr != nil {
 		return "", mkdirErr
 	}
+	// #nosec G703 -- full path is constrained by relPath guards above.
 	writeErr := os.WriteFile(full, data, fileModePrivate)
 	if writeErr != nil {
 		return "", writeErr

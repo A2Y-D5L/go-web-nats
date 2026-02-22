@@ -14,6 +14,91 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
+type systemStatusNATSSummary struct {
+	Embedded     bool   `json:"embedded"`
+	StoreDir     string `json:"store_dir,omitempty"`
+	StoreDirMode string `json:"store_dir_mode"`
+}
+
+type systemStatusRealtimeSummary struct {
+	SSEEnabled           bool   `json:"sse_enabled"`
+	SSEReplayWindow      int    `json:"sse_replay_window"`
+	SSEHeartbeatInterval string `json:"sse_heartbeat_interval"`
+}
+
+type systemStatusResponse struct {
+	Version              string                      `json:"version,omitempty"`
+	HTTPAddr             string                      `json:"http_addr"`
+	ArtifactsRoot        string                      `json:"artifacts_root"`
+	BuilderModeRequested string                      `json:"builder_mode_requested"`
+	BuilderModeEffective string                      `json:"builder_mode_effective"`
+	BuilderModeReason    string                      `json:"builder_mode_reason,omitempty"`
+	CommitWatcherEnabled bool                        `json:"commit_watcher_enabled"`
+	NATS                 systemStatusNATSSummary     `json:"nats"`
+	Realtime             systemStatusRealtimeSummary `json:"realtime"`
+	Time                 time.Time                   `json:"time"`
+}
+
+func (a *API) handleSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	builderReason := ""
+	if a.runtimeBuilderMode.effectiveMode != a.runtimeBuilderMode.requestedMode {
+		builderReason = strings.TrimSpace(a.runtimeBuilderMode.fallbackReason)
+	}
+	writeJSON(w, http.StatusOK, systemStatusResponse{
+		Version:              strings.TrimSpace(a.runtimeVersion),
+		HTTPAddr:             strings.TrimSpace(a.runtimeHTTPAddr),
+		ArtifactsRoot:        strings.TrimSpace(a.runtimeArtifactsRoot),
+		BuilderModeRequested: string(a.runtimeBuilderMode.requestedMode),
+		BuilderModeEffective: string(a.runtimeBuilderMode.effectiveMode),
+		BuilderModeReason:    builderReason,
+		CommitWatcherEnabled: a.runtimeCommitWatcherEnabled,
+		NATS: systemStatusNATSSummary{
+			Embedded:     a.runtimeNATSEmbedded,
+			StoreDir:     strings.TrimSpace(a.runtimeNATSStoreDir),
+			StoreDirMode: natsStoreModeLabel(a.runtimeNATSStoreEphemeral),
+		},
+		Realtime: systemStatusRealtimeSummary{
+			SSEEnabled:           a.realtimeSSEEnabled(),
+			SSEReplayWindow:      a.realtimeSSEReplayWindow(),
+			SSEHeartbeatInterval: a.effectiveOpHeartbeatInterval().String(),
+		},
+		Time: time.Now().UTC(),
+	})
+}
+
+func (a *API) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"time": time.Now().UTC(),
+	})
+}
+
+func natsStoreModeLabel(ephemeral bool) string {
+	if ephemeral {
+		return "ephemeral"
+	}
+	return "persistent"
+}
+
+func (a *API) realtimeSSEEnabled() bool {
+	return a != nil && a.store != nil && a.opEvents != nil
+}
+
+func (a *API) realtimeSSEReplayWindow() int {
+	if a != nil && a.opEvents != nil && a.opEvents.historyLimit > 0 {
+		return a.opEvents.historyLimit
+	}
+	return opEventsHistoryLimit
+}
+
 type projectOpsListItem struct {
 	ID                string        `json:"id"`
 	Kind              OperationKind `json:"kind"`
