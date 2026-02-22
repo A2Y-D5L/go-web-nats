@@ -17,6 +17,7 @@ const dom = {
     copyPreview: document.getElementById("copyPreviewBtn"),
     deployDev: document.getElementById("deployDevBtn"),
     openPromotionModal: document.getElementById("openPromotionModalBtn"),
+    journeyNextAction: document.getElementById("journeyNextActionBtn"),
 
     createAddEnv: document.getElementById("createAddEnvBtn"),
     createCleanKeys: document.getElementById("createCleanKeysBtn"),
@@ -83,6 +84,7 @@ const dom = {
 
     projectStats: document.getElementById("projectStats"),
     selected: document.getElementById("selected"),
+    journeyStatusLine: document.getElementById("journeyStatusLine"),
 
     deploySummary: document.getElementById("deploySummary"),
     deployGuardrail: document.getElementById("deployGuardrail"),
@@ -104,6 +106,8 @@ const dom = {
   },
   containers: {
     projects: document.getElementById("projects"),
+    journeyMilestones: document.getElementById("journeyMilestones"),
+    journeyNextAction: document.getElementById("journeyNextAction"),
     environmentMatrix: document.getElementById("environmentMatrix"),
     opProgress: document.getElementById("opProgress"),
     opTimeline: document.getElementById("opTimeline"),
@@ -175,6 +179,34 @@ const workerOrderByKind = {
   release: ["promoter"],
 };
 
+const workerLabelByName = {
+  registrar: "Validate app setup",
+  repoBootstrap: "Prepare app workspace",
+  imageBuilder: "Build app image",
+  manifestRenderer: "Prepare deployment manifests",
+  deployer: "Deliver environment config",
+  promoter: "Move release between environments",
+};
+
+const operationLabelByKind = {
+  create: "Create app",
+  update: "Update app",
+  delete: "Delete app",
+  ci: "Build app",
+  deploy: "Deliver to dev",
+  promote: "Promote environment",
+  release: "Release to production",
+};
+
+const nextActionKindToTone = {
+  build: "info",
+  deploy_dev: "info",
+  promote: "info",
+  release: "warning",
+  investigate: "error",
+  none: "success",
+};
+
 const state = {
   projects: [],
   selectedProjectID: "",
@@ -202,6 +234,11 @@ const state = {
     envSnapshots: {},
     transitionEdges: [],
     textCache: {},
+  },
+  journey: {
+    loading: false,
+    error: "",
+    data: null,
   },
   operation: {
     activeOpID: "",
@@ -427,7 +464,7 @@ function createVarRow(prefix, key = "", value = "") {
   return row;
 }
 
-function createEnvironmentCard(prefix, name = "", vars = {}) {
+function createEnvEditorCard(prefix, name = "", vars = {}) {
   const card = makeElem("article", "env-card");
 
   const head = makeElem("div", "env-card-head");
@@ -481,7 +518,7 @@ function syncEnvEditorEmptyState(prefix) {
         makeElem(
           "div",
           "env-empty",
-          "No environments yet. Add at least one so deployment, promotion, and release paths are explicit."
+          "No environments yet. Add at least one so this app has a clear delivery path."
         )
       );
     }
@@ -498,7 +535,7 @@ function addEnvironmentCard(prefix, name = "", vars = {}) {
   if (empty) {
     empty.remove();
   }
-  editor.appendChild(createEnvironmentCard(prefix, name, vars));
+  editor.appendChild(createEnvEditorCard(prefix, name, vars));
 }
 
 function setEnvironmentsInEditor(prefix, environments) {
@@ -692,6 +729,18 @@ function transitionEndpoint(action) {
   return action === "release" ? "/api/events/release" : "/api/events/promotion";
 }
 
+function operationLabel(kind) {
+  return operationLabelByKind[String(kind || "").trim()] || String(kind || "Activity");
+}
+
+function workerLabel(name) {
+  return workerLabelByName[String(name || "").trim()] || String(name || "step");
+}
+
+function currentJourney() {
+  return state.journey.data || null;
+}
+
 function projectMatchesSearch(project, term) {
   if (!term) return true;
 
@@ -748,8 +797,8 @@ function renderProjectsList() {
 
   if (!visible.length) {
     const message = state.projects.length
-      ? "No projects match current filters. Try broadening search or phase."
-      : "No projects registered yet. Register your first app to unlock deploy, promotion, and release controls.";
+      ? "No apps match current filters. Try broadening search or state."
+      : "No apps created yet. Create your first app to start its delivery journey.";
     renderEmptyState(dom.containers.projects, message);
     return;
   }
@@ -776,8 +825,8 @@ function renderProjectsList() {
       "project-meta emphasis",
       `${formatRuntimeLiteral(project.spec?.runtime)} • ${envCount} envs • updated ${elapsedSince(project.updated_at)}`
     );
-    const idMeta = makeElem("p", "project-meta", `id ${project.id}`);
-    const msgMeta = makeElem("p", "project-meta", project.status?.message || "no status message");
+    const idMeta = makeElem("p", "project-meta", `ID ${project.id}`);
+    const msgMeta = makeElem("p", "project-meta", project.status?.message || "No recent update message");
 
     item.append(titleRow, runtimeMeta, idMeta, msgMeta);
 
@@ -809,7 +858,7 @@ function renderSelectionPanel() {
 
   if (!project) {
     dom.text.selected.classList.add("muted");
-    dom.text.selected.textContent = "Select a project to inspect environments, deploy dev, and run promotion/release transitions safely.";
+    dom.text.selected.textContent = "Select an app to review journey progress and run the next delivery step.";
     return;
   }
 
@@ -828,16 +877,17 @@ function renderSelectionPanel() {
   );
 
   const envs = projectEnvironmentNames(project);
+  const lastActivity = project.status?.last_op_kind ? operationLabel(project.status.last_op_kind) : "none";
   const row3 = makeElem("div", "project-summary-row");
   row3.append(
     makeElem("span", "project-meta", `Environments ${envs.join(", ")}`),
-    makeElem("span", "project-meta", `Last op ${project.status?.last_op_kind || "none"}`)
+    makeElem("span", "project-meta", `Last activity ${lastActivity}`)
   );
 
   const row4 = makeElem(
     "p",
     "project-meta",
-    project.status?.message || "Project is available. Use deploy and promotion/release controls below."
+    project.status?.message || "App is ready. Continue with build, delivery, and environment moves below."
   );
 
   dom.text.selected.append(row1, row2, row3, row4);
@@ -901,27 +951,27 @@ function deriveRecoveryHints(errorMessage) {
   const hints = [];
 
   if (!msg) {
-    return ["Retry the operation after refreshing project and artifact state."];
+    return ["Retry after refreshing the selected app and its outputs."];
   }
 
   if (msg.includes("no build image found")) {
-    hints.push("Trigger CI or run create/update first so build artifacts produce build/image.txt.");
+    hints.push("Run a build first so the app has an image ready to deliver.");
   }
   if (msg.includes("from_env") || msg.includes("to_env")) {
-    hints.push("Verify source and target environments are defined in the project spec and are different.");
+    hints.push("Verify source and target environments exist for this app and are different.");
   }
   if (msg.includes("deployment endpoint supports dev only")) {
-    hints.push("Use deploy only for dev; use promotion for non-production and release for production transitions.");
+    hints.push("Use direct delivery for dev, promotions for non-production, and release for production.");
   }
   if (msg.includes("timeout")) {
-    hints.push("Operation wait timed out. Check if workers are running, then retry the action.");
+    hints.push("The action timed out. Retry and check recent activity details.");
   }
   if (msg.includes("not found")) {
-    hints.push("Refresh projects. The selected project may have been deleted or renamed.");
+    hints.push("Refresh the app list. The selected app may have been deleted or renamed.");
   }
 
   if (!hints.length) {
-    hints.push("Review operation step details and artifact outputs, then retry the workflow.");
+    hints.push("Review activity details and outputs, then retry the workflow.");
   }
 
   return hints;
@@ -933,7 +983,7 @@ function renderOperationProgress(op) {
   if (!op) {
     renderEmptyState(
       dom.containers.opProgress,
-      "No active operation. Deploy, promote, or release to see live progress here."
+      "No active delivery activity. Run a journey step to see live progress."
     );
     return;
   }
@@ -958,7 +1008,7 @@ function renderOperationProgress(op) {
     makeElem(
       "span",
       "op-progress-title",
-      `op ${String(op.id || "").slice(0, 8)} • ${op.kind || "unknown"} • requested ${toLocalTime(op.requested)}`
+      `${operationLabel(op.kind)} • ${String(op.id || "").slice(0, 8)} • started ${toLocalTime(op.requested)}`
     ),
     makeBadge(op.status || "unknown", op.status || "unknown")
   );
@@ -972,7 +1022,7 @@ function renderOperationProgress(op) {
   const meta = makeElem(
     "div",
     "helper-text",
-    `${doneCount}/${order.length || 0} steps complete • duration ${duration(op.requested, op.finished)}`
+    `${doneCount}/${order.length || 0} journey steps complete • duration ${duration(op.requested, op.finished)}`
   );
 
   card.append(head, track, meta);
@@ -987,8 +1037,8 @@ function renderOperationErrorSurface(op) {
   }
 
   const surface = makeElem("section", "recovery-surface");
-  surface.appendChild(makeElem("p", "recovery-title", "Operation failed"));
-  surface.appendChild(makeElem("p", "", op.error || "Unknown operation failure"));
+  surface.appendChild(makeElem("p", "recovery-title", "Activity failed"));
+  surface.appendChild(makeElem("p", "", op.error || "Unknown delivery failure"));
 
   const hints = deriveRecoveryHints(op.error);
   const list = makeElem("ul", "recovery-list");
@@ -1005,14 +1055,14 @@ function renderOperationTimeline(op) {
   dom.containers.opTimeline.replaceChildren();
 
   if (!op) {
-    renderEmptyState(dom.containers.opTimeline, "Operation steps will appear here when a process starts.");
+    renderEmptyState(dom.containers.opTimeline, "Activity steps appear when an app action starts.");
     return;
   }
 
   const order = workerOrderForKind(op.kind);
 
   if (!order.length) {
-    renderEmptyState(dom.containers.opTimeline, "No known worker path for this operation kind.");
+    renderEmptyState(dom.containers.opTimeline, "No known delivery path for this action.");
     return;
   }
 
@@ -1023,11 +1073,11 @@ function renderOperationTimeline(op) {
     const row = makeElem("article", `timeline-step timeline-step--${stateName}`);
 
     const head = makeElem("div", "timeline-step-head");
-    head.append(makeElem("span", "timeline-step-title", workerName), makeBadge(stateName, stateName));
+    head.append(makeElem("span", "timeline-step-title", workerLabel(workerName)), makeBadge(stateName, stateName));
 
     const bits = [];
     if (!step) {
-      bits.push("waiting for this worker");
+      bits.push("waiting");
     } else {
       bits.push(`started ${toLocalTime(step.started_at)}`);
       bits.push(`ended ${toLocalTime(step.ended_at)}`);
@@ -1044,7 +1094,7 @@ function renderOperationTimeline(op) {
         makeElem(
           "p",
           "timeline-step-artifacts",
-          `artifacts ${step.artifacts.length}: ${artifactPreview}${step.artifacts.length > 4 ? ", ..." : ""}`
+          `outputs ${step.artifacts.length}: ${artifactPreview}${step.artifacts.length > 4 ? ", ..." : ""}`
         )
       );
     }
@@ -1057,7 +1107,7 @@ function renderOperationHistory() {
   dom.containers.opHistory.replaceChildren();
 
   if (!state.operation.history.length) {
-    renderEmptyState(dom.containers.opHistory, "Completed operations will be listed here.");
+    renderEmptyState(dom.containers.opHistory, "Completed app activities will be listed here.");
     return;
   }
 
@@ -1066,7 +1116,7 @@ function renderOperationHistory() {
 
     const head = makeElem("div", "history-item-head");
     head.append(
-      makeElem("strong", "", `${item.kind || "op"} • ${String(item.id || "").slice(0, 8)}`),
+      makeElem("strong", "", `${operationLabel(item.kind)} • ${String(item.id || "").slice(0, 8)}`),
       makeBadge(item.status || "unknown", item.status || "unknown")
     );
 
@@ -1181,6 +1231,12 @@ function resetArtifacts() {
   dom.inputs.artifactSearch.value = "";
 }
 
+function resetJourney() {
+  state.journey.loading = false;
+  state.journey.error = "";
+  state.journey.data = null;
+}
+
 async function requestAPI(method, url, body) {
   const options = {
     method,
@@ -1208,6 +1264,41 @@ async function requestAPI(method, url, body) {
   }
 
   return payload;
+}
+
+async function loadJourney({ silent = false } = {}) {
+  const project = getSelectedProject();
+  if (!project) {
+    resetJourney();
+    renderJourneyPanel();
+    renderSystemStrip();
+    return;
+  }
+
+  state.journey.loading = true;
+  state.journey.error = "";
+  renderJourneyPanel();
+
+  try {
+    const response = await requestAPI("GET", `/api/projects/${encodeURIComponent(project.id)}/journey`);
+    state.journey.data = response?.journey || null;
+    renderJourneyPanel();
+    renderSystemStrip();
+    if (!silent) {
+      setStatus("Journey refreshed.", "success");
+    }
+  } catch (error) {
+    state.journey.error = error.message;
+    state.journey.data = null;
+    renderJourneyPanel();
+    renderSystemStrip();
+    if (!silent) {
+      throw error;
+    }
+  } finally {
+    state.journey.loading = false;
+    renderJourneyPanel();
+  }
 }
 
 async function readArtifactText(path) {
@@ -1308,7 +1399,7 @@ async function buildEnvironmentSnapshots() {
   state.artifacts.envSnapshots = snapshots;
 }
 
-function createEnvironmentCard(snapshot) {
+function createEnvironmentSnapshotCard(snapshot) {
   const card = makeElem("article", "environment-card");
   card.dataset.env = snapshot.env;
   const transitionEvidence = Array.isArray(snapshot?.transitionEvidence) ? snapshot.transitionEvidence : [];
@@ -1318,10 +1409,10 @@ function createEnvironmentCard(snapshot) {
     makeElem("span", "environment-name", snapshot.env),
     makeBadge(
       snapshot.state === "done"
-        ? "manifest ready"
+        ? "live"
         : snapshot.state === "running"
-          ? "partial data"
-          : "not rendered",
+          ? "in progress"
+          : "not delivered",
       snapshot.state
     )
   );
@@ -1330,14 +1421,14 @@ function createEnvironmentCard(snapshot) {
   meta.append(
     makeElem("span", "", `Image ${snapshot.imageTag || "unknown"}`),
     makeElem("span", "", `Image source ${snapshot.imageSource || "not available"}`),
-    makeElem("span", "", `Rendered manifest ${snapshot.hasRendered ? "yes" : "no"}`)
+    makeElem("span", "", `Delivery config rendered ${snapshot.hasRendered ? "yes" : "no"}`)
   );
 
   if (transitionEvidence.length) {
     const label = transitionEvidence.map((edge) => `${edge.action} ${edge.from}→${edge.to}`).join(", ");
-    meta.appendChild(makeElem("span", "", `Transition evidence ${label}`));
+    meta.appendChild(makeElem("span", "", `Environment moves ${label}`));
   } else {
-    meta.appendChild(makeElem("span", "", "Transition evidence none yet"));
+    meta.appendChild(makeElem("span", "", "No environment moves yet"));
   }
 
   const links = makeElem("div", "environment-links");
@@ -1352,13 +1443,13 @@ function createEnvironmentCard(snapshot) {
     links.appendChild(anchor);
   };
 
-  maybeLink(snapshot.deployRenderedPath, "rendered");
+  maybeLink(snapshot.deployRenderedPath, "rendered config");
   maybeLink(snapshot.deployDeploymentPath, "deployment");
   maybeLink(snapshot.deployServicePath, "service");
   maybeLink(snapshot.overlayImagePath, "image marker");
 
   if (!links.childElementCount) {
-    links.appendChild(makeElem("span", "helper-text", "No environment artifacts yet"));
+    links.appendChild(makeElem("span", "helper-text", "No environment outputs yet"));
   }
 
   card.append(head, meta, links);
@@ -1371,12 +1462,12 @@ function renderEnvironmentMatrix() {
   container.replaceChildren();
 
   if (!project) {
-    renderEmptyState(container, "Select a project to inspect environment state.");
+    renderEmptyState(container, "Select an app to inspect environment outcomes.");
     return;
   }
 
   if (state.artifacts.loading && !state.artifacts.loaded) {
-    renderEmptyState(container, "Loading artifacts and deriving environment provenance...");
+    renderEmptyState(container, "Loading outputs and deriving environment state...");
     return;
   }
 
@@ -1384,7 +1475,7 @@ function renderEnvironmentMatrix() {
     const wrap = makeElem("div", "empty-state");
     wrap.append(
       makeElem("p", "", `Environment data unavailable: ${state.artifacts.error}`),
-      makeElem("p", "helper-text", "You can still deploy/promote/release. The API will validate requests server-side.")
+      makeElem("p", "helper-text", "You can still run delivery steps. The API validates requests server-side.")
     );
     container.appendChild(wrap);
     return;
@@ -1397,7 +1488,7 @@ function renderEnvironmentMatrix() {
       const placeholder = {
         env,
         state: "pending",
-        imageTag: "unknown until artifacts load",
+        imageTag: "unknown until outputs load",
         imageSource: "",
         hasRendered: false,
         hasDeployment: false,
@@ -1408,7 +1499,7 @@ function renderEnvironmentMatrix() {
         overlayImagePath: `repos/manifests/overlays/${env}/image.txt`,
         transitionEvidence: [],
       };
-      container.appendChild(createEnvironmentCard(placeholder));
+      container.appendChild(createEnvironmentSnapshotCard(placeholder));
     }
     return;
   }
@@ -1430,7 +1521,7 @@ function renderEnvironmentMatrix() {
       transitionEvidence: [],
     };
 
-    container.appendChild(createEnvironmentCard(snapshot));
+    container.appendChild(createEnvironmentSnapshotCard(snapshot));
   }
 }
 
@@ -1439,16 +1530,16 @@ function deployGuardrailState() {
   if (!project) {
     return {
       disabled: true,
-      message: "Select a project first.",
-      summary: "Choose a project to inspect build provenance before deploying.",
+      message: "Select an app first.",
+      summary: "Choose an app to inspect build readiness before delivering.",
     };
   }
 
   if (projectHasRunningOperation()) {
     return {
       disabled: true,
-      message: "Wait for the active operation to finish before starting a deployment.",
-      summary: "Another operation is currently running.",
+      message: "Wait for current activity to finish before starting delivery.",
+      summary: "Another app activity is currently running.",
     };
   }
 
@@ -1456,30 +1547,30 @@ function deployGuardrailState() {
     if (!state.artifacts.buildImageTag) {
       return {
         disabled: true,
-        message: "No build image found. Trigger CI or run create/update before deploying.",
-        summary: "Deployment to dev requires build/image.txt for provenance.",
+        message: "No build image found. Run a source build before delivering.",
+        summary: "Dev delivery requires build/image.txt.",
       };
     }
 
     return {
       disabled: false,
-      message: "Deploy is ready.",
-      summary: `Dev will deploy image ${state.artifacts.buildImageTag}.`,
+      message: "Dev delivery is ready.",
+      summary: `Dev will receive image ${state.artifacts.buildImageTag}.`,
     };
   }
 
   if (state.artifacts.error) {
     return {
       disabled: false,
-      message: "Artifact state unavailable. Deploy is allowed; API will validate image readiness.",
-      summary: "Provenance check unavailable due to artifact load error.",
+      message: "Output state unavailable. Delivery is still allowed; API validates readiness.",
+      summary: "Readiness preview unavailable due to output load error.",
     };
   }
 
   return {
     disabled: false,
-    message: "Load artifacts to see exact image provenance before deploying.",
-    summary: "Deploy to dev is explicit and only targets the dev environment.",
+    message: "Load outputs to see exact image before delivering.",
+    summary: "Dev delivery only targets the dev environment.",
   };
 }
 
@@ -1526,13 +1617,13 @@ function promotionValidation(project, fromEnv, toEnv) {
   const action = transitionActionForTarget(toEnv);
 
   if (!project) {
-    return { valid: false, reason: "Select a project first.", sourceImage: "", targetImage: "", action };
+    return { valid: false, reason: "Select an app first.", sourceImage: "", targetImage: "", action };
   }
 
   if (projectHasRunningOperation()) {
     return {
       valid: false,
-      reason: `Wait for the active operation to finish before ${transitionVerb(action)}.`,
+      reason: `Wait for current activity to finish before ${transitionVerb(action)}.`,
       sourceImage: "",
       targetImage: "",
       action,
@@ -1563,7 +1654,7 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (!envs.includes(fromEnv) || !envs.includes(toEnv)) {
     return {
       valid: false,
-      reason: "Selected environments are not defined for this project.",
+      reason: "Selected environments are not defined for this app.",
       sourceImage: "",
       targetImage: "",
       action,
@@ -1573,8 +1664,8 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (!state.artifacts.loaded) {
     return {
       valid: true,
-      reason: `Load artifacts to verify image provenance before confirming this ${transitionVerb(action)}.`,
-      sourceImage: "unknown (artifacts not loaded)",
+      reason: `Load outputs to verify image before confirming this ${transitionVerb(action)}.`,
+      sourceImage: "unknown (outputs not loaded)",
       targetImage: "unknown",
       warning: true,
       action,
@@ -1589,7 +1680,7 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (!sourceImage) {
     return {
       valid: false,
-      reason: `No promoted image found in ${fromEnv}. Deploy or transition that source first.`,
+      reason: `No delivered image found in ${fromEnv}. Deliver or move that source first.`,
       sourceImage: "",
       targetImage,
       action,
@@ -1633,7 +1724,7 @@ function renderPromotionPanel() {
 
   dom.text.promotionDraftSummary.textContent = project
     ? `${actionLabel}: source ${fromEnv || "-"} (${validation.sourceImage || "unknown"}) -> target ${toEnv || "-"} (${validation.targetImage || "unknown"}).`
-    : "Select a project to configure promotion/release.";
+    : "Select an app to configure environment moves.";
 
   dom.text.promotionGuardrail.textContent = validation.reason;
   dom.buttons.openPromotionModal.textContent =
@@ -1646,25 +1737,126 @@ function renderActionPanels() {
   renderPromotionPanel();
 }
 
+function journeyStatusLabel(status) {
+  switch (status) {
+    case "in_progress":
+      return "in progress";
+    case "complete":
+      return "complete";
+    case "blocked":
+      return "blocked";
+    case "failed":
+      return "failed";
+    default:
+      return "pending";
+  }
+}
+
+function renderJourneyPanel() {
+  const project = getSelectedProject();
+  const milestoneContainer = dom.containers.journeyMilestones;
+  const nextActionCard = dom.containers.journeyNextAction;
+  const nextActionButton = dom.buttons.journeyNextAction;
+
+  milestoneContainer.replaceChildren();
+  nextActionCard.replaceChildren();
+
+  if (!project) {
+    dom.text.journeyStatusLine.textContent = "Select an app to load journey milestones.";
+    nextActionCard.textContent = "No app selected.";
+    nextActionButton.disabled = true;
+    nextActionButton.textContent = "Run suggested step";
+    renderEmptyState(milestoneContainer, "Milestones appear after you select an app.");
+    return;
+  }
+
+  if (state.journey.loading) {
+    dom.text.journeyStatusLine.textContent = "Loading journey snapshot...";
+    nextActionCard.textContent = "Preparing suggested next step...";
+    nextActionButton.disabled = true;
+    nextActionButton.textContent = "Run suggested step";
+    renderEmptyState(milestoneContainer, "Loading milestones...");
+    return;
+  }
+
+  if (state.journey.error) {
+    dom.text.journeyStatusLine.textContent = "Journey snapshot unavailable.";
+    nextActionCard.textContent = state.journey.error;
+    nextActionButton.disabled = true;
+    nextActionButton.textContent = "Run suggested step";
+    renderEmptyState(milestoneContainer, "Journey data could not be loaded.");
+    return;
+  }
+
+  const journey = currentJourney();
+  if (!journey) {
+    dom.text.journeyStatusLine.textContent = "Journey data is not available yet.";
+    nextActionCard.textContent = "Refresh to retry.";
+    nextActionButton.disabled = true;
+    nextActionButton.textContent = "Run suggested step";
+    renderEmptyState(milestoneContainer, "No milestones to show yet.");
+    return;
+  }
+
+  dom.text.journeyStatusLine.textContent = journey.summary || "Journey status is available.";
+
+  const nextAction = journey.next_action || { kind: "none", label: "No suggested action", detail: "" };
+  nextActionCard.textContent = `${nextAction.label || "No suggested action"}: ${nextAction.detail || "No action needed."}`;
+  nextActionButton.dataset.actionKind = nextAction.kind || "none";
+  nextActionButton.dataset.fromEnv = nextAction.from_env || "";
+  nextActionButton.dataset.toEnv = nextAction.to_env || "";
+  nextActionButton.textContent = nextAction.label || "Run suggested step";
+  nextActionButton.disabled = !["build", "deploy_dev", "promote", "release"].includes(nextAction.kind);
+
+  const milestones = Array.isArray(journey.milestones) ? journey.milestones : [];
+  if (!milestones.length) {
+    renderEmptyState(milestoneContainer, "No milestones available.");
+    return;
+  }
+
+  for (const milestone of milestones) {
+    const stateName = String(milestone.status || "pending");
+    const stateClass =
+      stateName === "in_progress"
+        ? "running"
+        : stateName === "blocked"
+          ? "warning"
+          : stateName === "complete"
+            ? "done"
+            : stateName === "failed"
+              ? "error"
+              : "pending";
+
+    const row = makeElem("article", `timeline-step timeline-step--${stateClass}`);
+    const head = makeElem("div", "timeline-step-head");
+    head.append(
+      makeElem("span", "timeline-step-title", milestone.title || milestone.id || "Milestone"),
+      makeBadge(journeyStatusLabel(stateName), stateClass)
+    );
+    row.append(head, makeElem("p", "timeline-step-meta", milestone.detail || ""));
+    milestoneContainer.appendChild(row);
+  }
+}
+
 function renderBuildKitSignal() {
   const signal = dom.text.buildkitSignal;
 
   if (!state.artifacts.loaded) {
     signal.className = "buildkit-signal muted";
-    signal.textContent = "Build metadata unavailable until artifacts are loaded.";
+    signal.textContent = "Output insight unavailable until outputs are loaded.";
     return;
   }
 
   const present = [...buildKitArtifactSet].filter((file) => state.artifacts.files.includes(file));
   if (present.length === buildKitArtifactSet.size) {
     signal.className = "buildkit-signal present";
-    signal.textContent = "BuildKit metadata found: summary, metadata JSON, and build log are present.";
+    signal.textContent = "Detailed build evidence is present (summary, metadata, and log).";
     return;
   }
 
   const missing = [...buildKitArtifactSet].filter((file) => !state.artifacts.files.includes(file));
   signal.className = "buildkit-signal missing";
-  signal.textContent = `BuildKit metadata missing: ${missing.join(", ")}`;
+  signal.textContent = `Some detailed build evidence is missing: ${missing.join(", ")}`;
 }
 
 function renderArtifactQuickLinks() {
@@ -1712,23 +1904,23 @@ function renderArtifactsPanel() {
   const filtered = filteredArtifactFiles();
 
   if (!project) {
-    dom.text.artifactStats.textContent = "Select a project first.";
+    dom.text.artifactStats.textContent = "Select an app first.";
     dom.containers.artifactQuickLinks.replaceChildren();
     dom.containers.artifacts.replaceChildren();
-    renderEmptyState(dom.containers.artifacts, "Pick a project to inspect artifacts.");
+    renderEmptyState(dom.containers.artifacts, "Pick an app to inspect outputs.");
     dom.text.artifactPreview.classList.add("muted");
-    dom.text.artifactPreview.textContent = "Select an artifact to preview.";
+    dom.text.artifactPreview.textContent = "Select an output to preview.";
     dom.text.artifactPreviewMeta.textContent = "Preview unavailable";
     dom.buttons.copyPreview.disabled = true;
     dom.text.buildkitSignal.className = "buildkit-signal muted";
-    dom.text.buildkitSignal.textContent = "Build metadata unavailable until artifacts are loaded.";
+    dom.text.buildkitSignal.textContent = "Output insight unavailable until outputs are loaded.";
     return;
   }
 
   if (state.artifacts.loading && !state.artifacts.loaded) {
-    dom.text.artifactStats.textContent = "Loading artifacts...";
+    dom.text.artifactStats.textContent = "Loading outputs...";
   } else if (!state.artifacts.loaded) {
-    dom.text.artifactStats.textContent = "Artifacts ready to load";
+    dom.text.artifactStats.textContent = "Outputs ready to load";
   } else {
     dom.text.artifactStats.textContent = `${filtered.length} visible of ${state.artifacts.files.length}`;
   }
@@ -1739,13 +1931,13 @@ function renderArtifactsPanel() {
   dom.containers.artifacts.replaceChildren();
 
   if (state.artifacts.error && !state.artifacts.loaded) {
-    renderEmptyState(dom.containers.artifacts, `Artifact load failed: ${state.artifacts.error}`);
+    renderEmptyState(dom.containers.artifacts, `Output load failed: ${state.artifacts.error}`);
   } else if (!state.artifacts.loaded) {
-    renderEmptyState(dom.containers.artifacts, "Load artifacts to inspect deploy/promotion/release outputs.");
+    renderEmptyState(dom.containers.artifacts, "Load outputs to inspect delivery results.");
   } else if (!filtered.length) {
     const message = state.artifacts.files.length
-      ? "No artifacts match this filter."
-      : "No artifacts are available for this project yet.";
+      ? "No outputs match this filter."
+      : "No outputs are available for this app yet.";
     renderEmptyState(dom.containers.artifacts, message);
   } else {
     for (const path of filtered) {
@@ -1777,7 +1969,7 @@ function renderArtifactsPanel() {
   }
 
   dom.text.artifactPreviewMeta.textContent = state.artifacts.previewMeta;
-  dom.text.artifactPreview.textContent = state.artifacts.previewText || "Select an artifact to preview.";
+  dom.text.artifactPreview.textContent = state.artifacts.previewText || "Select an output to preview.";
   dom.text.artifactPreview.classList.toggle("muted", !state.artifacts.previewText || state.artifacts.previewIsBinary);
   dom.buttons.copyPreview.disabled = !state.artifacts.previewText || state.artifacts.previewIsBinary;
 }
@@ -1787,29 +1979,30 @@ function renderSystemStrip() {
   const readyCount = state.projects.filter((project) => project.status?.phase === "Ready").length;
 
   dom.text.systemProjectCount.textContent = String(state.projects.length);
-  dom.text.systemReadyCount.textContent = `${readyCount} ready`;
+  dom.text.systemReadyCount.textContent = `${readyCount} delivery-ready`;
 
   const op = state.operation.payload;
   if (op) {
-    dom.text.systemActiveOp.textContent = `${op.kind} ${op.status}`;
-    dom.text.systemActiveOpMeta.textContent = `${String(op.id || "").slice(0, 8)} • ${workerOrderForKind(op.kind).length} steps`;
+    dom.text.systemActiveOp.textContent = operationLabel(op.kind);
+    dom.text.systemActiveOpMeta.textContent = `${op.status || "pending"} • ${String(op.id || "").slice(0, 8)}`;
   } else if (selected?.status?.last_op_kind) {
-    dom.text.systemActiveOp.textContent = selected.status.last_op_kind;
-    dom.text.systemActiveOpMeta.textContent = selected.status.last_op_id || "No op id";
+    dom.text.systemActiveOp.textContent = operationLabel(selected.status.last_op_kind);
+    dom.text.systemActiveOpMeta.textContent = selected.status.last_op_id || "No activity id";
   } else {
-    dom.text.systemActiveOp.textContent = "None";
-    dom.text.systemActiveOpMeta.textContent = "No operation selected";
+    dom.text.systemActiveOp.textContent = "None selected";
+    dom.text.systemActiveOpMeta.textContent = "Choose an app to focus";
   }
 
-  if (!state.artifacts.loaded) {
-    dom.text.systemBuilderMode.textContent = "Unknown";
-    dom.text.systemBuilderMeta.textContent = "Artifacts not loaded";
-  } else if (state.artifacts.buildImageTag) {
-    dom.text.systemBuilderMode.textContent = "Verified";
-    dom.text.systemBuilderMeta.textContent = `build/image.txt -> ${state.artifacts.buildImageTag}`;
+  const nextAction = currentJourney()?.next_action || null;
+  if (nextAction) {
+    dom.text.systemBuilderMode.textContent = nextAction.label || "No next action";
+    dom.text.systemBuilderMeta.textContent = nextAction.detail || "No follow-up needed.";
+  } else if (!selected) {
+    dom.text.systemBuilderMode.textContent = "Waiting";
+    dom.text.systemBuilderMeta.textContent = "Select an app to see guidance";
   } else {
-    dom.text.systemBuilderMode.textContent = "Missing";
-    dom.text.systemBuilderMeta.textContent = "build/image.txt not found";
+    dom.text.systemBuilderMode.textContent = "Refresh needed";
+    dom.text.systemBuilderMeta.textContent = "Load journey snapshot to see next best step";
   }
 
   const hasProjects = state.projects.length > 0;
@@ -1817,13 +2010,13 @@ function renderSystemStrip() {
 
   if (!hasProjects) {
     dom.text.healthLabel.textContent = "Idle";
-    dom.text.healthMeta.textContent = "No projects registered";
+    dom.text.healthMeta.textContent = "No apps created yet";
   } else if (hasErrors) {
-    dom.text.healthLabel.textContent = "Attention";
-    dom.text.healthMeta.textContent = "One or more projects are in Error phase";
+    dom.text.healthLabel.textContent = "Needs attention";
+    dom.text.healthMeta.textContent = "One or more apps need recovery";
   } else {
-    dom.text.healthLabel.textContent = "Operational";
-    dom.text.healthMeta.textContent = "Registration, deployment, promotion, and release pathways are available";
+    dom.text.healthLabel.textContent = "Healthy";
+    dom.text.healthMeta.textContent = "App delivery journeys are progressing";
   }
 }
 
@@ -1831,6 +2024,7 @@ function renderAll() {
   renderStatus();
   renderProjectsList();
   renderSelectionPanel();
+  renderJourneyPanel();
   renderEnvironmentMatrix();
   renderActionPanels();
   renderOperationPanel();
@@ -1847,7 +2041,7 @@ function syncDeleteConfirmationState() {
   dom.buttons.deleteConfirm.disabled = !valid;
   dom.text.deleteConfirmHint.textContent = expected
     ? `Type "${expected}" exactly to enable deletion.`
-    : "Select a project first.";
+    : "Select an app first.";
 }
 
 function syncPromotionConfirmationState() {
@@ -1858,7 +2052,7 @@ function syncPromotionConfirmationState() {
   dom.buttons.promotionConfirm.disabled = !valid;
   dom.text.promotionConfirmHint.textContent = expected
     ? `Type "${expected}" exactly to confirm.`
-    : "Transition summary unavailable.";
+    : "Move summary unavailable.";
 }
 
 function openModal(modalName) {
@@ -1866,7 +2060,7 @@ function openModal(modalName) {
 
   const project = getSelectedProject();
   if ((modalName === "update" || modalName === "delete" || modalName === "promotion") && !project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
@@ -1876,7 +2070,7 @@ function openModal(modalName) {
     syncUpdateForm(project);
   } else if (modalName === "delete") {
     const appName = project?.spec?.name || project?.id || "";
-    dom.text.deleteModalTarget.textContent = `Target project: ${appName}`;
+    dom.text.deleteModalTarget.textContent = `Target app: ${appName}`;
     dom.inputs.deleteConfirm.value = "";
     syncDeleteConfirmationState();
   }
@@ -1912,7 +2106,7 @@ function closeAllModals() {
 function openPromotionConfirmation() {
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
@@ -1936,13 +2130,13 @@ function openPromotionConfirmation() {
     state.promotion.action === "release" ? "Release environment" : "Promote environment";
 
   dom.text.promotionSummary.replaceChildren(
-    makeElem("p", "", `Project ${project.spec?.name || project.id}`),
+    makeElem("p", "", `App ${project.spec?.name || project.id}`),
     makeElem("p", "", `Action ${actionLabel}`),
     makeElem("p", "", `From ${fromEnv}`),
     makeElem("p", "", `To ${toEnv}`),
     makeElem("p", "", `Source image ${validation.sourceImage || "unknown"}`),
     makeElem("p", "", `Target current image ${validation.targetImage || "unknown"}`),
-    makeElem("p", "", `Artifacts loaded ${state.artifacts.loaded ? "yes" : "no"}`)
+    makeElem("p", "", `Outputs loaded ${state.artifacts.loaded ? "yes" : "no"}`)
   );
 
   dom.inputs.promotionConfirmInput.value = "";
@@ -1971,6 +2165,7 @@ function clearSelection() {
   setUpdateDefaults();
   stopOperationMonitor({ clearPayload: true });
   resetArtifacts();
+  resetJourney();
   renderAll();
 }
 
@@ -1984,10 +2179,12 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     state.selectedProjectID = "";
     stopOperationMonitor({ clearPayload: true });
     resetArtifacts();
+    resetJourney();
   } else if (!preserveSelection) {
     state.selectedProjectID = "";
     stopOperationMonitor({ clearPayload: true });
     resetArtifacts();
+    resetJourney();
   }
 
   const selected = getSelectedProject();
@@ -1997,12 +2194,17 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     }
   } else if (!selected) {
     stopOperationMonitor({ clearPayload: true });
+    resetJourney();
   }
 
   renderAll();
 
+  if (selected) {
+    await loadJourney({ silent: true });
+  }
+
   if (!silent) {
-    setStatus("Projects refreshed.", "success");
+    setStatus("Apps refreshed.", "success");
   }
 }
 
@@ -2040,7 +2242,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
 
         if (announce) {
           const tone = op.status === "done" ? "success" : "error";
-          setStatus(`Operation ${op.kind} finished with status ${op.status}.`, tone, { toast: true });
+          setStatus(`${operationLabel(op.kind)} finished with status ${op.status}.`, tone, { toast: true });
         }
 
         try {
@@ -2052,8 +2254,9 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
         if (getSelectedProject()) {
           try {
             await loadArtifacts({ silent: true });
+            await loadJourney({ silent: true });
           } catch (_error) {
-            // Keep operation view even if artifact refresh fails.
+            // Keep operation view even if refresh fails.
           }
         }
 
@@ -2067,7 +2270,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
 
       state.operation.failureCount += 1;
       const backoff = Math.min(5000, 1500 + state.operation.failureCount * 700);
-      setStatus(`Operation monitor warning: ${error.message}`, "warning");
+      setStatus(`Activity monitor warning: ${error.message}`, "warning");
       state.operation.timer = setTimeout(poll, backoff);
     }
   };
@@ -2078,7 +2281,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
 async function loadArtifacts({ silent = false } = {}) {
   const project = getSelectedProject();
   if (!project) {
-    throw new Error("Select a project first.");
+    throw new Error("Select an app first.");
   }
 
   state.artifacts.loading = true;
@@ -2107,9 +2310,10 @@ async function loadArtifacts({ silent = false } = {}) {
     renderActionPanels();
     renderArtifactsPanel();
     renderSystemStrip();
+    await loadJourney({ silent: true });
 
     if (!silent) {
-      setStatus(`Loaded ${state.artifacts.files.length} artifacts.`, "success", { toast: true });
+      setStatus(`Loaded ${state.artifacts.files.length} outputs.`, "success", { toast: true });
     }
   } catch (error) {
     state.artifacts.error = error.message;
@@ -2145,7 +2349,7 @@ function isProbablyText(bytes) {
 async function previewArtifact(path) {
   const project = getSelectedProject();
   if (!project) {
-    throw new Error("Select a project first.");
+    throw new Error("Select an app first.");
   }
 
   state.artifacts.selectedPath = path;
@@ -2201,6 +2405,7 @@ function selectProject(projectID) {
 
   state.selectedProjectID = projectID;
   resetArtifacts();
+  resetJourney();
 
   const selected = getSelectedProject();
   syncUpdateForm(selected);
@@ -2215,13 +2420,17 @@ function selectProject(projectID) {
   setStatus("");
 
   void loadArtifacts({ silent: true }).catch((error) => {
-    setStatus(`Artifacts unavailable: ${error.message}`, "warning");
+    setStatus(`Outputs unavailable: ${error.message}`, "warning");
+  });
+
+  void loadJourney({ silent: true }).catch((error) => {
+    setStatus(`Journey unavailable: ${error.message}`, "warning");
   });
 }
 
 async function handleCreateSubmit(event) {
   event.preventDefault();
-  setStatus("Registering project...", "info");
+  setStatus("Creating app...", "info");
 
   try {
     const spec = buildCreateSpec();
@@ -2241,7 +2450,7 @@ async function handleCreateSubmit(event) {
     }
 
     closeModal("create");
-    setStatus("Project created.", "success", { toast: true });
+    setStatus("App created.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -2252,11 +2461,11 @@ async function handleUpdateSubmit(event) {
 
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
-  setStatus("Submitting project update...", "info");
+  setStatus("Saving app changes...", "info");
 
   try {
     const spec = buildUpdateSpec();
@@ -2277,7 +2486,7 @@ async function handleUpdateSubmit(event) {
     }
 
     closeModal("update");
-    setStatus("Project updated.", "success", { toast: true });
+    setStatus("App updated.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -2288,18 +2497,18 @@ async function handleWebhookSubmit(event) {
 
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
-  setStatus("Triggering source webhook CI event...", "info");
+  setStatus("Starting build from source change...", "info");
 
   try {
     const payload = buildWebhookPayload(project.id);
     const response = await requestAPI("POST", "/api/webhooks/source", payload);
 
     if (!response.accepted) {
-      setStatus(`Webhook ignored: ${response.reason || "not accepted"}`, "warning", { toast: true });
+      setStatus(`Build trigger ignored: ${response.reason || "not accepted"}`, "warning", { toast: true });
       return;
     }
 
@@ -2308,7 +2517,7 @@ async function handleWebhookSubmit(event) {
     }
 
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus("CI operation accepted.", "success", { toast: true });
+    setStatus("Build run accepted.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -2317,7 +2526,7 @@ async function handleWebhookSubmit(event) {
 async function handleDeployDevClick() {
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
@@ -2327,7 +2536,7 @@ async function handleDeployDevClick() {
     return;
   }
 
-  setStatus(`Deploying dev environment for ${project.spec?.name || project.id}...`, "info");
+  setStatus(`Delivering dev environment for ${project.spec?.name || project.id}...`, "info");
 
   try {
     const response = await requestAPI("POST", "/api/events/deployment", {
@@ -2340,7 +2549,7 @@ async function handleDeployDevClick() {
     }
 
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus("Deployment request accepted.", "success", { toast: true });
+    setStatus("Dev delivery accepted.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -2356,7 +2565,7 @@ async function handlePromotionConfirmSubmit(event) {
 
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
@@ -2372,7 +2581,7 @@ async function handlePromotionConfirmSubmit(event) {
 
   const typed = String(dom.inputs.promotionConfirmInput.value || "").trim();
   if (typed !== state.promotion.confirmationPhrase) {
-    setStatus("Transition confirmation phrase does not match.", "warning");
+    setStatus("Move confirmation phrase does not match.", "warning");
     syncPromotionConfirmationState();
     return;
   }
@@ -2405,19 +2614,19 @@ async function handleDeleteConfirmSubmit(event) {
 
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
   const expected = (project.spec?.name || project.id || "").trim();
   const typed = String(dom.inputs.deleteConfirm.value || "").trim();
   if (!expected || typed !== expected) {
-    setStatus("Deletion confirmation does not match project name.", "warning");
+    setStatus("Deletion confirmation does not match app name.", "warning");
     syncDeleteConfirmationState();
     return;
   }
 
-  setStatus("Submitting delete event...", "warning");
+  setStatus("Deleting app...", "warning");
 
   try {
     const response = await requestAPI("POST", "/api/events/registration", {
@@ -2434,7 +2643,7 @@ async function handleDeleteConfirmSubmit(event) {
     closeModal("delete");
     clearSelection();
     await refreshProjects({ silent: true, preserveSelection: false });
-    setStatus("Project deleted.", "success", { toast: true });
+    setStatus("App deleted.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -2443,11 +2652,11 @@ async function handleDeleteConfirmSubmit(event) {
 async function handleLoadArtifactsClick() {
   const project = getSelectedProject();
   if (!project) {
-    setStatus("Select a project first.", "warning");
+    setStatus("Select an app first.", "warning");
     return;
   }
 
-  setStatus(`Loading artifacts for ${project.spec?.name || project.id}...`, "info");
+  setStatus(`Loading outputs for ${project.spec?.name || project.id}...`, "info");
 
   try {
     await loadArtifacts({ silent: false });
@@ -2461,10 +2670,43 @@ async function handleCopyPreviewClick() {
 
   try {
     await navigator.clipboard.writeText(state.artifacts.previewText);
-    setStatus("Artifact preview copied to clipboard.", "success", { toast: true });
+    setStatus("Output preview copied to clipboard.", "success", { toast: true });
   } catch (error) {
     setStatus(`Copy failed: ${error.message}`, "error", { toast: true });
   }
+}
+
+async function handleJourneyNextActionClick() {
+  const project = getSelectedProject();
+  if (!project) {
+    setStatus("Select an app first.", "warning");
+    return;
+  }
+
+  const kind = String(dom.buttons.journeyNextAction.dataset.actionKind || "none");
+  const fromEnv = String(dom.buttons.journeyNextAction.dataset.fromEnv || "");
+  const toEnv = String(dom.buttons.journeyNextAction.dataset.toEnv || "");
+
+  if (kind === "build") {
+    dom.forms.webhook.requestSubmit();
+    return;
+  }
+
+  if (kind === "deploy_dev") {
+    await handleDeployDevClick();
+    return;
+  }
+
+  if ((kind === "promote" || kind === "release") && fromEnv && toEnv) {
+    state.promotion.fromEnv = fromEnv;
+    state.promotion.toEnv = toEnv;
+    renderPromotionPanel();
+    openPromotionConfirmation();
+    return;
+  }
+
+  const tone = nextActionKindToTone[kind] || "info";
+  setStatus("No suggested step to run right now.", tone);
 }
 
 function bindEvents() {
@@ -2485,11 +2727,12 @@ function bindEvents() {
   });
 
   dom.buttons.refresh.addEventListener("click", async () => {
-    setStatus("Refreshing projects...", "info");
+    setStatus("Refreshing apps...", "info");
     try {
       await refreshProjects({ silent: false, preserveSelection: true });
       if (getSelectedProject()) {
         await loadArtifacts({ silent: true });
+        await loadJourney({ silent: true });
       }
     } catch (error) {
       setStatus(error.message, statusToneFromError(error), { toast: true });
@@ -2498,6 +2741,10 @@ function bindEvents() {
 
   dom.buttons.deployDev.addEventListener("click", () => {
     void handleDeployDevClick();
+  });
+
+  dom.buttons.journeyNextAction.addEventListener("click", () => {
+    void handleJourneyNextActionClick();
   });
 
   dom.forms.create.addEventListener("submit", (event) => {
@@ -2660,11 +2907,12 @@ async function init() {
   bindEvents();
   renderAll();
 
-  setStatus("Loading projects...", "info");
+  setStatus("Loading apps...", "info");
   try {
     await refreshProjects({ silent: true, preserveSelection: true });
     if (getSelectedProject()) {
       await loadArtifacts({ silent: true });
+      await loadJourney({ silent: true });
     }
     setStatus("", "info");
   } catch (error) {

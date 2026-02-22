@@ -228,6 +228,7 @@ Endpoints:
 - `GET /api/projects/{id}`
 - `PUT /api/projects/{id}`
 - `DELETE /api/projects/{id}`
+- `GET /api/projects/{id}/journey`
 
 `POST` and `PUT` accept `ProjectSpec` directly as request JSON.
 
@@ -236,6 +237,66 @@ Common status codes:
 - Success: `200 OK`
 - Validation errors: `400 Bad Request`
 - Not found (by id): `404 Not Found`
+
+### Project Journey
+
+Endpoint:
+
+- `GET /api/projects/{id}/journey`
+
+Purpose:
+
+- Returns a user-facing delivery journey snapshot for the project so UIs can render progress and suggested next steps without exposing low-level worker/event details.
+
+Response:
+
+```json
+{
+  "project": {},
+  "journey": {
+    "summary": "Delivery is underway: 1 of 3 environments are live.",
+    "milestones": [
+      {
+        "id": "build",
+        "title": "Build ready",
+        "status": "complete | in_progress | pending | blocked | failed",
+        "detail": "Latest build image: example.local/my-app:abc123."
+      }
+    ],
+    "environments": [
+      {
+        "name": "dev",
+        "state": "live | pending",
+        "image": "example.local/my-app:abc123",
+        "image_source": "latest build | deployment manifest | environment marker",
+        "delivery_type": "deploy | promote | release",
+        "delivery_path": "deploy/dev/rendered.yaml",
+        "detail": "Deployment manifest is rendered for this environment."
+      }
+    ],
+    "next_action": {
+      "kind": "build | deploy_dev | promote | release | investigate | none",
+      "label": "Deploy to dev",
+      "detail": "Ship the latest build to the dev environment.",
+      "environment": "dev",
+      "from_env": "dev",
+      "to_env": "staging"
+    },
+    "artifact_stats": {
+      "total": 12,
+      "build": 3,
+      "deploy": 4,
+      "promotion": 2,
+      "release": 0,
+      "repository": 2,
+      "registration": 1,
+      "other": 0
+    },
+    "recent_operation": {},
+    "last_update_time": "2026-02-22T12:34:56Z"
+  }
+}
+```
 
 ## Operations
 

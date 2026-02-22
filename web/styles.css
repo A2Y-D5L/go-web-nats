@@ -3,30 +3,30 @@
   --font-display: "Clash Display", "Avenir Next Condensed", "Trebuchet MS", sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", "Menlo", monospace;
 
-  --bg-canvas: #f6f8f5;
+  --bg-canvas: #f5f4f0;
   --bg-surface: #ffffff;
-  --bg-soft: #edf3ee;
-  --bg-inset: #e4ece5;
+  --bg-soft: #f0eee8;
+  --bg-inset: #e5e2d8;
 
-  --text-strong: #10291f;
-  --text-body: #254338;
-  --text-muted: #587369;
+  --text-strong: #1f262d;
+  --text-body: #394754;
+  --text-muted: #6b7784;
 
-  --line-soft: #d4dfd8;
-  --line-strong: #b8cbc0;
+  --line-soft: #d6dde4;
+  --line-strong: #bcc8d3;
 
-  --brand-500: #0d8b73;
-  --brand-600: #096f5d;
-  --brand-100: #daf5ee;
+  --brand-500: #0f6aa8;
+  --brand-600: #0c4f80;
+  --brand-100: #deeffa;
 
-  --info-100: #e8f4ff;
-  --info-600: #1f6694;
-  --ok-100: #e9f8ef;
-  --ok-600: #277448;
-  --warn-100: #fff5e4;
-  --warn-700: #8a5a10;
-  --error-100: #ffeceb;
-  --error-700: #a53731;
+  --info-100: #eaf3ff;
+  --info-600: #1a5c96;
+  --ok-100: #ebf8ef;
+  --ok-600: #2e774b;
+  --warn-100: #fff1df;
+  --warn-700: #8f4d12;
+  --error-100: #ffeded;
+  --error-700: #a53a36;
 
   --radius-sm: 0.6rem;
   --radius-md: 0.9rem;
@@ -39,8 +39,8 @@
   --space-5: 1.6rem;
   --space-6: 2rem;
 
-  --shadow-soft: 0 10px 30px rgba(12, 39, 30, 0.08);
-  --shadow-elev: 0 18px 48px rgba(9, 31, 24, 0.13);
+  --shadow-soft: 0 10px 30px rgba(24, 37, 52, 0.08);
+  --shadow-elev: 0 18px 48px rgba(19, 30, 45, 0.14);
 
   --motion-fast: 130ms;
   --motion-mid: 220ms;
@@ -60,8 +60,8 @@ body {
 body {
   font-family: var(--font-sans);
   color: var(--text-strong);
-  background: radial-gradient(circle at 6% -4%, rgba(97, 153, 255, 0.16), transparent 40%),
-    radial-gradient(circle at 100% -2%, rgba(13, 139, 115, 0.18), transparent 34%), var(--bg-canvas);
+  background: radial-gradient(circle at 6% -4%, rgba(53, 132, 219, 0.2), transparent 38%),
+    radial-gradient(circle at 100% -2%, rgba(225, 134, 62, 0.18), transparent 36%), var(--bg-canvas);
   line-height: 1.45;
 }
 
@@ -126,7 +126,7 @@ a {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(155deg, rgba(228, 236, 229, 0.4), rgba(255, 255, 255, 0));
+  background: linear-gradient(155deg, rgba(224, 234, 245, 0.4), rgba(255, 255, 255, 0));
   z-index: -1;
 }
 
@@ -138,9 +138,9 @@ a {
 }
 
 .topbar {
-  background: linear-gradient(140deg, #153f34 0%, #16584a 62%, #1f6758 100%);
-  color: #eaf9f4;
-  border: 1px solid rgba(173, 222, 205, 0.32);
+  background: linear-gradient(140deg, #18334d 0%, #1e4c75 62%, #315f87 100%);
+  color: #edf5ff;
+  border: 1px solid rgba(160, 196, 229, 0.4);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
   display: flex;
@@ -159,7 +159,7 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.09em;
   font-size: 0.72rem;
-  color: rgba(233, 250, 243, 0.85);
+  color: rgba(236, 246, 255, 0.84);
 }
 
 .topbar h1 {
@@ -170,7 +170,7 @@ a {
 }
 
 .subtitle {
-  color: rgba(233, 250, 243, 0.88);
+  color: rgba(236, 246, 255, 0.88);
   max-width: 60ch;
 }
 
@@ -365,6 +365,28 @@ a {
 
 .project-overview .panel-head {
   margin-bottom: var(--space-3);
+}
+
+.journey-panel {
+  display: grid;
+  gap: var(--space-2);
+}
+
+#journeyStatusLine {
+  margin-top: 0.15rem;
+}
+
+#journeyNextAction {
+  min-height: 3.2rem;
+}
+
+#journeyNextActionBtn {
+  white-space: nowrap;
+}
+
+.journey-panel .timeline {
+  max-height: 18rem;
+  overflow: auto;
 }
 
 .selected-actions {

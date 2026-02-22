@@ -3,71 +3,71 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Launch Studio Control Plane</title>
+    <title>Launch Studio App Journey</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="ambient-layer" aria-hidden="true"></div>
     <div class="app-shell">
-      <header class="topbar" aria-label="Control plane header">
+      <header class="topbar" aria-label="App journey header">
         <div class="brand-block">
-          <p class="eyebrow">Local Platform Control Plane</p>
-          <h1>Deploy and promote with confidence</h1>
+          <p class="eyebrow">Project Delivery Journey</p>
+          <h1>Guide every app from first commit to production</h1>
           <p class="subtitle">
-            Track environment readiness at a glance, deploy dev explicitly, and promote only with verified provenance.
+            Focus on what your users care about: build readiness, environment delivery, and the next safe move.
           </p>
         </div>
         <div class="topbar-actions">
-          <button id="openCreateModalBtn" type="button" class="btn btn-primary">Register app</button>
-          <button id="refreshBtn" type="button" class="btn btn-subtle">Refresh state</button>
+          <button id="openCreateModalBtn" type="button" class="btn btn-primary">Create app</button>
+          <button id="refreshBtn" type="button" class="btn btn-subtle">Refresh</button>
         </div>
       </header>
 
-      <section class="system-strip" aria-label="Platform summary">
+      <section class="system-strip" aria-label="Portfolio summary">
         <article class="metric-card">
-          <p class="metric-label">Platform health</p>
-          <p id="healthLabel" class="metric-value">Starting</p>
-          <p id="healthMeta" class="metric-meta">Loading projects</p>
-        </article>
-        <article class="metric-card">
-          <p class="metric-label">Projects</p>
+          <p class="metric-label">Apps in portfolio</p>
           <p id="systemProjectCount" class="metric-value">0</p>
-          <p id="systemReadyCount" class="metric-meta">0 ready</p>
+          <p id="systemReadyCount" class="metric-meta">0 delivery-ready</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Active operation</p>
-          <p id="systemActiveOp" class="metric-value">None</p>
-          <p id="systemActiveOpMeta" class="metric-meta">No operation selected</p>
+          <p class="metric-label">Portfolio health</p>
+          <p id="healthLabel" class="metric-value">Loading</p>
+          <p id="healthMeta" class="metric-meta">Checking app delivery states</p>
         </article>
         <article class="metric-card">
-          <p class="metric-label">Build provenance</p>
-          <p id="systemBuilderMode" class="metric-value">Unknown</p>
-          <p id="systemBuilderMeta" class="metric-meta">Artifacts not loaded</p>
+          <p class="metric-label">Current focus</p>
+          <p id="systemActiveOp" class="metric-value">None selected</p>
+          <p id="systemActiveOpMeta" class="metric-meta">Pick an app to continue</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Suggested next move</p>
+          <p id="systemBuilderMode" class="metric-value">Waiting</p>
+          <p id="systemBuilderMeta" class="metric-meta">Select an app to see guidance</p>
         </article>
       </section>
 
       <div id="appStatus" class="status-banner" role="status" aria-live="polite"></div>
 
-      <main class="layout" aria-label="Deployment, promotion, and release workspace">
-        <aside class="panel project-rail" aria-label="Project list and filters">
+      <main class="layout" aria-label="App journey workspace">
+        <aside class="panel project-rail" aria-label="App list and filters">
           <div class="panel-head">
-            <h2>Projects</h2>
-            <button id="openCreateFromRailBtn" type="button" class="btn btn-subtle">New</button>
+            <h2>Your apps</h2>
+            <button id="openCreateFromRailBtn" type="button" class="btn btn-subtle">New app</button>
           </div>
 
           <div class="filter-grid">
             <label class="field compact" for="projectSearch">
               <span>Search</span>
-              <input id="projectSearch" placeholder="Name, ID, runtime" />
+              <input id="projectSearch" placeholder="Name, runtime, environment" />
             </label>
             <label class="field compact" for="phaseFilter">
-              <span>Phase</span>
+              <span>Status</span>
               <select id="phaseFilter">
-                <option value="all">All phases</option>
+                <option value="all">All states</option>
                 <option value="Ready">Ready</option>
-                <option value="Reconciling">Reconciling</option>
+                <option value="Reconciling">In progress</option>
                 <option value="Deleting">Deleting</option>
-                <option value="Error">Error</option>
+                <option value="Error">Needs attention</option>
               </select>
             </label>
             <label class="field compact" for="projectSort">
@@ -81,68 +81,80 @@
           </div>
 
           <p id="projectStats" class="helper-text">0 visible</p>
-          <div id="projects" class="project-list" role="listbox" aria-label="Projects list"></div>
+          <div id="projects" class="project-list" role="listbox" aria-label="Apps"></div>
         </aside>
 
-        <section class="workspace" aria-label="Selected project control center">
+        <section class="workspace" aria-label="Selected app journey">
           <article class="panel project-overview">
             <div class="panel-head">
-              <h2>Selected project</h2>
+              <h2>Selected app</h2>
               <div class="selected-actions">
-                <button id="openUpdateModalBtn" type="button" class="btn btn-subtle">Update spec</button>
-                <button id="openDeleteModalBtn" type="button" class="btn btn-danger">Delete</button>
+                <button id="openUpdateModalBtn" type="button" class="btn btn-subtle">Edit app setup</button>
+                <button id="openDeleteModalBtn" type="button" class="btn btn-danger">Delete app</button>
               </div>
             </div>
-            <div id="selected" class="project-summary muted">Select a project to view deployment, promotion, and release controls.</div>
+            <div id="selected" class="project-summary muted">Select an app to view its delivery journey.</div>
+          </article>
+
+          <article class="panel journey-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Journey progress</h2>
+                <p id="journeyStatusLine" class="panel-copy">Select an app to load journey milestones.</p>
+              </div>
+              <button id="journeyNextActionBtn" type="button" class="btn btn-primary" disabled>Run suggested step</button>
+            </div>
+            <div id="journeyNextAction" class="summary-card"></div>
+            <div id="journeyMilestones" class="timeline"></div>
           </article>
 
           <article class="panel environment-panel">
             <div class="panel-head">
               <div>
-                <h2>Environment status matrix</h2>
-                <p class="panel-copy">Each card shows the currently rendered manifest and image provenance for that environment.</p>
+                <h2>Environment outcomes</h2>
+                <p class="panel-copy">See where each environment stands and which image it is currently using.</p>
               </div>
-              <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Load artifacts</button>
+              <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Refresh outputs</button>
             </div>
             <div id="environmentMatrix" class="environment-grid"></div>
           </article>
 
           <section class="action-grid">
+            <article class="panel ci-panel">
+              <h3>1. Build from source changes</h3>
+              <p class="panel-copy">Trigger a build run from your source repository when new commits are ready.</p>
+              <form id="webhookForm" class="form-grid compact-form">
+                <label class="field" for="webhookRepo"><span>Repository</span><input id="webhookRepo" value="source" placeholder="source" /></label>
+                <label class="field" for="webhookBranch"><span>Branch</span><input id="webhookBranch" value="main" placeholder="main" /></label>
+                <label class="field" for="webhookRef"><span>Git ref</span><input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main" /></label>
+                <label class="field" for="webhookCommit"><span>Commit (optional)</span><input id="webhookCommit" placeholder="abc123def456" /></label>
+                <button type="submit" class="btn btn-subtle field-full">Start build run</button>
+              </form>
+            </article>
+
             <article class="panel deploy-panel">
-              <h3>Deploy to dev</h3>
-              <p class="panel-copy">Deployment is explicit. Dev manifests are rendered from the latest built image.</p>
+              <h3>2. Deliver to dev</h3>
+              <p class="panel-copy">Ship the latest built image to your dev environment for validation.</p>
               <div id="deploySummary" class="summary-card"></div>
               <p id="deployGuardrail" class="guardrail-text"></p>
-              <button id="deployDevBtn" type="button" class="btn btn-primary">Deploy dev now</button>
+              <button id="deployDevBtn" type="button" class="btn btn-primary">Deliver to dev</button>
             </article>
 
             <article class="panel promotion-panel">
-              <h3>Promote or release environment</h3>
-              <p class="panel-copy">Environment transitions stay explicit: non-production targets are promotions, production targets are releases.</p>
+              <h3>3. Move across environments</h3>
+              <p class="panel-copy">Promote between non-production environments, then release to production.</p>
               <form id="promotionForm" class="form-grid compact-form" novalidate>
                 <label class="field" for="promotionFrom">
-                  <span>Source environment</span>
+                  <span>From</span>
                   <select id="promotionFrom"></select>
                 </label>
                 <label class="field" for="promotionTo">
-                  <span>Target environment</span>
+                  <span>To</span>
                   <select id="promotionTo"></select>
                 </label>
                 <div id="promotionDraftSummary" class="summary-card field-full"></div>
                 <p id="promotionGuardrail" class="guardrail-text field-full"></p>
-                <button id="openPromotionModalBtn" type="submit" class="btn btn-primary field-full">Review transition</button>
-              </form>
-            </article>
-
-            <article class="panel ci-panel">
-              <h3>Trigger source webhook CI</h3>
-              <p class="panel-copy">Use this when you want to rebuild image artifacts from a source repo event.</p>
-              <form id="webhookForm" class="form-grid compact-form">
-                <label class="field" for="webhookRepo"><span>Repo</span><input id="webhookRepo" value="source" placeholder="source" /></label>
-                <label class="field" for="webhookBranch"><span>Branch</span><input id="webhookBranch" value="main" placeholder="main" /></label>
-                <label class="field" for="webhookRef"><span>Ref</span><input id="webhookRef" value="refs/heads/main" placeholder="refs/heads/main" /></label>
-                <label class="field" for="webhookCommit"><span>Commit (optional)</span><input id="webhookCommit" placeholder="abc123def456" /></label>
-                <button type="submit" class="btn btn-subtle field-full">Trigger CI operation</button>
+                <button id="openPromotionModalBtn" type="submit" class="btn btn-primary field-full">Review move</button>
               </form>
             </article>
           </section>
@@ -150,54 +162,52 @@
           <section class="runtime-grid">
             <article class="panel operations-panel">
               <div class="panel-head">
-                <h2>Operation timeline</h2>
-                <p class="helper-text">Live progress and recovery hints</p>
+                <h2>Recent activity</h2>
+                <p class="helper-text">Live progress for the selected app</p>
               </div>
               <div id="opProgress"></div>
               <div id="opErrorSurface"></div>
               <div id="opTimeline" class="timeline"></div>
               <div class="history-wrap">
-                <h3>Recent operation history</h3>
+                <h3>Activity history</h3>
                 <div id="opHistory" class="history-list"></div>
               </div>
               <details id="opRawWrap" class="raw-details">
-                <summary>Last operation payload</summary>
+                <summary>Show raw activity payload</summary>
                 <pre id="lastOp" class="codeblock"></pre>
               </details>
             </article>
 
             <article class="panel artifacts-panel">
               <div class="panel-head">
-                <h2>Artifacts</h2>
-                <p id="artifactStats" class="helper-text">Artifacts not loaded</p>
+                <h2>Outputs and logs</h2>
+                <p id="artifactStats" class="helper-text">Outputs not loaded</p>
               </div>
               <label class="field compact" for="artifactSearch">
-                <span>Filter artifacts</span>
+                <span>Filter outputs</span>
                 <input id="artifactSearch" placeholder="deploy/dev, promotions/dev-to-staging, releases/stage-to-prod, repos/..." />
               </label>
-              <div id="buildkitSignal" class="buildkit-signal muted">Build metadata unavailable until artifacts are loaded.</div>
+              <div id="buildkitSignal" class="buildkit-signal muted">Output insight unavailable until outputs are loaded.</div>
               <div id="artifactQuickLinks" class="quick-links"></div>
               <div id="artifacts" class="artifact-list"></div>
               <div class="preview-head">
                 <p id="artifactPreviewMeta" class="helper-text">Preview unavailable</p>
                 <button id="copyPreviewBtn" type="button" class="btn btn-subtle" disabled>Copy preview</button>
               </div>
-              <pre id="artifactPreview" class="codeblock muted">Select an artifact to preview.</pre>
+              <pre id="artifactPreview" class="codeblock muted">Select an output to preview.</pre>
             </article>
           </section>
         </section>
       </main>
 
-      <footer class="footer-note">
-        Keyboard: <code>/</code> focus project search, <code>r</code> refresh, <code>a</code> load artifacts, <code>esc</code> close dialog.
-      </footer>
+      <footer class="footer-note">Keyboard: <code>/</code> search apps, <code>r</code> refresh, <code>a</code> refresh outputs, <code>esc</code> close dialog.</footer>
     </div>
 
     <div id="createModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
       <button class="modal-backdrop" data-modal-close="create" aria-label="Close create dialog"></button>
       <section class="modal-card" aria-label="Create project dialog">
         <header class="modal-header">
-          <h2 id="createModalTitle">Register project</h2>
+          <h2 id="createModalTitle">Create app</h2>
           <button id="createModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
         </header>
 
@@ -205,7 +215,7 @@
           <input id="createAPIVersion" type="hidden" value="platform.example.com/v2" />
           <input id="createKind" type="hidden" value="App" />
 
-          <label class="field" for="createName"><span>Project name</span><input id="createName" required placeholder="my-service" /></label>
+          <label class="field" for="createName"><span>App name</span><input id="createName" required placeholder="my-service" /></label>
           <label class="field" for="createRuntime">
             <span>Runtime profile</span>
             <select id="createRuntime" required></select>
@@ -215,8 +225,8 @@
           <div class="field-full env-builder">
             <div class="env-builder-head">
               <div>
-                <p class="env-builder-title">Environment config</p>
-                <p class="helper-text">Add every environment you intend to deploy or promote across.</p>
+                <p class="env-builder-title">Environment setup</p>
+                <p class="helper-text">Add each environment this app should move through.</p>
               </div>
               <div class="env-builder-actions">
                 <button id="createCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
@@ -248,7 +258,7 @@
 
           <div class="modal-actions field-full">
             <button id="createModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
-            <button type="submit" class="btn btn-primary">Register project</button>
+            <button type="submit" class="btn btn-primary">Create app</button>
           </div>
         </form>
       </section>
@@ -258,7 +268,7 @@
       <button class="modal-backdrop" data-modal-close="update" aria-label="Close update dialog"></button>
       <section class="modal-card" aria-label="Update project dialog">
         <header class="modal-header">
-          <h2 id="updateModalTitle">Update project</h2>
+          <h2 id="updateModalTitle">Edit app setup</h2>
           <button id="updateModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
         </header>
 
@@ -266,7 +276,7 @@
           <input id="updateAPIVersion" type="hidden" value="platform.example.com/v2" />
           <input id="updateKind" type="hidden" value="App" />
 
-          <label class="field" for="updateName"><span>Project name</span><input id="updateName" required /></label>
+          <label class="field" for="updateName"><span>App name</span><input id="updateName" required /></label>
           <label class="field" for="updateRuntime">
             <span>Runtime profile</span>
             <select id="updateRuntime" required></select>
@@ -276,8 +286,8 @@
           <div class="field-full env-builder">
             <div class="env-builder-head">
               <div>
-                <p class="env-builder-title">Environment config</p>
-                <p class="helper-text">Keep environments explicit so promotion and release validation stays safe.</p>
+                <p class="env-builder-title">Environment setup</p>
+                <p class="helper-text">Keep environments explicit so delivery transitions stay safe.</p>
               </div>
               <div class="env-builder-actions">
                 <button id="updateCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
@@ -309,7 +319,7 @@
 
           <div class="modal-actions field-full">
             <button id="updateModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
-            <button type="submit" class="btn btn-primary">Apply update</button>
+            <button type="submit" class="btn btn-primary">Save changes</button>
           </div>
         </form>
       </section>
@@ -319,24 +329,24 @@
       <button class="modal-backdrop" data-modal-close="delete" aria-label="Close delete dialog"></button>
       <section class="modal-card modal-card-danger" aria-label="Delete project dialog">
         <header class="modal-header">
-          <h2 id="deleteModalTitle">Delete project</h2>
+          <h2 id="deleteModalTitle">Delete app</h2>
           <button id="deleteModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
         </header>
 
         <div class="delete-warning">
-          <p class="delete-warning-title">This action deletes project records and local artifacts.</p>
+          <p class="delete-warning-title">This permanently deletes the app record and its local outputs.</p>
           <p id="deleteModalTarget" class="delete-target"></p>
         </div>
 
         <form id="deleteConfirmForm" class="form-grid modal-form">
           <label class="field field-full" for="deleteConfirmInput">
-            <span>Type the project name to confirm</span>
+            <span>Type the app name to confirm</span>
             <input id="deleteConfirmInput" autocomplete="off" />
           </label>
           <p id="deleteConfirmHint" class="helper-text field-full"></p>
           <div class="modal-actions field-full">
             <button id="deleteModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
-            <button id="deleteConfirmBtn" type="submit" class="btn btn-danger" disabled>Delete project permanently</button>
+            <button id="deleteConfirmBtn" type="submit" class="btn btn-danger" disabled>Delete app permanently</button>
           </div>
         </form>
       </section>
@@ -346,12 +356,12 @@
       <button class="modal-backdrop" data-modal-close="promotion" aria-label="Close transition dialog"></button>
       <section class="modal-card modal-card-warning" aria-label="Transition confirmation dialog">
         <header class="modal-header">
-          <h2 id="promotionModalTitle">Confirm transition</h2>
+          <h2 id="promotionModalTitle">Confirm environment move</h2>
           <button id="promotionModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
         </header>
 
         <div class="promotion-warning">
-          <p class="promotion-warning-title">Review source, target, and image provenance before continuing.</p>
+          <p class="promotion-warning-title">Review source, target, and image before continuing.</p>
           <div id="promotionSummary" class="promotion-summary"></div>
         </div>
 
@@ -363,7 +373,7 @@
           <p id="promotionConfirmHint" class="helper-text field-full"></p>
           <div class="modal-actions field-full">
             <button id="promotionModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
-            <button id="promotionConfirmBtn" type="submit" class="btn btn-primary" disabled>Confirm transition</button>
+            <button id="promotionConfirmBtn" type="submit" class="btn btn-primary" disabled>Confirm move</button>
           </div>
         </form>
       </section>

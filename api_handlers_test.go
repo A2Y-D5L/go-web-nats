@@ -133,3 +133,27 @@ func TestAPI_HandleProjectArtifactsInvalidRouteReturnsNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
+
+func TestAPI_HandleProjectByIDJourneyRejectsUnsupportedMethod(t *testing.T) {
+	api := platform.NewTestAPI(newMemArtifacts())
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/p1/journey", nil)
+	rec := httptest.NewRecorder()
+
+	platform.InvokeHandleProjectByIDForTest(api, rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPI_HandleProjectByIDJourneyReportsUnavailableWhenStoreMissing(t *testing.T) {
+	api := platform.NewTestAPI(newMemArtifacts())
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/p1/journey", nil)
+	rec := httptest.NewRecorder()
+
+	platform.InvokeHandleProjectByIDForTest(api, rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
