@@ -319,9 +319,29 @@ function duration(start, end) {
 
 function statusToneFromError(error) {
   const msg = String(error?.message || error || "").toLowerCase();
+  if (error?.status === 409 || msg.includes("409")) return "warning";
   if (msg.includes("ignored")) return "warning";
   if (msg.includes("not found") || msg.includes("400")) return "warning";
   return "error";
+}
+
+function statusMessageFromError(error) {
+  const status = Number(error?.status || 0);
+  const payload = error?.payload;
+  if (status === 409) {
+    const activeOp = payload?.active_op || {};
+    const activeID = String(activeOp.id || "").trim();
+    const activeKind = String(activeOp.kind || "operation").trim();
+    const activeStatus = String(activeOp.status || "running").trim();
+    const activeSummary = activeID
+      ? `${activeKind} ${activeID.slice(0, 8)} (${activeStatus})`
+      : `${activeKind} (${activeStatus})`;
+    return `Another operation is already active for this app (${activeSummary}). Wait for it to finish, then retry.`;
+  }
+
+  const userMessage = String(error?.userMessage || "").trim();
+  if (userMessage) return userMessage;
+  return String(error?.message || error || "Request failed");
 }
 
 function makeElem(tag, className, text) {

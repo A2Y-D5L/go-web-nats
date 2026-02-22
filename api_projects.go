@@ -147,26 +147,19 @@ func (a *API) handleProjectUpdateByID(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
-	project, ok := a.getProjectOrWriteError(w, r, projectID)
-	if !ok {
-		return
-	}
-	project.Spec = spec
-	project.Status.Phase = "Reconciling"
-	project.Status.Message = "queued update"
-	project.Status.UpdatedAt = time.Now().UTC()
-	putErr := a.store.PutProject(r.Context(), project)
-	if putErr != nil {
-		http.Error(w, "failed to persist project", http.StatusInternalServerError)
+	if _, ok := a.getProjectOrWriteError(w, r, projectID); !ok {
 		return
 	}
 
 	op, err := a.enqueueOp(r.Context(), OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
+		if writeProjectOpConflict(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	project, _ = a.store.GetProject(r.Context(), projectID)
+	project, _ := a.store.GetProject(r.Context(), projectID)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted": true,
 		"project":  project,
@@ -175,14 +168,9 @@ func (a *API) handleProjectUpdateByID(w http.ResponseWriter, r *http.Request, pr
 }
 
 func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, projectID string) {
-	project, ok := a.getProjectOrWriteError(w, r, projectID)
-	if !ok {
+	if _, ok := a.getProjectOrWriteError(w, r, projectID); !ok {
 		return
 	}
-	project.Status.Phase = projectPhaseDel
-	project.Status.Message = statusMessageDelQueue
-	project.Status.UpdatedAt = time.Now().UTC()
-	_ = a.store.PutProject(r.Context(), project)
 
 	op, err := a.enqueueOp(
 		r.Context(),
@@ -192,6 +180,9 @@ func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, pr
 		emptyOpRunOptions(),
 	)
 	if err != nil {
+		if writeProjectOpConflict(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

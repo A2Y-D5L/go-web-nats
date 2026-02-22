@@ -517,7 +517,7 @@ async function handleCreateSubmit(event) {
     closeModal("create");
     setStatus("App creation accepted.", "success", { toast: true });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 
@@ -553,7 +553,7 @@ async function handleUpdateSubmit(event) {
     closeModal("update");
     setStatus("App update accepted.", "success", { toast: true });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 
@@ -584,7 +584,7 @@ async function handleWebhookSubmit(event) {
     await refreshProjects({ silent: true, preserveSelection: true });
     setStatus("Build run accepted.", "success", { toast: true });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 
@@ -616,7 +616,7 @@ async function handleDeployDevClick() {
     await refreshProjects({ silent: true, preserveSelection: true });
     setStatus("Dev delivery accepted.", "success", { toast: true });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 
@@ -670,7 +670,7 @@ async function handlePromotionConfirmSubmit(event) {
     await refreshProjects({ silent: true, preserveSelection: true });
     setStatus(`${actionLabel} ${fromEnv} -> ${toEnv} accepted.`, "success", { toast: true });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 
@@ -707,7 +707,7 @@ async function handleDeleteConfirmSubmit(event) {
     await refreshProjects({ silent: true, preserveSelection: true });
     setStatus("App deletion accepted.", "success", { toast: true });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 
@@ -723,7 +723,7 @@ async function handleLoadArtifactsClick() {
   try {
     await loadArtifacts({ silent: false });
   } catch (error) {
-    setStatus(error.message, statusToneFromError(error), { toast: true });
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }
 

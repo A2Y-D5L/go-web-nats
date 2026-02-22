@@ -23,6 +23,8 @@ func NewTestAPI(artifacts ArtifactStore) *API {
 		opEvents:            nil,
 		opHeartbeatInterval: 0,
 		sourceTriggerMu:     sync.Mutex{},
+		projectStartLocksMu: sync.Mutex{},
+		projectStartLocks:   map[string]*sync.Mutex{},
 	}
 }
 

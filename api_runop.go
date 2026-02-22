@@ -3,8 +3,14 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 type opRunOptions struct {
@@ -26,6 +32,25 @@ func emptyOpRunOptions() opRunOptions {
 			ToEnv:       "",
 		},
 	}
+}
+
+type projectOpConflictError struct {
+	ProjectID     string
+	RequestedKind OperationKind
+	ActiveOp      Operation
+}
+
+func (e projectOpConflictError) Error() string {
+	activeID := strings.TrimSpace(e.ActiveOp.ID)
+	if activeID == "" {
+		activeID = "unknown"
+	}
+	return fmt.Sprintf(
+		"project already has an active operation (%s %s, status %s); wait for it to finish and retry",
+		e.ActiveOp.Kind,
+		activeID,
+		e.ActiveOp.Status,
+	)
 }
 
 func deployOpRunOptions(env string) opRunOptions {
@@ -63,6 +88,15 @@ func (a *API) enqueueOp(
 	spec ProjectSpec,
 	opts opRunOptions,
 ) (Operation, error) {
+	projectMu := a.projectStartLock(projectID)
+	projectMu.Lock()
+	defer projectMu.Unlock()
+
+	conflictErr := a.projectOperationConflict(ctx, projectID, kind)
+	if conflictErr != nil {
+		return Operation{}, conflictErr
+	}
+
 	apiLog := appLoggerForProcess().Source("api")
 	opID := newID()
 	now := time.Now().UTC()
@@ -83,9 +117,7 @@ func (a *API) enqueueOp(
 	}
 	apiLog.Infof("queued op=%s kind=%s project=%s", opID, kind, projectID)
 
-	if kind != OpDelete {
-		a.setQueuedProjectStatus(ctx, opID, kind, projectID, spec, now)
-	}
+	a.setQueuedProjectStatus(ctx, opID, kind, projectID, spec, now)
 
 	emitOpBootstrap(a.opEvents, op, "operation accepted and queued")
 	emitOpStatus(a.opEvents, op, "queued")
@@ -104,6 +136,93 @@ func (a *API) enqueueOp(
 	return op, nil
 }
 
+func (a *API) projectStartLock(projectID string) *sync.Mutex {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return &sync.Mutex{}
+	}
+	a.projectStartLocksMu.Lock()
+	defer a.projectStartLocksMu.Unlock()
+
+	if a.projectStartLocks == nil {
+		a.projectStartLocks = map[string]*sync.Mutex{}
+	}
+	projectMu, ok := a.projectStartLocks[projectID]
+	if ok {
+		return projectMu
+	}
+	projectMu = &sync.Mutex{}
+	a.projectStartLocks[projectID] = projectMu
+	return projectMu
+}
+
+func (a *API) projectOperationConflict(
+	ctx context.Context,
+	projectID string,
+	kind OperationKind,
+) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil
+	}
+	project, err := a.store.GetProject(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return nil
+		}
+		return fmt.Errorf("read project operation status: %w", err)
+	}
+
+	activeOpID := strings.TrimSpace(project.Status.LastOpID)
+	if activeOpID == "" {
+		return nil
+	}
+	activeOp, err := a.store.GetOp(ctx, activeOpID)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return nil
+		}
+		return fmt.Errorf("read active operation: %w", err)
+	}
+	if !isOperationStatusActive(activeOp.Status) {
+		return nil
+	}
+	return projectOpConflictError{
+		ProjectID:     projectID,
+		RequestedKind: kind,
+		ActiveOp:      activeOp,
+	}
+}
+
+func isOperationStatusActive(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case statusMessageQueued, opStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+func writeProjectOpConflict(w http.ResponseWriter, err error) bool {
+	var conflictErr projectOpConflictError
+	if !errors.As(err, &conflictErr) {
+		return false
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"accepted":       false,
+		"reason":         conflictErr.Error(),
+		"project_id":     conflictErr.ProjectID,
+		"requested_kind": conflictErr.RequestedKind,
+		"active_op": map[string]any{
+			"id":     conflictErr.ActiveOp.ID,
+			"kind":   conflictErr.ActiveOp.Kind,
+			"status": conflictErr.ActiveOp.Status,
+		},
+		"next_step": "wait for the active operation to reach done or error, then retry",
+	})
+	return true
+}
+
 func (a *API) setQueuedProjectStatus(
 	ctx context.Context,
 	opID string,
@@ -116,9 +235,15 @@ func (a *API) setQueuedProjectStatus(
 	if err != nil {
 		return
 	}
-	project.Spec = spec
+	phase := "Reconciling"
+	if kind == OpDelete {
+		phase = projectPhaseDel
+	}
+	if kind != OpDelete {
+		project.Spec = spec
+	}
 	project.Status = ProjectStatus{
-		Phase:      "Reconciling",
+		Phase:      phase,
 		UpdatedAt:  now,
 		LastOpID:   opID,
 		LastOpKind: string(kind),

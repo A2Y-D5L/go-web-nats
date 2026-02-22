@@ -116,7 +116,14 @@ async function requestAPI(method, url, body) {
 
   if (!response.ok) {
     const text = typeof payload === "string" ? payload : pretty(payload);
-    throw new Error(`${method} ${url} -> ${response.status}: ${text}`);
+    const err = new Error(`${method} ${url} -> ${response.status}: ${text}`);
+    err.status = response.status;
+    err.payload = payload;
+    err.userMessage =
+      typeof payload === "string"
+        ? payload
+        : String(payload?.reason || payload?.message || text);
+    throw err;
   }
 
   return payload;

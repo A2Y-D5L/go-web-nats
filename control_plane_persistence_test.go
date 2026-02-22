@@ -284,6 +284,8 @@ func TestOpEventsBootstrapRebuildsSnapshotAfterRestartWithoutHistory(t *testing.
 		opEvents:            hub,
 		opHeartbeatInterval: 5 * time.Second,
 		sourceTriggerMu:     sync.Mutex{},
+		projectStartLocksMu: sync.Mutex{},
+		projectStartLocks:   map[string]*sync.Mutex{},
 	}
 
 	srv := httptest.NewServer(api.routes())

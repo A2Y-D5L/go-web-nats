@@ -63,6 +63,21 @@ Success (`delete`) response:
 }
 ```
 
+Conflict (`create`/`update`/`delete`/any project op trigger while the same project has a queued or running op):
+
+- Status: `409 Conflict`
+
+```json
+{
+  "accepted": false,
+  "reason": "project already has an active operation (...)",
+  "project_id": "project-id",
+  "requested_kind": "create | update | delete | ci | deploy | promote | release",
+  "active_op": { "id": "op-id", "kind": "deploy", "status": "running" },
+  "next_step": "wait for the active operation to reach done or error, then retry"
+}
+```
+
 ## Source Webhooks
 
 Endpoint:
@@ -118,6 +133,21 @@ Ignored response:
 }
 ```
 
+Conflict response (project has a queued/running operation):
+
+- Status: `409 Conflict`
+
+```json
+{
+  "accepted": false,
+  "reason": "project already has an active operation (...)",
+  "project_id": "project-id",
+  "requested_kind": "ci",
+  "active_op": { "id": "op-id", "kind": "deploy", "status": "running" },
+  "next_step": "wait for the active operation to reach done or error, then retry"
+}
+```
+
 ## Deployment Events
 
 Endpoint:
@@ -150,6 +180,11 @@ Success response:
   "op": {}
 }
 ```
+
+Conflict response (project has a queued/running operation):
+
+- Status: `409 Conflict`
+- Body uses the same shape as the conflict response above.
 
 ## Promotion Events
 
@@ -186,6 +221,11 @@ Success response:
 }
 ```
 
+Conflict response (project has a queued/running operation):
+
+- Status: `409 Conflict`
+- Body uses the same shape as the conflict response above.
+
 ## Release Events
 
 Endpoint:
@@ -220,6 +260,11 @@ Success response:
   "op": {}
 }
 ```
+
+Conflict response (project has a queued/running operation):
+
+- Status: `409 Conflict`
+- Body uses the same shape as the conflict response above.
 
 ## Projects
 

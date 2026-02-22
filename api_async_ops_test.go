@@ -84,6 +84,8 @@ func newAsyncAPIFixture(t *testing.T, heartbeat time.Duration) *asyncAPIFixture 
 		opEvents:            hub,
 		opHeartbeatInterval: heartbeat,
 		sourceTriggerMu:     sync.Mutex{},
+		projectStartLocksMu: sync.Mutex{},
+		projectStartLocks:   map[string]*sync.Mutex{},
 	}
 
 	cleanup := func() {
@@ -128,6 +130,67 @@ func testProjectSpec(name string) ProjectSpec {
 			Egress:  networkPolicyInternal,
 		},
 	})
+}
+
+func putProjectFixture(
+	t *testing.T,
+	fixture *asyncAPIFixture,
+	projectID string,
+	spec ProjectSpec,
+	lastOpID string,
+	lastOpKind OperationKind,
+) {
+	t.Helper()
+	now := time.Now().UTC()
+	project := Project{
+		ID:        projectID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Spec:      spec,
+		Status: ProjectStatus{
+			Phase:      "Reconciling",
+			UpdatedAt:  now,
+			LastOpID:   lastOpID,
+			LastOpKind: string(lastOpKind),
+			Message:    "running",
+		},
+	}
+	if err := fixture.api.store.PutProject(context.Background(), project); err != nil {
+		t.Fatalf("put project fixture: %v", err)
+	}
+}
+
+func putOpFixture(
+	t *testing.T,
+	fixture *asyncAPIFixture,
+	opID string,
+	projectID string,
+	kind OperationKind,
+	status string,
+) {
+	t.Helper()
+	op := Operation{
+		ID:        opID,
+		Kind:      kind,
+		ProjectID: projectID,
+		Delivery: DeliveryLifecycle{
+			Stage:       "",
+			Environment: "",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+		Requested: time.Now().UTC(),
+		Finished:  time.Time{},
+		Status:    status,
+		Error:     "",
+		Steps:     []OpStep{},
+	}
+	if status == opStatusDone || status == opStatusError {
+		op.Finished = time.Now().UTC()
+	}
+	if err := fixture.api.store.PutOp(context.Background(), op); err != nil {
+		t.Fatalf("put op fixture: %v", err)
+	}
 }
 
 func TestAPI_RegistrationCreateReturnsAcceptedAndQueuedOp(t *testing.T) {
@@ -357,5 +420,186 @@ func TestAPI_OpEventsStreamsBootstrapStepAndHeartbeat(t *testing.T) {
 	heartbeat := waitForSSEEvent(t, events, errCh, opEventHeartbeat, 2*time.Second)
 	if heartbeat.id != "" {
 		t.Fatalf("expected heartbeat protocol id to be omitted, got %q", heartbeat.id)
+	}
+}
+
+func TestAPI_RegistrationUpdateRejectsWhenProjectHasActiveOperation(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, opEventsHeartbeatInterval)
+	defer fixture.Close()
+
+	projectID := "project-ops-conflict-update"
+	activeOpID := "op-running-update"
+	initialSpec := testProjectSpec("update-conflict-original")
+	putProjectFixture(t, fixture, projectID, initialSpec, activeOpID, OpDeploy)
+	putOpFixture(t, fixture, activeOpID, projectID, OpDeploy, opStatusRunning)
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	body, err := json.Marshal(map[string]any{
+		"action":     "update",
+		"project_id": projectID,
+		"spec":       testProjectSpec("update-conflict-next"),
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	resp, err := http.Post(srv.URL+"/api/events/registration", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request registration update: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 409 conflict, got %d body=%q", resp.StatusCode, string(payload))
+	}
+
+	var out struct {
+		Accepted bool   `json:"accepted"`
+		Reason   string `json:"reason"`
+		ActiveOp struct {
+			ID     string `json:"id"`
+			Kind   string `json:"kind"`
+			Status string `json:"status"`
+		} `json:"active_op"`
+	}
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&out); decodeErr != nil {
+		t.Fatalf("decode conflict response: %v", decodeErr)
+	}
+	if out.Accepted {
+		t.Fatal("expected accepted=false on conflict response")
+	}
+	if !strings.Contains(strings.ToLower(out.Reason), "active operation") {
+		t.Fatalf("expected conflict reason to mention active operation, got %q", out.Reason)
+	}
+	if out.ActiveOp.ID != activeOpID {
+		t.Fatalf("expected active op id %q, got %q", activeOpID, out.ActiveOp.ID)
+	}
+
+	storedProject, err := fixture.api.store.GetProject(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("read project after rejected update: %v", err)
+	}
+	if storedProject.Spec.Name != initialSpec.Name {
+		t.Fatalf("expected project spec to remain %q, got %q", initialSpec.Name, storedProject.Spec.Name)
+	}
+}
+
+func TestAPI_SourceWebhookConflictRollsBackPendingCommitAndAllowsRetry(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, opEventsHeartbeatInterval)
+	defer fixture.Close()
+
+	projectID := "project-ops-conflict-webhook"
+	activeOpID := "op-running-webhook"
+	spec := testProjectSpec("webhook-conflict")
+	putProjectFixture(t, fixture, projectID, spec, activeOpID, OpDeploy)
+	putOpFixture(t, fixture, activeOpID, projectID, OpDeploy, opStatusRunning)
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	webhookPayload, err := json.Marshal(map[string]any{
+		"project_id": projectID,
+		"repo":       "source",
+		"branch":     "main",
+		"commit":     "abc123",
+	})
+	if err != nil {
+		t.Fatalf("marshal webhook payload: %v", err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/webhooks/source", "application/json", bytes.NewReader(webhookPayload))
+	if err != nil {
+		t.Fatalf("send webhook conflict request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 409 conflict, got %d body=%q", resp.StatusCode, string(payload))
+	}
+
+	putOpFixture(t, fixture, activeOpID, projectID, OpDeploy, opStatusDone)
+
+	retryResp, err := http.Post(srv.URL+"/api/webhooks/source", "application/json", bytes.NewReader(webhookPayload))
+	if err != nil {
+		t.Fatalf("send webhook retry request: %v", err)
+	}
+	defer retryResp.Body.Close()
+	if retryResp.StatusCode != http.StatusAccepted {
+		payload, _ := io.ReadAll(retryResp.Body)
+		t.Fatalf("expected 202 accepted for retry, got %d body=%q", retryResp.StatusCode, string(payload))
+	}
+
+	var out struct {
+		Accepted bool       `json:"accepted"`
+		Reason   string     `json:"reason"`
+		Op       *Operation `json:"op"`
+	}
+	if decodeErr := json.NewDecoder(retryResp.Body).Decode(&out); decodeErr != nil {
+		t.Fatalf("decode webhook retry response: %v", decodeErr)
+	}
+	if !out.Accepted {
+		t.Fatalf("expected accepted=true on retry, got reason=%q", out.Reason)
+	}
+	if out.Op == nil || strings.TrimSpace(out.Op.ID) == "" {
+		t.Fatalf("expected op.id in retry response, got %#v", out.Op)
+	}
+}
+
+func TestAPI_DeploymentAllowsRetryAfterActiveOperationTerminal(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, opEventsHeartbeatInterval)
+	defer fixture.Close()
+
+	projectID := "project-ops-conflict-deploy"
+	activeOpID := "op-running-deploy"
+	spec := testProjectSpec("deploy-conflict")
+	putProjectFixture(t, fixture, projectID, spec, activeOpID, OpCI)
+	putOpFixture(t, fixture, activeOpID, projectID, OpCI, opStatusRunning)
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	body, err := json.Marshal(map[string]any{
+		"project_id":  projectID,
+		"environment": "dev",
+	})
+	if err != nil {
+		t.Fatalf("marshal deployment payload: %v", err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/events/deployment", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request deployment conflict: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 409 conflict, got %d body=%q", resp.StatusCode, string(payload))
+	}
+
+	putOpFixture(t, fixture, activeOpID, projectID, OpCI, opStatusDone)
+
+	retryResp, err := http.Post(srv.URL+"/api/events/deployment", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request deployment retry: %v", err)
+	}
+	defer retryResp.Body.Close()
+	if retryResp.StatusCode != http.StatusAccepted {
+		payload, _ := io.ReadAll(retryResp.Body)
+		t.Fatalf("expected 202 accepted, got %d body=%q", retryResp.StatusCode, string(payload))
+	}
+
+	var out struct {
+		Accepted bool       `json:"accepted"`
+		Op       *Operation `json:"op"`
+	}
+	if decodeErr := json.NewDecoder(retryResp.Body).Decode(&out); decodeErr != nil {
+		t.Fatalf("decode deployment retry response: %v", decodeErr)
+	}
+	if !out.Accepted {
+		t.Fatal("expected accepted=true for deployment retry")
+	}
+	if out.Op == nil || strings.TrimSpace(out.Op.ID) == "" {
+		t.Fatalf("expected op.id in deployment retry response, got %#v", out.Op)
 	}
 }

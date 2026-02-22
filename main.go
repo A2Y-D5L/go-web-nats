@@ -146,6 +146,8 @@ func newRuntimeAPI(
 		opEvents:            opEvents,
 		opHeartbeatInterval: opEventsHeartbeatInterval,
 		sourceTriggerMu:     sync.Mutex{},
+		projectStartLocksMu: sync.Mutex{},
+		projectStartLocks:   map[string]*sync.Mutex{},
 	}
 }
 

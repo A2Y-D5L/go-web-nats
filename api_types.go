@@ -19,6 +19,8 @@ type API struct {
 
 	opHeartbeatInterval time.Duration
 	sourceTriggerMu     sync.Mutex
+	projectStartLocksMu sync.Mutex
+	projectStartLocks   map[string]*sync.Mutex
 }
 
 func (a *API) routes() http.Handler {

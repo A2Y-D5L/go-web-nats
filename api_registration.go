@@ -44,8 +44,8 @@ func (a *API) createProjectFromSpec(
 	if err != nil {
 		return Project{}, Operation{}, err
 	}
-	p, _ = a.store.GetProject(ctx, projectID)
-	return p, op, nil
+	project, _ := a.store.GetProject(ctx, projectID)
+	return project, op, nil
 }
 
 func (a *API) updateProjectFromSpec(
@@ -58,39 +58,25 @@ func (a *API) updateProjectFromSpec(
 		return Project{}, Operation{}, err
 	}
 
-	p, err := a.store.GetProject(ctx, projectID)
-	if err != nil {
+	if _, err := a.store.GetProject(ctx, projectID); err != nil {
 		return Project{}, Operation{}, err
-	}
-	p.Spec = spec
-	p.Status.Phase = "Reconciling"
-	p.Status.Message = "queued update"
-	p.Status.UpdatedAt = time.Now().UTC()
-	putErr := a.store.PutProject(ctx, p)
-	if putErr != nil {
-		return Project{}, Operation{}, errors.New("failed to persist project")
 	}
 
 	op, err := a.enqueueOp(ctx, OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
 		return Project{}, Operation{}, err
 	}
-	p, _ = a.store.GetProject(ctx, projectID)
-	return p, op, nil
+	project, _ := a.store.GetProject(ctx, projectID)
+	return project, op, nil
 }
 
 func (a *API) deleteProject(
 	ctx context.Context,
 	projectID string,
 ) (Operation, error) {
-	p, err := a.store.GetProject(ctx, projectID)
-	if err != nil {
+	if _, err := a.store.GetProject(ctx, projectID); err != nil {
 		return Operation{}, err
 	}
-	p.Status.Phase = projectPhaseDel
-	p.Status.Message = statusMessageDelQueue
-	p.Status.UpdatedAt = time.Now().UTC()
-	_ = a.store.PutProject(ctx, p)
 
 	op, err := a.enqueueOp(ctx, OpDelete, projectID, zeroProjectSpec(), emptyOpRunOptions())
 	if err != nil {
@@ -186,6 +172,9 @@ func (a *API) handleRegistrationDelete(w http.ResponseWriter, r *http.Request, p
 }
 
 func writeRegistrationError(w http.ResponseWriter, err error) {
+	if writeProjectOpConflict(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, jetstream.ErrKeyNotFound):
 		http.Error(w, "not found", http.StatusNotFound)

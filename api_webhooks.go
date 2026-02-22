@@ -58,6 +58,9 @@ func (a *API) handleSourceRepoWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := a.triggerSourceRepoCI(r.Context(), evt, "source.main.webhook")
 	if err != nil {
+		if writeProjectOpConflict(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
