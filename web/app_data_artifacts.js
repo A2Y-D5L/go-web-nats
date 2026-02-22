@@ -78,6 +78,12 @@ function resetArtifacts() {
   state.artifacts.envSnapshots = {};
   state.artifacts.transitionEdges = [];
   state.artifacts.textCache = {};
+  state.artifacts.builderRequestedMode = "";
+  state.artifacts.builderEffectiveMode = "";
+  state.artifacts.builderFallbackReason = "";
+  state.artifacts.builderPolicyError = "";
+  state.artifacts.builderModeWarning = "";
+  state.artifacts.builderModeExplicit = false;
   dom.inputs.artifactSearch.value = "";
 }
 
@@ -192,6 +198,36 @@ async function buildEnvironmentSnapshots() {
     state.artifacts.buildImageTag = String((await readArtifactText(buildImagePath)) || "").trim();
   } else {
     state.artifacts.buildImageTag = "";
+  }
+
+  const publishPath = "build/publish-local-daemon.json";
+  if (fileSet.has(publishPath)) {
+    try {
+      const publishRaw = await readArtifactText(publishPath);
+      const publish = JSON.parse(String(publishRaw || "{}"));
+      state.artifacts.builderRequestedMode = String(publish.requested_builder_mode || "").trim();
+      state.artifacts.builderEffectiveMode = String(
+        publish.effective_builder_mode || publish.builder_mode || ""
+      ).trim();
+      state.artifacts.builderFallbackReason = String(publish.builder_mode_fallback_reason || "").trim();
+      state.artifacts.builderPolicyError = String(publish.builder_mode_policy_error || "").trim();
+      state.artifacts.builderModeWarning = String(publish.builder_mode_warning || "").trim();
+      state.artifacts.builderModeExplicit = Boolean(publish.builder_mode_explicit);
+    } catch (_error) {
+      state.artifacts.builderRequestedMode = "";
+      state.artifacts.builderEffectiveMode = "";
+      state.artifacts.builderFallbackReason = "";
+      state.artifacts.builderPolicyError = "";
+      state.artifacts.builderModeWarning = "";
+      state.artifacts.builderModeExplicit = false;
+    }
+  } else {
+    state.artifacts.builderRequestedMode = "";
+    state.artifacts.builderEffectiveMode = "";
+    state.artifacts.builderFallbackReason = "";
+    state.artifacts.builderPolicyError = "";
+    state.artifacts.builderModeWarning = "";
+    state.artifacts.builderModeExplicit = false;
   }
 
   const transitionEdges = parseTransitionEdges(state.artifacts.files);

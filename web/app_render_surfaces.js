@@ -121,16 +121,44 @@ function renderBuildKitSignal() {
     return;
   }
 
+  const requestedMode = state.artifacts.builderRequestedMode || "";
+  const effectiveMode = state.artifacts.builderEffectiveMode || "";
+  const modeFallbackReason = state.artifacts.builderFallbackReason || "";
+  const modePolicyError = state.artifacts.builderPolicyError || "";
+  const modeWarning = state.artifacts.builderModeWarning || "";
+  const modeContext = [];
+  if (requestedMode) modeContext.push(`requested ${requestedMode}`);
+  if (effectiveMode) modeContext.push(`effective ${effectiveMode}`);
+  if (state.artifacts.builderModeExplicit) modeContext.push("explicit request");
+  if (modeFallbackReason) modeContext.push(`fallback ${modeFallbackReason}`);
+  if (modeWarning) modeContext.push(`warning ${modeWarning}`);
+  if (modePolicyError) modeContext.push(`policy ${modePolicyError}`);
+  if (effectiveMode === "artifact") {
+    signal.className = "buildkit-signal muted";
+    signal.textContent = modeContext.length
+      ? `Builder mode context: ${modeContext.join(" • ")}`
+      : "Builder mode context is unavailable.";
+    return;
+  }
+
   const present = [...buildKitArtifactSet].filter((file) => state.artifacts.files.includes(file));
   if (present.length === buildKitArtifactSet.size) {
     signal.className = "buildkit-signal present";
-    signal.textContent = "Detailed build evidence is present (summary, metadata, and log).";
+    if (modeContext.length) {
+      signal.textContent = `Detailed build evidence is present. ${modeContext.join(" • ")}`;
+    } else {
+      signal.textContent = "Detailed build evidence is present (summary, metadata, and log).";
+    }
     return;
   }
 
   const missing = [...buildKitArtifactSet].filter((file) => !state.artifacts.files.includes(file));
   signal.className = "buildkit-signal missing";
-  signal.textContent = `Some detailed build evidence is missing: ${missing.join(", ")}`;
+  if (modeContext.length) {
+    signal.textContent = `Some detailed build evidence is missing: ${missing.join(", ")}. ${modeContext.join(" • ")}`;
+  } else {
+    signal.textContent = `Some detailed build evidence is missing: ${missing.join(", ")}`;
+  }
 }
 
 function renderArtifactQuickLinks() {

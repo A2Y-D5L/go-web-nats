@@ -31,9 +31,13 @@ func newWorkerBase(
 }
 
 type (
-	RegistrationWorker     struct{ WorkerBase }
-	RepoBootstrapWorker    struct{ WorkerBase }
-	ImageBuilderWorker     struct{ WorkerBase }
+	RegistrationWorker  struct{ WorkerBase }
+	RepoBootstrapWorker struct{ WorkerBase }
+	ImageBuilderWorker  struct {
+		WorkerBase
+
+		modeResolution imageBuilderModeResolution
+	}
 	ManifestRendererWorker struct{ WorkerBase }
 	DeploymentWorker       struct{ WorkerBase }
 	PromotionWorker        struct{ WorkerBase }
@@ -77,6 +81,7 @@ func NewImageBuilderWorker(
 	natsURL string,
 	artifacts ArtifactStore,
 	opEvents *opEventHub,
+	modeResolution imageBuilderModeResolution,
 ) *ImageBuilderWorker {
 	return &ImageBuilderWorker{
 		WorkerBase: newWorkerBase(
@@ -87,6 +92,7 @@ func NewImageBuilderWorker(
 			artifacts,
 			opEvents,
 		),
+		modeResolution: modeResolution,
 	}
 }
 
@@ -176,7 +182,20 @@ func (w *ImageBuilderWorker) Start(ctx context.Context) error {
 		w.subjectOut,
 		w.artifacts,
 		w.opEvents,
-		imageBuilderWorkerAction,
+		func(
+			actionCtx context.Context,
+			store *Store,
+			artifacts ArtifactStore,
+			msg ProjectOpMsg,
+		) (WorkerResultMsg, error) {
+			return imageBuilderWorkerActionWithMode(
+				actionCtx,
+				store,
+				artifacts,
+				msg,
+				w.modeResolution,
+			)
+		},
 	)
 }
 

@@ -19,11 +19,12 @@ const (
 	buildKitArtifactsCount   = 3
 )
 
-func imageBuilderWorkerAction(
+func imageBuilderWorkerActionWithMode(
 	ctx context.Context,
 	store *Store,
 	artifacts ArtifactStore,
 	msg ProjectOpMsg,
+	modeResolution imageBuilderModeResolution,
 ) (WorkerResultMsg, error) {
 	stepStart := time.Now().UTC()
 	res := newWorkerResultMsg("image builder worker starting")
@@ -33,7 +34,7 @@ func imageBuilderWorkerAction(
 		msg.OpID,
 		"imageBuilder",
 		stepStart,
-		"build and publish image to local daemon",
+		imageBuilderStepStartMessage(modeResolution),
 	)
 
 	spec := normalizeProjectSpec(msg.Spec)
@@ -43,7 +44,7 @@ func imageBuilderWorkerAction(
 
 	switch msg.Kind {
 	case OpCreate, OpUpdate, OpCI:
-		outcome, err = runImageBuilderBuild(ctx, artifacts, msg, spec, imageTag)
+		outcome, err = runImageBuilderBuildWithMode(ctx, artifacts, msg, spec, imageTag, modeResolution)
 	case OpDelete:
 		outcome, err = runImageBuilderDelete(artifacts, msg.ProjectID, msg.OpID)
 	case OpDeploy, OpPromote, OpRelease:
@@ -90,13 +91,38 @@ func runImageBuilderBuild(
 	spec ProjectSpec,
 	imageTag string,
 ) (repoBootstrapOutcome, error) {
+	return runImageBuilderBuildWithMode(
+		ctx,
+		artifacts,
+		msg,
+		spec,
+		imageTag,
+		resolveEffectiveImageBuilderMode(ctx),
+	)
+}
+
+func runImageBuilderBuildWithMode(
+	ctx context.Context,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	spec ProjectSpec,
+	imageTag string,
+	modeResolution imageBuilderModeResolution,
+) (repoBootstrapOutcome, error) {
 	dockerfileBody := renderImageBuilderDockerfile(spec)
 	dockerfilePath, err := artifacts.WriteFile(msg.ProjectID, imageBuildDockerfilePath, dockerfileBody)
 	if err != nil {
 		return newRepoBootstrapOutcome(), err
 	}
 
-	mode, modeErr := imageBuilderModeFromEnv()
+	if modeResolution.policyError != "" {
+		return repoBootstrapOutcome{
+			message:   "",
+			artifacts: []string{dockerfilePath},
+		}, errors.New(modeResolution.policyError)
+	}
+
+	mode := modeResolution.effectiveMode
 	var backend imageBuilderBackend = artifactImageBuilderBackend{}
 	if mode == imageBuilderModeBuildKit {
 		backend = buildKitImageBuilderBackend{}
@@ -115,8 +141,7 @@ func runImageBuilderBuild(
 		ctx,
 		artifacts,
 		msg,
-		mode,
-		modeErr,
+		modeResolution,
 		backend,
 		req,
 		[]string{dockerfilePath},
@@ -138,8 +163,7 @@ func runImageBuilderBuildWithBackend(
 	ctx context.Context,
 	artifacts ArtifactStore,
 	msg ProjectOpMsg,
-	mode imageBuilderMode,
-	modeErr error,
+	modeResolution imageBuilderModeResolution,
 	backend imageBuilderBackend,
 	req imageBuildRequest,
 	presetArtifacts []string,
@@ -156,8 +180,7 @@ func runImageBuilderBuildWithBackend(
 	buildKitArtifacts, writeBuildKitErr := maybeWriteBuildKitArtifacts(
 		artifacts,
 		msg,
-		mode,
-		modeErr,
+		modeResolution,
 		backend,
 		req,
 		result,
@@ -174,7 +197,14 @@ func runImageBuilderBuildWithBackend(
 		return outcome, backendErr
 	}
 
-	publishPath, err := writeImagePublishArtifacts(artifacts, msg, req.Spec, req.ImageTag, mode, modeErr, backend)
+	publishPath, err := writeImagePublishArtifacts(
+		artifacts,
+		msg,
+		req.Spec,
+		req.ImageTag,
+		modeResolution,
+		backend,
+	)
 	if err != nil {
 		return outcome, err
 	}
@@ -197,20 +227,18 @@ func runImageBuilderBuildWithBackend(
 func maybeWriteBuildKitArtifacts(
 	artifacts ArtifactStore,
 	msg ProjectOpMsg,
-	mode imageBuilderMode,
-	modeErr error,
+	modeResolution imageBuilderModeResolution,
 	backend imageBuilderBackend,
 	req imageBuildRequest,
 	result imageBuildResult,
 	backendErr error,
 ) ([]string, error) {
-	if mode != imageBuilderModeBuildKit {
+	if modeResolution.effectiveMode != imageBuilderModeBuildKit {
 		return nil, nil
 	}
 	metadata := map[string]any{
 		"project_id":      msg.ProjectID,
 		"op_id":           msg.OpID,
-		"builder_mode":    mode,
 		"builder_backend": backend.name(),
 		"image":           req.ImageTag,
 		"runtime":         req.Spec.Runtime,
@@ -219,9 +247,7 @@ func maybeWriteBuildKitArtifacts(
 		"status":          "ok",
 		"completed_at":    time.Now().UTC().Format(time.RFC3339),
 	}
-	if modeErr != nil {
-		metadata["mode_warning"] = modeErr.Error()
-	}
+	appendBuilderModeFields(metadata, modeResolution)
 	if len(result.metadata) > 0 {
 		maps.Copy(metadata, result.metadata)
 	}
@@ -263,8 +289,7 @@ func writeImagePublishArtifacts(
 	msg ProjectOpMsg,
 	spec ProjectSpec,
 	imageTag string,
-	mode imageBuilderMode,
-	modeErr error,
+	modeResolution imageBuilderModeResolution,
 	backend imageBuilderBackend,
 ) (string, error) {
 	payload := map[string]any{
@@ -274,13 +299,46 @@ func writeImagePublishArtifacts(
 		"runtime":         spec.Runtime,
 		"published_at":    time.Now().UTC().Format(time.RFC3339),
 		"daemon_target":   "local",
-		"builder_mode":    mode,
 		"builder_backend": backend.name(),
 	}
-	if modeErr != nil {
-		payload["builder_mode_warning"] = modeErr.Error()
-	}
+	appendBuilderModeFields(payload, modeResolution)
 	return artifacts.WriteFile(msg.ProjectID, imageBuildPublishPath, mustJSON(payload))
+}
+
+func appendBuilderModeFields(payload map[string]any, modeResolution imageBuilderModeResolution) {
+	payload["builder_mode"] = modeResolution.effectiveMode
+	payload["effective_builder_mode"] = modeResolution.effectiveMode
+	payload["requested_builder_mode"] = modeResolution.requestedMode
+	payload["builder_mode_explicit"] = modeResolution.requestedExplicit
+	if modeResolution.requestedWarning != "" {
+		payload["builder_mode_warning"] = modeResolution.requestedWarning
+	}
+	if modeResolution.fallbackReason != "" {
+		payload["builder_mode_fallback_reason"] = modeResolution.fallbackReason
+	}
+	if modeResolution.policyError != "" {
+		payload["builder_mode_policy_error"] = modeResolution.policyError
+	}
+}
+
+func imageBuilderStepStartMessage(modeResolution imageBuilderModeResolution) string {
+	context := []string{
+		fmt.Sprintf("requested=%s", modeResolution.requestedMode),
+		fmt.Sprintf("effective=%s", modeResolution.effectiveMode),
+	}
+	if modeResolution.requestedExplicit {
+		context = append(context, "explicit=true")
+	}
+	if modeResolution.fallbackReason != "" {
+		context = append(context, "fallback="+modeResolution.fallbackReason)
+	}
+	if modeResolution.requestedWarning != "" {
+		context = append(context, "warning="+modeResolution.requestedWarning)
+	}
+	if modeResolution.policyError != "" {
+		context = append(context, "policy="+modeResolution.policyError)
+	}
+	return "build and publish image to local daemon (" + strings.Join(context, "; ") + ")"
 }
 
 type artifactImageBuilderBackend struct{}

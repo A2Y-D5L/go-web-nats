@@ -167,18 +167,21 @@ Optional override:
 
 Image builder mode behavior:
 
-- `buildkit` (default): runs the image builder backend through BuildKit integration without shelling out to `docker`, `buildctl`, or `buildkitd`.
+- `buildkit`: runs the image builder backend through BuildKit integration without shelling out to `docker`, `buildctl`, or `buildkitd`.
   - BuildKit metadata/debug artifacts are written under `build/`:
     - `build/buildkit-summary.txt`
     - `build/buildkit-metadata.json`
     - `build/buildkit.log`
-  - If BuildKit is unavailable/incompatible at runtime, the worker fails gracefully with a clear error and no panic.
 - `artifact`: preserves prior metadata-only behavior and writes build artifacts without a container runtime build.
 
-Current platform limitation:
+Startup resolution policy:
 
-- BuildKit code path is capability-gated. This repository now defaults to `buildkit` mode.
-- If the binary is built without the `buildkit` tag, default image builds fail with a deterministic capability error unless `PAAS_IMAGE_BUILDER_MODE=artifact` is set.
+- Requested mode defaults to `buildkit` when `PAAS_IMAGE_BUILDER_MODE` is unset.
+- Startup resolves an effective mode:
+  - If `buildkit` was implicitly requested and BuildKit capability or daemon reachability is unavailable, runtime auto-falls back to `artifact`.
+  - If `buildkit` was explicitly requested (`PAAS_IMAGE_BUILDER_MODE=buildkit`) and unavailable, build operations return a clear policy error.
+- Startup logs always include requested mode, effective mode, and fallback/policy reason when present.
+- Build publish metadata (`build/publish-local-daemon.json`) includes requested/effective builder mode fields.
 - BuildKit-tagged builds require Moby BuildKit Go modules to be available in the module graph/cache for this environment.
 
 Trigger dedupe:
@@ -287,7 +290,7 @@ BUILDKIT_ADDR=tcp://127.0.0.1:1234 make buildkit-check
 BUILDKIT_ADDR=tcp://127.0.0.1:1234 make run-buildkit
 ```
 
-### Option A: Local-Dev Reliable Startup (artifact mode)
+### Option A: Local-Dev Reliable Startup (explicit artifact mode)
 
 Use this when you want predictable local behavior without BuildKit runtime requirements:
 
@@ -301,7 +304,7 @@ Equivalent:
 PAAS_IMAGE_BUILDER_MODE=artifact go run ./cmd/server
 ```
 
-### Option B: BuildKit Mode (default mode)
+### Option B: BuildKit Mode (explicit buildkit mode)
 
 Use this when you want real image builds through the in-process BuildKit backend:
 
@@ -391,8 +394,8 @@ PAAS_IMAGE_BUILDER_MODE=artifact go run ./cmd/server
 
 Notes:
 
-- Default mode is `buildkit`; if BuildKit support is unavailable, image build steps fail with explicit errors.
-- If you run without `-tags buildkit`, set `PAAS_IMAGE_BUILDER_MODE=artifact` to avoid expected BuildKit capability failures.
+- Default requested mode is `buildkit`, but startup auto-falls back to `artifact` when BuildKit is not available.
+- `PAAS_IMAGE_BUILDER_MODE=buildkit` preserves explicit BuildKit intent and returns clear policy errors if support is unavailable.
 
 After startup, open:
 

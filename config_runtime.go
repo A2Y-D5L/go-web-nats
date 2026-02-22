@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -21,6 +22,7 @@ const (
 	defaultArtifactsRoot = "./data/artifacts"
 	imageBuilderModeEnv  = "PAAS_IMAGE_BUILDER_MODE"
 	buildOpTimeout       = 2 * time.Minute
+	buildKitProbeTimeout = 500 * time.Millisecond
 
 	imageBuilderModeArtifact imageBuilderMode = "artifact"
 	imageBuilderModeBuildKit imageBuilderMode = "buildkit"
@@ -44,6 +46,15 @@ const (
 	opEventArtifactsLimit  = 8
 )
 
+type imageBuilderModeResolution struct {
+	requestedMode     imageBuilderMode
+	requestedExplicit bool
+	effectiveMode     imageBuilderMode
+	requestedWarning  string
+	fallbackReason    string
+	policyError       string
+}
+
 func parseImageBuilderMode(raw string) (imageBuilderMode, error) {
 	mode := strings.TrimSpace(strings.ToLower(raw))
 	switch mode {
@@ -65,5 +76,80 @@ func parseImageBuilderMode(raw string) (imageBuilderMode, error) {
 }
 
 func imageBuilderModeFromEnv() (imageBuilderMode, error) {
-	return parseImageBuilderMode(os.Getenv(imageBuilderModeEnv))
+	mode, _, err := imageBuilderModeRequestFromEnv()
+	return mode, err
+}
+
+func imageBuilderModeRequestFromEnv() (imageBuilderMode, bool, error) {
+	raw, exists := os.LookupEnv(imageBuilderModeEnv)
+	mode, err := parseImageBuilderMode(raw)
+	return mode, exists && strings.TrimSpace(raw) != "", err
+}
+
+type buildkitProbeFunc func(ctx context.Context) error
+
+func resolveEffectiveImageBuilderMode(ctx context.Context) imageBuilderModeResolution {
+	requestedMode, requestedExplicit, parseErr := imageBuilderModeRequestFromEnv()
+	return resolveEffectiveImageBuilderModeWithProbe(
+		ctx,
+		requestedMode,
+		requestedExplicit,
+		parseErr,
+		buildkitCompiledIn(),
+		probeBuildkitDaemonReachability,
+	)
+}
+
+func resolveEffectiveImageBuilderModeWithProbe(
+	ctx context.Context,
+	requestedMode imageBuilderMode,
+	requestedExplicit bool,
+	parseErr error,
+	buildkitAvailable bool,
+	probe buildkitProbeFunc,
+) imageBuilderModeResolution {
+	resolution := imageBuilderModeResolution{
+		requestedMode:     requestedMode,
+		requestedExplicit: requestedExplicit,
+		effectiveMode:     requestedMode,
+		requestedWarning:  "",
+		fallbackReason:    "",
+		policyError:       "",
+	}
+	if parseErr != nil {
+		resolution.requestedWarning = parseErr.Error()
+	}
+	if requestedMode != imageBuilderModeBuildKit {
+		return resolution
+	}
+	if !buildkitAvailable {
+		if requestedExplicit {
+			resolution.policyError = fmt.Sprintf(
+				"explicit %s=buildkit requires a binary built with -tags buildkit",
+				imageBuilderModeEnv,
+			)
+			return resolution
+		}
+		resolution.effectiveMode = imageBuilderModeArtifact
+		resolution.fallbackReason = "buildkit support is unavailable in this binary"
+		return resolution
+	}
+	if probe == nil {
+		return resolution
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, buildKitProbeTimeout)
+	defer cancel()
+	if err := probe(probeCtx); err != nil {
+		if requestedExplicit {
+			resolution.policyError = fmt.Sprintf(
+				"explicit %s=buildkit requested but BuildKit daemon is unreachable: %v",
+				imageBuilderModeEnv,
+				err,
+			)
+			return resolution
+		}
+		resolution.effectiveMode = imageBuilderModeArtifact
+		resolution.fallbackReason = fmt.Sprintf("buildkit daemon is unreachable: %v", err)
+	}
+	return resolution
 }

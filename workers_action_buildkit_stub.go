@@ -4,10 +4,19 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
 type buildKitImageBuilderBackend struct{}
+
+func buildkitCompiledIn() bool {
+	return false
+}
+
+func probeBuildkitDaemonReachability(context.Context) error {
+	return errors.New("binary was built without BuildKit support")
+}
 
 func (buildKitImageBuilderBackend) name() string {
 	return string(imageBuilderModeBuildKit)

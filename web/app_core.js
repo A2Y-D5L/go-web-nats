@@ -238,6 +238,12 @@ const state = {
     envSnapshots: {},
     transitionEdges: [],
     textCache: {},
+    builderRequestedMode: "",
+    builderEffectiveMode: "",
+    builderFallbackReason: "",
+    builderPolicyError: "",
+    builderModeWarning: "",
+    builderModeExplicit: false,
   },
   journey: {
     loading: false,

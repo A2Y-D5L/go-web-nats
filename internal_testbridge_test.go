@@ -129,6 +129,50 @@ func ImageBuilderModeFromEnvForTest() (string, error) {
 	return string(mode), err
 }
 
+func ResolveEffectiveImageBuilderModeForTest(
+	raw string,
+	explicit bool,
+	buildkitAvailable bool,
+	probeErrText string,
+) (string, string, string, string, string) {
+	requested, parseErr := parseImageBuilderMode(raw)
+	resolution := resolveEffectiveImageBuilderModeWithProbe(
+		context.Background(),
+		requested,
+		explicit,
+		parseErr,
+		buildkitAvailable,
+		func(context.Context) error {
+			return errorFromString(probeErrText)
+		},
+	)
+	return string(resolution.requestedMode),
+		string(resolution.effectiveMode),
+		resolution.requestedWarning,
+		resolution.fallbackReason,
+		resolution.policyError
+}
+
+func ImageBuilderStepStartMessageForTest(
+	raw string,
+	explicit bool,
+	buildkitAvailable bool,
+	probeErrText string,
+) string {
+	requested, parseErr := parseImageBuilderMode(raw)
+	resolution := resolveEffectiveImageBuilderModeWithProbe(
+		context.Background(),
+		requested,
+		explicit,
+		parseErr,
+		buildkitAvailable,
+		func(context.Context) error {
+			return errorFromString(probeErrText)
+		},
+	)
+	return imageBuilderStepStartMessage(resolution)
+}
+
 func SelectImageBuilderBackendNameForTest(modeRaw string) (string, error) {
 	mode, err := parseImageBuilderMode(modeRaw)
 	if err != nil {
@@ -160,6 +204,17 @@ func RunImageBuilderBuildWithBackendForTest(
 	errText string,
 ) (string, []string, error) {
 	mode, modeErr := parseImageBuilderMode(modeRaw)
+	modeResolution := imageBuilderModeResolution{
+		requestedMode:     mode,
+		requestedExplicit: true,
+		effectiveMode:     mode,
+		requestedWarning:  "",
+		fallbackReason:    "",
+		policyError:       "",
+	}
+	if modeErr != nil {
+		modeResolution.requestedWarning = modeErr.Error()
+	}
 	dockerfileBody := renderImageBuilderDockerfile(spec)
 	dockerfilePath, err := artifacts.WriteFile(msg.ProjectID, imageBuildDockerfilePath, dockerfileBody)
 	if err != nil {
@@ -169,8 +224,7 @@ func RunImageBuilderBuildWithBackendForTest(
 		ctx,
 		artifacts,
 		msg,
-		mode,
-		modeErr,
+		modeResolution,
 		testBuildKitBackend{
 			outcome: imageBuildResult{
 				message:  message,

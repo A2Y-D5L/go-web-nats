@@ -69,6 +69,92 @@ func TestWorkers_ImageBuilderModeFromEnvDefaultsAndInvalidFallback(t *testing.T)
 	}
 }
 
+func TestWorkers_ResolveEffectiveImageBuilderMode(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name              string
+		raw               string
+		explicit          bool
+		buildkitAvailable bool
+		probeErr          string
+		wantRequested     string
+		wantEffective     string
+		wantFallback      string
+		wantPolicy        string
+	}{
+		{
+			name:              "empty env falls back to artifact when buildkit binary support is missing",
+			raw:               "",
+			explicit:          false,
+			buildkitAvailable: false,
+			probeErr:          "",
+			wantRequested:     "buildkit",
+			wantEffective:     "artifact",
+			wantFallback:      "buildkit support is unavailable in this binary",
+			wantPolicy:        "",
+		},
+		{
+			name:              "explicit artifact remains artifact",
+			raw:               "artifact",
+			explicit:          true,
+			buildkitAvailable: false,
+			probeErr:          "",
+			wantRequested:     "artifact",
+			wantEffective:     "artifact",
+			wantFallback:      "",
+			wantPolicy:        "",
+		},
+		{
+			name:              "explicit buildkit remains buildkit when available",
+			raw:               "buildkit",
+			explicit:          true,
+			buildkitAvailable: true,
+			probeErr:          "",
+			wantRequested:     "buildkit",
+			wantEffective:     "buildkit",
+			wantFallback:      "",
+			wantPolicy:        "",
+		},
+		{
+			name:              "explicit buildkit reports policy error when binary support is missing",
+			raw:               "buildkit",
+			explicit:          true,
+			buildkitAvailable: false,
+			probeErr:          "",
+			wantRequested:     "buildkit",
+			wantEffective:     "buildkit",
+			wantFallback:      "",
+			wantPolicy:        "explicit PAAS_IMAGE_BUILDER_MODE=buildkit requires a binary built with -tags buildkit",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotRequested, gotEffective, _, gotFallback, gotPolicy := platform.ResolveEffectiveImageBuilderModeForTest(
+				tc.raw,
+				tc.explicit,
+				tc.buildkitAvailable,
+				tc.probeErr,
+			)
+			if gotRequested != tc.wantRequested {
+				t.Fatalf("requested mode mismatch: got %q want %q", gotRequested, tc.wantRequested)
+			}
+			if gotEffective != tc.wantEffective {
+				t.Fatalf("effective mode mismatch: got %q want %q", gotEffective, tc.wantEffective)
+			}
+			if gotFallback != tc.wantFallback {
+				t.Fatalf("fallback mismatch: got %q want %q", gotFallback, tc.wantFallback)
+			}
+			if gotPolicy != tc.wantPolicy {
+				t.Fatalf("policy mismatch: got %q want %q", gotPolicy, tc.wantPolicy)
+			}
+		})
+	}
+}
+
 func TestWorkers_SelectImageBuilderBackendByMode(t *testing.T) {
 	name, err := platform.SelectImageBuilderBackendNameForTest("artifact")
 	if err != nil {
@@ -109,6 +195,48 @@ func TestWorkers_ImageBuilderArtifactModeWhenExplicitlySelected(t *testing.T) {
 
 	if slices.Contains(touched, "build/buildkit-metadata.json") {
 		t.Fatalf("artifact mode should not emit buildkit metadata: %v", touched)
+	}
+}
+
+func TestWorkers_ImageBuilderDefaultModeAutoFallbacksToArtifactWhenBuildkitUnavailable(t *testing.T) {
+	t.Setenv("PAAS_IMAGE_BUILDER_MODE", "")
+	artifacts := platform.NewFSArtifacts(t.TempDir())
+	msg, spec, imageTag := testBuildInputs()
+
+	message, touched, err := platform.RunImageBuilderBuildForTest(context.Background(), artifacts, msg, spec, imageTag)
+	if err != nil {
+		t.Fatalf("run image builder with default mode fallback: %v", err)
+	}
+	if message != "container image built and published to local daemon" {
+		t.Fatalf("unexpected worker message: %q", message)
+	}
+
+	want := []string{
+		"build/Dockerfile",
+		"build/image.txt",
+		"build/publish-local-daemon.json",
+	}
+	assertArtifactSet(t, touched, want)
+
+	rawPublish, readErr := artifacts.ReadFile(msg.ProjectID, "build/publish-local-daemon.json")
+	if readErr != nil {
+		t.Fatalf("read publish metadata: %v", readErr)
+	}
+	var publish map[string]any
+	if unmarshalErr := json.Unmarshal(rawPublish, &publish); unmarshalErr != nil {
+		t.Fatalf("decode publish metadata: %v", unmarshalErr)
+	}
+	if publish["requested_builder_mode"] != "buildkit" {
+		t.Fatalf("expected requested_builder_mode=buildkit, got %#v", publish["requested_builder_mode"])
+	}
+	if publish["effective_builder_mode"] != "artifact" {
+		t.Fatalf("expected effective_builder_mode=artifact, got %#v", publish["effective_builder_mode"])
+	}
+	if publish["builder_mode_fallback_reason"] == "" {
+		t.Fatalf(
+			"expected builder_mode_fallback_reason to be present, got %#v",
+			publish["builder_mode_fallback_reason"],
+		)
 	}
 }
 
@@ -164,6 +292,12 @@ func TestWorkers_ImageBuilderBuildKitModeWritesMetadataArtifacts(t *testing.T) {
 	if metadata["builder_mode"] != "buildkit" {
 		t.Fatalf("expected builder_mode=buildkit in metadata, got %#v", metadata["builder_mode"])
 	}
+	if metadata["effective_builder_mode"] != "buildkit" {
+		t.Fatalf(
+			"expected effective_builder_mode=buildkit in metadata, got %#v",
+			metadata["effective_builder_mode"],
+		)
+	}
 }
 
 func TestWorkers_ImageBuilderBuildKitModeFailsGracefully(t *testing.T) {
@@ -204,6 +338,19 @@ func TestWorkers_ImageBuilderBuildKitModeFailsGracefully(t *testing.T) {
 		if !slices.Contains(touched, artifact) {
 			t.Fatalf("expected artifact %q in touched set: %v", artifact, touched)
 		}
+	}
+}
+
+func TestWorkers_ImageBuilderStepStartMessageIncludesEffectiveModeContext(t *testing.T) {
+	message := platform.ImageBuilderStepStartMessageForTest("", false, false, "")
+	if !strings.Contains(message, "requested=buildkit") {
+		t.Fatalf("expected requested mode context in step message, got %q", message)
+	}
+	if !strings.Contains(message, "effective=artifact") {
+		t.Fatalf("expected effective mode context in step message, got %q", message)
+	}
+	if !strings.Contains(message, "fallback=buildkit support is unavailable in this binary") {
+		t.Fatalf("expected fallback reason in step message, got %q", message)
 	}
 }
 

@@ -54,8 +54,9 @@ func Run() {
 	if mkdirErr != nil {
 		mainLog.Fatalf("mkdir artifacts root: %v", mkdirErr)
 	}
+	builderMode := resolveEffectiveImageBuilderMode(ctx)
 
-	startErr := startPlatformWorkers(ctx, natsURL, artifacts, opEvents)
+	startErr := startPlatformWorkers(ctx, natsURL, artifacts, opEvents, builderMode)
 	if startErr != nil {
 		mainLog.Fatalf("start worker: %v", startErr)
 	}
@@ -80,14 +81,13 @@ func Run() {
 
 	api := newRuntimeAPI(nc, store, artifacts, waiters, opEvents)
 	watcherStarted := startSourceCommitWatcher(ctx, api)
-	builderMode, builderModeErr := imageBuilderModeFromEnv()
 	srv := &http.Server{
 		Addr:              httpAddr,
 		Handler:           api.routes(),
 		ReadHeaderTimeout: defaultReadHeaderWait,
 	}
 
-	logRuntimeStartup(mainLog, natsURL, watcherStarted, builderMode, builderModeErr)
+	logRuntimeStartup(mainLog, natsURL, watcherStarted, builderMode)
 
 	listenErr := srv.ListenAndServe()
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
@@ -100,11 +100,12 @@ func startPlatformWorkers(
 	natsURL string,
 	artifacts ArtifactStore,
 	opEvents *opEventHub,
+	builderMode imageBuilderModeResolution,
 ) error {
 	workers := []Worker{
 		NewRegistrationWorker(natsURL, artifacts, opEvents),
 		NewRepoBootstrapWorker(natsURL, artifacts, opEvents),
-		NewImageBuilderWorker(natsURL, artifacts, opEvents),
+		NewImageBuilderWorker(natsURL, artifacts, opEvents, builderMode),
 		NewManifestRendererWorker(natsURL, artifacts, opEvents),
 		NewDeploymentWorker(natsURL, artifacts, opEvents),
 		NewPromotionWorker(natsURL, artifacts, opEvents),
@@ -139,15 +140,25 @@ func logRuntimeStartup(
 	mainLog sourceLogger,
 	natsURL string,
 	watcherStarted bool,
-	builderMode imageBuilderMode,
-	builderModeErr error,
+	builderMode imageBuilderModeResolution,
 ) {
 	mainLog.Infof("NATS: %s", natsURL)
 	mainLog.Infof("Portal: http://%s", httpAddr)
 	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
-	mainLog.Infof("Image builder mode: %s", builderMode)
-	if builderModeErr != nil {
-		mainLog.Warnf("Image builder mode fallback: %v", builderModeErr)
+	mainLog.Infof(
+		"Image builder mode: requested=%s effective=%s explicit=%t",
+		builderMode.requestedMode,
+		builderMode.effectiveMode,
+		builderMode.requestedExplicit,
+	)
+	if builderMode.requestedWarning != "" {
+		mainLog.Warnf("Image builder mode request warning: %s", builderMode.requestedWarning)
+	}
+	if builderMode.fallbackReason != "" {
+		mainLog.Warnf("Image builder mode auto-fallback: %s", builderMode.fallbackReason)
+	}
+	if builderMode.policyError != "" {
+		mainLog.Warnf("Image builder mode policy: %s", builderMode.policyError)
 	}
 	if watcherStarted {
 		mainLog.Infof("Source commit watcher: enabled")

@@ -21,6 +21,22 @@ const (
 
 type buildKitImageBuilderBackend struct{}
 
+func buildkitCompiledIn() bool {
+	return true
+}
+
+func probeBuildkitDaemonReachability(ctx context.Context) error {
+	address := buildkitAddress()
+	buildkitClient, err := client.New(ctx, address)
+	if err != nil {
+		return fmt.Errorf("connect buildkit client at %s: %w", address, err)
+	}
+	if closeErr := buildkitClient.Close(); closeErr != nil {
+		return fmt.Errorf("close buildkit client at %s: %w", address, closeErr)
+	}
+	return nil
+}
+
 func (buildKitImageBuilderBackend) name() string {
 	return string(imageBuilderModeBuildKit)
 }
