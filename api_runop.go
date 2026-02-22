@@ -12,18 +12,49 @@ type opRunOptions struct {
 	deployEnv string
 	fromEnv   string
 	toEnv     string
+	delivery  DeliveryLifecycle
 }
 
 func emptyOpRunOptions() opRunOptions {
-	return opRunOptions{deployEnv: "", fromEnv: "", toEnv: ""}
+	return opRunOptions{
+		deployEnv: "",
+		fromEnv:   "",
+		toEnv:     "",
+		delivery: DeliveryLifecycle{
+			Stage:       "",
+			Environment: "",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+	}
 }
 
 func deployOpRunOptions(env string) opRunOptions {
-	return opRunOptions{deployEnv: env, fromEnv: "", toEnv: ""}
+	return opRunOptions{
+		deployEnv: env,
+		fromEnv:   "",
+		toEnv:     "",
+		delivery: DeliveryLifecycle{
+			Stage:       DeliveryStageDeploy,
+			Environment: env,
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+	}
 }
 
-func promotionOpRunOptions(fromEnv, toEnv string) opRunOptions {
-	return opRunOptions{deployEnv: "", fromEnv: fromEnv, toEnv: toEnv}
+func transitionOpRunOptions(fromEnv, toEnv string, stage DeliveryStage) opRunOptions {
+	return opRunOptions{
+		deployEnv: "",
+		fromEnv:   fromEnv,
+		toEnv:     toEnv,
+		delivery: DeliveryLifecycle{
+			Stage:       stage,
+			Environment: "",
+			FromEnv:     fromEnv,
+			ToEnv:       toEnv,
+		},
+	}
 }
 
 func (a *API) runOp(
@@ -41,6 +72,7 @@ func (a *API) runOp(
 		ID:        opID,
 		Kind:      kind,
 		ProjectID: projectID,
+		Delivery:  opts.delivery,
 		Requested: now,
 		Finished:  time.Time{},
 		Status:    statusMessageQueued,
@@ -141,6 +173,8 @@ func queuedProjectMessage(kind OperationKind) string {
 		return "queued deployment"
 	case OpPromote:
 		return "queued promotion"
+	case OpRelease:
+		return "queued release"
 	default:
 		return statusMessageQueued
 	}
@@ -162,6 +196,7 @@ func newProjectOpMsg(
 		DeployEnv: opts.deployEnv,
 		FromEnv:   opts.fromEnv,
 		ToEnv:     opts.toEnv,
+		Delivery:  opts.delivery,
 		Err:       "",
 		At:        now,
 	}
@@ -180,6 +215,8 @@ func startSubjectForOperation(kind OperationKind) string {
 	case OpDeploy:
 		return subjectDeploymentStart
 	case OpPromote:
+		return subjectPromotionStart
+	case OpRelease:
 		return subjectPromotionStart
 	default:
 		return subjectProjectOpStart

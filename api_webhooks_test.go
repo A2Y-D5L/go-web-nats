@@ -110,7 +110,8 @@ func TestAPI_ProjectSupportsEnvironment(t *testing.T) {
 		Name:       "svc",
 		Runtime:    "go_1.26",
 		Environments: map[string]platform.EnvConfig{
-			"staging": {Vars: map[string]string{}},
+			"staging":    {Vars: map[string]string{}},
+			"production": {Vars: map[string]string{}},
 		},
 		NetworkPolicies: platform.NetworkPolicies{
 			Ingress: "internal",
@@ -124,7 +125,13 @@ func TestAPI_ProjectSupportsEnvironment(t *testing.T) {
 	if !platform.ProjectSupportsEnvironmentForTest(spec, "staging") {
 		t.Fatal("expected staging to be supported from project spec")
 	}
-	if platform.ProjectSupportsEnvironmentForTest(spec, "prod") {
-		t.Fatal("expected prod to be unsupported when not defined in spec")
+	if !platform.ProjectSupportsEnvironmentForTest(spec, "prod") {
+		t.Fatal("expected prod alias to resolve when production is defined in spec")
+	}
+	if !platform.ProjectSupportsEnvironmentForTest(spec, "production") {
+		t.Fatal("expected production to be supported from project spec")
+	}
+	if platform.ProjectSupportsEnvironmentForTest(spec, "qa") {
+		t.Fatal("expected qa to be unsupported when not defined in spec")
 	}
 }

@@ -35,6 +35,7 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("/api/events/registration", a.handleRegistrationEvents)
 	mux.HandleFunc("/api/events/deployment", a.handleDeploymentEvents)
 	mux.HandleFunc("/api/events/promotion", a.handlePromotionEvents)
+	mux.HandleFunc("/api/events/release", a.handleReleaseEvents)
 	mux.HandleFunc("/api/webhooks/source", a.handleSourceRepoWebhook)
 
 	// Ops: read
@@ -109,4 +110,10 @@ type PromotionEvent struct {
 	ProjectID string `json:"project_id"`
 	FromEnv   string `json:"from_env"`
 	ToEnv     string `json:"to_env"`
+}
+
+type ReleaseEvent struct {
+	ProjectID string `json:"project_id"`
+	FromEnv   string `json:"from_env"`
+	ToEnv     string `json:"to_env,omitempty"`
 }

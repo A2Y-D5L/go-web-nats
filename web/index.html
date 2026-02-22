@@ -48,7 +48,7 @@
 
       <div id="appStatus" class="status-banner" role="status" aria-live="polite"></div>
 
-      <main class="layout" aria-label="Deployment and promotion workspace">
+      <main class="layout" aria-label="Deployment, promotion, and release workspace">
         <aside class="panel project-rail" aria-label="Project list and filters">
           <div class="panel-head">
             <h2>Projects</h2>
@@ -93,7 +93,7 @@
                 <button id="openDeleteModalBtn" type="button" class="btn btn-danger">Delete</button>
               </div>
             </div>
-            <div id="selected" class="project-summary muted">Select a project to view deployment and promotion controls.</div>
+            <div id="selected" class="project-summary muted">Select a project to view deployment, promotion, and release controls.</div>
           </article>
 
           <article class="panel environment-panel">
@@ -117,8 +117,8 @@
             </article>
 
             <article class="panel promotion-panel">
-              <h3>Promote environment</h3>
-              <p class="panel-copy">Higher environments can only be updated through promotion.</p>
+              <h3>Promote or release environment</h3>
+              <p class="panel-copy">Environment transitions stay explicit: non-production targets are promotions, production targets are releases.</p>
               <form id="promotionForm" class="form-grid compact-form" novalidate>
                 <label class="field" for="promotionFrom">
                   <span>Source environment</span>
@@ -130,7 +130,7 @@
                 </label>
                 <div id="promotionDraftSummary" class="summary-card field-full"></div>
                 <p id="promotionGuardrail" class="guardrail-text field-full"></p>
-                <button id="openPromotionModalBtn" type="submit" class="btn btn-primary field-full">Review promotion</button>
+                <button id="openPromotionModalBtn" type="submit" class="btn btn-primary field-full">Review transition</button>
               </form>
             </article>
 
@@ -173,7 +173,7 @@
               </div>
               <label class="field compact" for="artifactSearch">
                 <span>Filter artifacts</span>
-                <input id="artifactSearch" placeholder="deploy/dev, promotions/dev-to-staging, repos/..." />
+                <input id="artifactSearch" placeholder="deploy/dev, promotions/dev-to-staging, releases/stage-to-prod, repos/..." />
               </label>
               <div id="buildkitSignal" class="buildkit-signal muted">Build metadata unavailable until artifacts are loaded.</div>
               <div id="artifactQuickLinks" class="quick-links"></div>
@@ -277,7 +277,7 @@
             <div class="env-builder-head">
               <div>
                 <p class="env-builder-title">Environment config</p>
-                <p class="helper-text">Keep environments explicit so promotion validation stays safe.</p>
+                <p class="helper-text">Keep environments explicit so promotion and release validation stays safe.</p>
               </div>
               <div class="env-builder-actions">
                 <button id="updateCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
@@ -343,10 +343,10 @@
     </div>
 
     <div id="promotionModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="promotionModalTitle">
-      <button class="modal-backdrop" data-modal-close="promotion" aria-label="Close promotion dialog"></button>
-      <section class="modal-card modal-card-warning" aria-label="Promotion confirmation dialog">
+      <button class="modal-backdrop" data-modal-close="promotion" aria-label="Close transition dialog"></button>
+      <section class="modal-card modal-card-warning" aria-label="Transition confirmation dialog">
         <header class="modal-header">
-          <h2 id="promotionModalTitle">Confirm promotion</h2>
+          <h2 id="promotionModalTitle">Confirm transition</h2>
           <button id="promotionModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
         </header>
 
@@ -363,7 +363,7 @@
           <p id="promotionConfirmHint" class="helper-text field-full"></p>
           <div class="modal-actions field-full">
             <button id="promotionModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
-            <button id="promotionConfirmBtn" type="submit" class="btn btn-primary" disabled>Promote environment</button>
+            <button id="promotionConfirmBtn" type="submit" class="btn btn-primary" disabled>Confirm transition</button>
           </div>
         </form>
       </section>

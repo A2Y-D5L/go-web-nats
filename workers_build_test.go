@@ -232,8 +232,14 @@ func testBuildInputs() (platform.ProjectOpMsg, platform.ProjectSpec, string) {
 		DeployEnv: "",
 		FromEnv:   "",
 		ToEnv:     "",
-		Err:       "",
-		At:        time.Now().UTC(),
+		Delivery: platform.DeliveryLifecycle{
+			Stage:       "",
+			Environment: "",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+		Err: "",
+		At:  time.Now().UTC(),
 	}
 	return msg, spec, "local/svc:op-1234567890"
 }

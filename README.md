@@ -106,6 +106,19 @@ Rules:
 - only `main` branch triggers CI (supports `main`, `heads/main`, `refs/heads/main`)
 - accepted events trigger pipeline kind `ci`
 
+## Delivery Transitions
+
+Process endpoints:
+
+- `POST /api/events/deployment` deploys to `dev` only.
+- `POST /api/events/promotion` handles environment-to-environment promotion.
+- `POST /api/events/release` handles promotion into production (`prod`/`production`).
+
+Lifecycle classification:
+
+- Non-production target environment => `promote`.
+- Production target environment => `release`.
+
 ## Local Repos And Hooks
 
 On registration create/update, `repoBootstrap` now creates real local repos at:
@@ -167,6 +180,9 @@ Trigger dedupe:
 | `DELETE` | `/api/projects/{id}` | Legacy direct delete |
 | `POST` | `/api/projects` | Legacy direct create |
 | `POST` | `/api/events/registration` | Registration event API |
+| `POST` | `/api/events/deployment` | Dev deployment API |
+| `POST` | `/api/events/promotion` | Promotion/release transition API |
+| `POST` | `/api/events/release` | Explicit release API |
 | `POST` | `/api/webhooks/source` | Source repo webhook API |
 | `GET` | `/api/ops/{opID}` | Operation details |
 | `GET` | `/api/projects/{id}/artifacts` | List artifact files |
@@ -193,9 +209,11 @@ Config contracts are modeled from:
 - `build/buildkit-summary.txt` (BuildKit mode)
 - `build/buildkit-metadata.json` (BuildKit mode)
 - `build/buildkit.log` (BuildKit mode)
-- `deploy/deployment.yaml`
-- `deploy/service.yaml`
-- `deploy/rendered.yaml`
+- `deploy/<env>/deployment.yaml`
+- `deploy/<env>/service.yaml`
+- `deploy/<env>/rendered.yaml`
+- `promotions/<from>-to-<to>/rendered.yaml`
+- `releases/<from>-to-<to>/rendered.yaml`
 
 ## Frontend UX Highlights
 
@@ -204,6 +222,7 @@ The embedded UI (`/`) now mirrors backend execution semantics directly:
 - system strip with project/health/op/build mode status
 - searchable/sortable project inventory with phase badges
 - selected-project action workspace for create/update/delete + source webhook CI
+- explicit dev deploy with promotion/release transition guardrails
 - live operation timeline with ordered worker steps and duration/status details
 - artifact explorer with preview/download, BuildKit metadata signal, and imageBuilder output visibility
 

@@ -45,13 +45,13 @@ Operational runbook for coding agents working in this repository.
 - API routing/types/middleware: `api_types.go`
 - Registration API behavior: `api_registration.go`
 - Webhook API behavior: `api_webhooks.go`
-- Deployment/promotion API behavior: `api_processes.go`
+- Deployment/promotion/release API behavior: `api_processes.go`
 - Projects CRUD API behavior: `api_projects.go`
 - Artifacts and ops read endpoints: `api_artifacts_ops.go`
 - Op orchestration/wait/publish: `api_runop.go`
 - Worker runtime loop: `workers_defs.go`, `workers_loop.go`, `workers_resultmsg.go`
 - Worker business logic: `workers_action_*.go`
-- Promotion worker logic: `workers_action_promotion.go`
+- Promotion/release worker logic: `workers_action_promotion.go`
 - Rendering helpers: `workers_render.go`
 - Persistence: `store.go`
 - Op step/finalize bookkeeping: `ops_bookkeeping.go`

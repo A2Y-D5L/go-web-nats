@@ -54,7 +54,7 @@ func manifestRendererWorkerAction(
 		)
 	case OpDelete:
 		outcome, err = runManifestRendererDelete(ctx, store, artifacts, msg)
-	case OpDeploy, OpPromote:
+	case OpDeploy, OpPromote, OpRelease:
 		err = fmt.Errorf("manifest renderer does not handle %s operations", msg.Kind)
 	default:
 		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
@@ -116,7 +116,10 @@ func deploymentWorkerAction(
 
 	targetEnv := resolveDeployEnvironment(msg.DeployEnv)
 	if targetEnv != defaultDeployEnvironment {
-		err := fmt.Errorf("deployment environment %q not supported; use promotion for higher environments", targetEnv)
+		err := fmt.Errorf(
+			"deployment environment %q not supported; use promotion/release for higher environments",
+			targetEnv,
+		)
 		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
 		return res, err

@@ -7,30 +7,32 @@ import "time"
 ////////////////////////////////////////////////////////////////////////////////
 
 type ProjectOpMsg struct {
-	OpID      string        `json:"op_id"`
-	Kind      OperationKind `json:"kind"`
-	ProjectID string        `json:"project_id"`
-	Spec      ProjectSpec   `json:"spec"` // create/update only
-	DeployEnv string        `json:"deploy_env,omitempty"`
-	FromEnv   string        `json:"from_env,omitempty"`
-	ToEnv     string        `json:"to_env,omitempty"`
-	Err       string        `json:"err,omitempty"`
-	At        time.Time     `json:"at"`
+	OpID      string            `json:"op_id"`
+	Kind      OperationKind     `json:"kind"`
+	ProjectID string            `json:"project_id"`
+	Spec      ProjectSpec       `json:"spec"` // create/update only
+	DeployEnv string            `json:"deploy_env,omitempty"`
+	FromEnv   string            `json:"from_env,omitempty"`
+	ToEnv     string            `json:"to_env,omitempty"`
+	Delivery  DeliveryLifecycle `json:"delivery,omitzero"`
+	Err       string            `json:"err,omitempty"`
+	At        time.Time         `json:"at"`
 }
 
 type WorkerResultMsg struct {
-	OpID      string        `json:"op_id"`
-	Kind      OperationKind `json:"kind"`
-	ProjectID string        `json:"project_id"`
-	Spec      ProjectSpec   `json:"spec"`
-	DeployEnv string        `json:"deploy_env,omitempty"`
-	FromEnv   string        `json:"from_env,omitempty"`
-	ToEnv     string        `json:"to_env,omitempty"`
-	Worker    string        `json:"worker"`
-	Message   string        `json:"message,omitempty"`
-	Err       string        `json:"err,omitempty"`
-	Artifacts []string      `json:"artifacts,omitempty"` // relative paths
-	At        time.Time     `json:"at"`
+	OpID      string            `json:"op_id"`
+	Kind      OperationKind     `json:"kind"`
+	ProjectID string            `json:"project_id"`
+	Spec      ProjectSpec       `json:"spec"`
+	DeployEnv string            `json:"deploy_env,omitempty"`
+	FromEnv   string            `json:"from_env,omitempty"`
+	ToEnv     string            `json:"to_env,omitempty"`
+	Delivery  DeliveryLifecycle `json:"delivery,omitzero"`
+	Worker    string            `json:"worker"`
+	Message   string            `json:"message,omitempty"`
+	Err       string            `json:"err,omitempty"`
+	Artifacts []string          `json:"artifacts,omitempty"` // relative paths
+	At        time.Time         `json:"at"`
 }
 
 func zeroProjectSpec() ProjectSpec {
@@ -54,6 +56,12 @@ func newWorkerResultMsg(message string) WorkerResultMsg {
 		DeployEnv: "",
 		FromEnv:   "",
 		ToEnv:     "",
+		Delivery: DeliveryLifecycle{
+			Stage:       "",
+			Environment: "",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
 		Worker:    "",
 		Message:   message,
 		Err:       "",

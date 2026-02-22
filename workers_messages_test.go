@@ -233,3 +233,83 @@ func TestWorkers_ManifestPromotionRendersHigherEnvOnlyDuringPromotion(t *testing
 		t.Fatalf("expected promoted staging deployment image tag, got: %s", string(stagingDeployment))
 	}
 }
+
+func TestWorkers_ManifestReleaseRendersProductionAndWritesReleaseArtifacts(t *testing.T) {
+	artifacts := platform.NewFSArtifacts(t.TempDir())
+	spec := platform.ProjectSpec{
+		APIVersion: platform.ProjectAPIVersionForTest,
+		Kind:       platform.ProjectKindForTest,
+		Name:       "svc",
+		Runtime:    "go_1.26",
+		Environments: map[string]platform.EnvConfig{
+			"dev":  {Vars: map[string]string{"LOG_LEVEL": "debug"}},
+			"prod": {Vars: map[string]string{"LOG_LEVEL": "warn"}},
+		},
+		NetworkPolicies: platform.NetworkPolicies{
+			Ingress: "internal",
+			Egress:  "internal",
+		},
+	}
+
+	deployMsg := platform.ProjectOpMsg{
+		OpID:      "op-deploy-dev-release",
+		Kind:      platform.OpCreate,
+		ProjectID: "proj-release",
+		Spec:      spec,
+		At:        time.Now().UTC(),
+	}
+	_, _, err := platform.RunManifestApplyForTest(
+		context.Background(),
+		artifacts,
+		deployMsg,
+		spec,
+		"local/svc:dev24680",
+		"dev",
+	)
+	if err != nil {
+		t.Fatalf("run initial dev deploy: %v", err)
+	}
+	if _, readErr := artifacts.ReadFile(deployMsg.ProjectID, "deploy/prod/rendered.yaml"); readErr == nil {
+		t.Fatal("prod rendered manifest should not exist before release")
+	}
+
+	releaseMsg := platform.ProjectOpMsg{
+		OpID:      "op-release-prod",
+		Kind:      platform.OpRelease,
+		ProjectID: deployMsg.ProjectID,
+		Spec:      spec,
+		At:        time.Now().UTC(),
+	}
+	message, touched, err := platform.RunManifestPromotionForTest(
+		context.Background(),
+		artifacts,
+		releaseMsg,
+		spec,
+		"dev",
+		"prod",
+	)
+	if err != nil {
+		t.Fatalf("run release: %v", err)
+	}
+	if !strings.Contains(message, "released manifests from dev to prod") {
+		t.Fatalf("unexpected release message: %q", message)
+	}
+	for _, want := range []string{
+		"deploy/prod/rendered.yaml",
+		"releases/dev-to-prod/rendered.yaml",
+	} {
+		if !slices.Contains(touched, want) {
+			t.Fatalf("expected release artifact %q, got %v", want, touched)
+		}
+	}
+	if slices.Contains(touched, "promotions/dev-to-prod/rendered.yaml") {
+		t.Fatalf("release should not write promotion artifact path: %v", touched)
+	}
+	prodDeployment, readErr := artifacts.ReadFile(deployMsg.ProjectID, "deploy/prod/deployment.yaml")
+	if readErr != nil {
+		t.Fatalf("read prod deployment: %v", readErr)
+	}
+	if !strings.Contains(string(prodDeployment), "image: local/svc:dev24680") {
+		t.Fatalf("expected released prod deployment image tag, got: %s", string(prodDeployment))
+	}
+}

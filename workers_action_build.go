@@ -46,9 +46,9 @@ func imageBuilderWorkerAction(
 		outcome, err = runImageBuilderBuild(ctx, artifacts, msg, spec, imageTag)
 	case OpDelete:
 		outcome, err = runImageBuilderDelete(artifacts, msg.ProjectID, msg.OpID)
-	case OpDeploy, OpPromote:
+	case OpDeploy, OpPromote, OpRelease:
 		outcome = repoBootstrapOutcome{
-			message:   "image build skipped for deployment/promotion operation",
+			message:   "image build skipped for deployment/promotion/release operation",
 			artifacts: nil,
 		}
 	default:

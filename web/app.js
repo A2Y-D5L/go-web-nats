@@ -96,6 +96,7 @@ const dom = {
 
     deleteModalTarget: document.getElementById("deleteModalTarget"),
     deleteConfirmHint: document.getElementById("deleteConfirmHint"),
+    promotionModalTitle: document.getElementById("promotionModalTitle"),
     promotionSummary: document.getElementById("promotionSummary"),
     promotionConfirmHint: document.getElementById("promotionConfirmHint"),
 
@@ -171,6 +172,7 @@ const workerOrderByKind = {
   ci: ["imageBuilder", "manifestRenderer"],
   deploy: ["deployer"],
   promote: ["promoter"],
+  release: ["promoter"],
 };
 
 const state = {
@@ -198,7 +200,7 @@ const state = {
     previewBytes: 0,
     buildImageTag: "",
     envSnapshots: {},
-    promotionEdges: [],
+    transitionEdges: [],
     textCache: {},
   },
   operation: {
@@ -216,6 +218,7 @@ const state = {
     targetImage: "",
     reason: "",
     ready: false,
+    action: "promote",
     confirmationPhrase: "",
   },
   ui: {
@@ -475,7 +478,11 @@ function syncEnvEditorEmptyState(prefix) {
   if (!cards.length) {
     if (!empty) {
       editor.appendChild(
-        makeElem("div", "env-empty", "No environments yet. Add at least one so deployment and promotion paths are explicit.")
+        makeElem(
+          "div",
+          "env-empty",
+          "No environments yet. Add at least one so deployment, promotion, and release paths are explicit."
+        )
       );
     }
     return;
@@ -668,6 +675,23 @@ function projectEnvironmentNames(project) {
   return sortEnvironmentNames([...envs]);
 }
 
+function isProductionEnvironmentName(env) {
+  const name = String(env || "").trim().toLowerCase();
+  return name === "prod" || name === "production";
+}
+
+function transitionActionForTarget(toEnv) {
+  return isProductionEnvironmentName(toEnv) ? "release" : "promote";
+}
+
+function transitionVerb(action) {
+  return action === "release" ? "release" : "promotion";
+}
+
+function transitionEndpoint(action) {
+  return action === "release" ? "/api/events/release" : "/api/events/promotion";
+}
+
 function projectMatchesSearch(project, term) {
   if (!term) return true;
 
@@ -725,7 +749,7 @@ function renderProjectsList() {
   if (!visible.length) {
     const message = state.projects.length
       ? "No projects match current filters. Try broadening search or phase."
-      : "No projects registered yet. Register your first app to unlock deploy and promotion controls.";
+      : "No projects registered yet. Register your first app to unlock deploy, promotion, and release controls.";
     renderEmptyState(dom.containers.projects, message);
     return;
   }
@@ -785,7 +809,7 @@ function renderSelectionPanel() {
 
   if (!project) {
     dom.text.selected.classList.add("muted");
-    dom.text.selected.textContent = "Select a project to inspect environments, deploy dev, and promote safely.";
+    dom.text.selected.textContent = "Select a project to inspect environments, deploy dev, and run promotion/release transitions safely.";
     return;
   }
 
@@ -813,7 +837,7 @@ function renderSelectionPanel() {
   const row4 = makeElem(
     "p",
     "project-meta",
-    project.status?.message || "Project is available. Use deploy and promotion controls below."
+    project.status?.message || "Project is available. Use deploy and promotion/release controls below."
   );
 
   dom.text.selected.append(row1, row2, row3, row4);
@@ -887,7 +911,7 @@ function deriveRecoveryHints(errorMessage) {
     hints.push("Verify source and target environments are defined in the project spec and are different.");
   }
   if (msg.includes("deployment endpoint supports dev only")) {
-    hints.push("Use deploy only for dev and promotion for staging/prod transitions.");
+    hints.push("Use deploy only for dev; use promotion for non-production and release for production transitions.");
   }
   if (msg.includes("timeout")) {
     hints.push("Operation wait timed out. Check if workers are running, then retry the action.");
@@ -909,7 +933,7 @@ function renderOperationProgress(op) {
   if (!op) {
     renderEmptyState(
       dom.containers.opProgress,
-      "No active operation. Deploy or promote to see live progress here."
+      "No active operation. Deploy, promote, or release to see live progress here."
     );
     return;
   }
@@ -1083,6 +1107,7 @@ function artifactKind(path) {
   if (path.startsWith("build/")) return "build";
   if (path.startsWith("deploy/")) return "deploy";
   if (path.startsWith("promotions/")) return "promotion";
+  if (path.startsWith("releases/")) return "release";
   if (path.startsWith("repos/")) return "repo";
   if (path.startsWith("registration/")) return "registration";
   return "file";
@@ -1094,25 +1119,32 @@ function filteredArtifactFiles() {
   return state.artifacts.files.filter((path) => path.toLowerCase().includes(term));
 }
 
-function parsePromotionEdges(files) {
+function parseTransitionEdges(files) {
   const edges = [];
   const seen = new Set();
 
   for (const path of files) {
-    const match = path.match(/^promotions\/([^/]+)-to-([^/]+)\//);
-    if (!match) continue;
+    const promotionMatch = path.match(/^promotions\/([^/]+)-to-([^/]+)\//);
+    const releaseMatch = path.match(/^releases\/([^/]+)-to-([^/]+)\//);
+    const match = promotionMatch || releaseMatch;
+    if (!match) {
+      continue;
+    }
 
     const from = match[1];
     const to = match[2];
-    const key = `${from}->${to}`;
+    const action = releaseMatch ? "release" : "promote";
+    const rootDir = releaseMatch ? "releases" : "promotions";
+    const key = `${action}:${from}->${to}`;
     if (seen.has(key)) continue;
 
     seen.add(key);
     edges.push({
       from,
       to,
+      action,
       key,
-      renderedPath: `promotions/${from}-to-${to}/rendered.yaml`,
+      renderedPath: `${rootDir}/${from}-to-${to}/rendered.yaml`,
     });
   }
 
@@ -1144,7 +1176,7 @@ function resetArtifacts() {
   state.artifacts.previewBytes = 0;
   state.artifacts.buildImageTag = "";
   state.artifacts.envSnapshots = {};
-  state.artifacts.promotionEdges = [];
+  state.artifacts.transitionEdges = [];
   state.artifacts.textCache = {};
   dom.inputs.artifactSearch.value = "";
 }
@@ -1205,7 +1237,7 @@ async function buildEnvironmentSnapshots() {
   const project = getSelectedProject();
   if (!project || !state.artifacts.loaded) {
     state.artifacts.envSnapshots = {};
-    state.artifacts.promotionEdges = [];
+    state.artifacts.transitionEdges = [];
     state.artifacts.buildImageTag = "";
     return;
   }
@@ -1221,8 +1253,8 @@ async function buildEnvironmentSnapshots() {
     state.artifacts.buildImageTag = "";
   }
 
-  const promotionEdges = parsePromotionEdges(state.artifacts.files);
-  state.artifacts.promotionEdges = promotionEdges;
+  const transitionEdges = parseTransitionEdges(state.artifacts.files);
+  state.artifacts.transitionEdges = transitionEdges;
 
   for (const env of envs) {
     const deployDeploymentPath = `deploy/${env}/deployment.yaml`;
@@ -1242,7 +1274,7 @@ async function buildEnvironmentSnapshots() {
       hasOverlayImage: fileSet.has(overlayImagePath),
       imageTag: "",
       imageSource: "",
-      promotionEvidence: promotionEdges.filter((edge) => edge.to === env),
+      transitionEvidence: transitionEdges.filter((edge) => edge.to === env),
     };
 
     if (snapshot.hasOverlayImage) {
@@ -1279,7 +1311,7 @@ async function buildEnvironmentSnapshots() {
 function createEnvironmentCard(snapshot) {
   const card = makeElem("article", "environment-card");
   card.dataset.env = snapshot.env;
-  const promotionEvidence = Array.isArray(snapshot?.promotionEvidence) ? snapshot.promotionEvidence : [];
+  const transitionEvidence = Array.isArray(snapshot?.transitionEvidence) ? snapshot.transitionEvidence : [];
 
   const head = makeElem("div", "environment-head");
   head.append(
@@ -1301,11 +1333,11 @@ function createEnvironmentCard(snapshot) {
     makeElem("span", "", `Rendered manifest ${snapshot.hasRendered ? "yes" : "no"}`)
   );
 
-  if (promotionEvidence.length) {
-    const label = promotionEvidence.map((edge) => `${edge.from}→${edge.to}`).join(", ");
-    meta.appendChild(makeElem("span", "", `Promotion evidence ${label}`));
+  if (transitionEvidence.length) {
+    const label = transitionEvidence.map((edge) => `${edge.action} ${edge.from}→${edge.to}`).join(", ");
+    meta.appendChild(makeElem("span", "", `Transition evidence ${label}`));
   } else {
-    meta.appendChild(makeElem("span", "", "Promotion evidence none yet"));
+    meta.appendChild(makeElem("span", "", "Transition evidence none yet"));
   }
 
   const links = makeElem("div", "environment-links");
@@ -1352,7 +1384,7 @@ function renderEnvironmentMatrix() {
     const wrap = makeElem("div", "empty-state");
     wrap.append(
       makeElem("p", "", `Environment data unavailable: ${state.artifacts.error}`),
-      makeElem("p", "helper-text", "You can still deploy/promote. The API will validate requests server-side.")
+      makeElem("p", "helper-text", "You can still deploy/promote/release. The API will validate requests server-side.")
     );
     container.appendChild(wrap);
     return;
@@ -1374,7 +1406,7 @@ function renderEnvironmentMatrix() {
         deployDeploymentPath: `deploy/${env}/deployment.yaml`,
         deployServicePath: `deploy/${env}/service.yaml`,
         overlayImagePath: `repos/manifests/overlays/${env}/image.txt`,
-        promotionEvidence: [],
+        transitionEvidence: [],
       };
       container.appendChild(createEnvironmentCard(placeholder));
     }
@@ -1395,7 +1427,7 @@ function renderEnvironmentMatrix() {
       deployDeploymentPath: `deploy/${env}/deployment.yaml`,
       deployServicePath: `deploy/${env}/service.yaml`,
       overlayImagePath: `repos/manifests/overlays/${env}/image.txt`,
-      promotionEvidence: [],
+      transitionEvidence: [],
     };
 
     container.appendChild(createEnvironmentCard(snapshot));
@@ -1491,26 +1523,41 @@ function ensurePromotionSelections(project) {
 }
 
 function promotionValidation(project, fromEnv, toEnv) {
+  const action = transitionActionForTarget(toEnv);
+
   if (!project) {
-    return { valid: false, reason: "Select a project first.", sourceImage: "", targetImage: "" };
+    return { valid: false, reason: "Select a project first.", sourceImage: "", targetImage: "", action };
   }
 
   if (projectHasRunningOperation()) {
     return {
       valid: false,
-      reason: "Wait for the active operation to finish before promoting.",
+      reason: `Wait for the active operation to finish before ${transitionVerb(action)}.`,
       sourceImage: "",
       targetImage: "",
+      action,
     };
   }
 
   const envs = projectEnvironmentNames(project);
   if (!fromEnv || !toEnv) {
-    return { valid: false, reason: "Choose both source and target environments.", sourceImage: "", targetImage: "" };
+    return {
+      valid: false,
+      reason: "Choose both source and target environments.",
+      sourceImage: "",
+      targetImage: "",
+      action,
+    };
   }
 
   if (fromEnv === toEnv) {
-    return { valid: false, reason: "Source and target environments must differ.", sourceImage: "", targetImage: "" };
+    return {
+      valid: false,
+      reason: "Source and target environments must differ.",
+      sourceImage: "",
+      targetImage: "",
+      action,
+    };
   }
 
   if (!envs.includes(fromEnv) || !envs.includes(toEnv)) {
@@ -1519,16 +1566,18 @@ function promotionValidation(project, fromEnv, toEnv) {
       reason: "Selected environments are not defined for this project.",
       sourceImage: "",
       targetImage: "",
+      action,
     };
   }
 
   if (!state.artifacts.loaded) {
     return {
       valid: true,
-      reason: "Load artifacts to verify image provenance before confirming.",
+      reason: `Load artifacts to verify image provenance before confirming this ${transitionVerb(action)}.`,
       sourceImage: "unknown (artifacts not loaded)",
       targetImage: "unknown",
       warning: true,
+      action,
     };
   }
 
@@ -1540,18 +1589,20 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (!sourceImage) {
     return {
       valid: false,
-      reason: `No promoted image found in ${fromEnv}. Deploy or promote that source first.`,
+      reason: `No promoted image found in ${fromEnv}. Deploy or transition that source first.`,
       sourceImage: "",
       targetImage,
+      action,
     };
   }
 
   return {
     valid: true,
-    reason: "Promotion is ready for confirmation.",
+    reason: `${transitionVerb(action)} is ready for confirmation.`,
     sourceImage,
     targetImage,
     warning: false,
+    action,
   };
 }
 
@@ -1577,12 +1628,16 @@ function renderPromotionPanel() {
   state.promotion.targetImage = validation.targetImage || "";
   state.promotion.reason = validation.reason;
   state.promotion.ready = Boolean(validation.valid);
+  state.promotion.action = validation.action || "promote";
+  const actionLabel = state.promotion.action === "release" ? "Release" : "Promotion";
 
   dom.text.promotionDraftSummary.textContent = project
-    ? `Source ${fromEnv || "-"} (${validation.sourceImage || "unknown"}) → Target ${toEnv || "-"} (${validation.targetImage || "unknown"}).`
-    : "Select a project to configure promotion.";
+    ? `${actionLabel}: source ${fromEnv || "-"} (${validation.sourceImage || "unknown"}) -> target ${toEnv || "-"} (${validation.targetImage || "unknown"}).`
+    : "Select a project to configure promotion/release.";
 
   dom.text.promotionGuardrail.textContent = validation.reason;
+  dom.buttons.openPromotionModal.textContent =
+    state.promotion.action === "release" ? "Review release" : "Review promotion";
   dom.buttons.openPromotionModal.disabled = !validation.valid;
 }
 
@@ -1632,9 +1687,9 @@ function renderArtifactQuickLinks() {
     }
   }
 
-  for (const edge of state.artifacts.promotionEdges.slice(0, 6)) {
+  for (const edge of state.artifacts.transitionEdges.slice(0, 6)) {
     if (state.artifacts.files.includes(edge.renderedPath)) {
-      links.push({ label: `${edge.from}->${edge.to}`, path: edge.renderedPath });
+      links.push({ label: `${edge.action} ${edge.from}->${edge.to}`, path: edge.renderedPath });
     }
   }
 
@@ -1686,7 +1741,7 @@ function renderArtifactsPanel() {
   if (state.artifacts.error && !state.artifacts.loaded) {
     renderEmptyState(dom.containers.artifacts, `Artifact load failed: ${state.artifacts.error}`);
   } else if (!state.artifacts.loaded) {
-    renderEmptyState(dom.containers.artifacts, "Load artifacts to inspect deploy/promotion outputs.");
+    renderEmptyState(dom.containers.artifacts, "Load artifacts to inspect deploy/promotion/release outputs.");
   } else if (!filtered.length) {
     const message = state.artifacts.files.length
       ? "No artifacts match this filter."
@@ -1768,7 +1823,7 @@ function renderSystemStrip() {
     dom.text.healthMeta.textContent = "One or more projects are in Error phase";
   } else {
     dom.text.healthLabel.textContent = "Operational";
-    dom.text.healthMeta.textContent = "Registration, deployment, and promotion pathways are available";
+    dom.text.healthMeta.textContent = "Registration, deployment, promotion, and release pathways are available";
   }
 }
 
@@ -1803,7 +1858,7 @@ function syncPromotionConfirmationState() {
   dom.buttons.promotionConfirm.disabled = !valid;
   dom.text.promotionConfirmHint.textContent = expected
     ? `Type "${expected}" exactly to confirm.`
-    : "Promotion summary unavailable.";
+    : "Transition summary unavailable.";
 }
 
 function openModal(modalName) {
@@ -1872,10 +1927,17 @@ function openPromotionConfirmation() {
 
   state.promotion.sourceImage = validation.sourceImage;
   state.promotion.targetImage = validation.targetImage;
-  state.promotion.confirmationPhrase = `promote ${fromEnv} to ${toEnv}`;
+  state.promotion.action = validation.action || transitionActionForTarget(toEnv);
+  state.promotion.confirmationPhrase = `${state.promotion.action} ${fromEnv} to ${toEnv}`;
+  const actionLabel = state.promotion.action === "release" ? "Release" : "Promotion";
+  dom.text.promotionModalTitle.textContent =
+    state.promotion.action === "release" ? "Confirm release" : "Confirm promotion";
+  dom.buttons.promotionConfirm.textContent =
+    state.promotion.action === "release" ? "Release environment" : "Promote environment";
 
   dom.text.promotionSummary.replaceChildren(
     makeElem("p", "", `Project ${project.spec?.name || project.id}`),
+    makeElem("p", "", `Action ${actionLabel}`),
     makeElem("p", "", `From ${fromEnv}`),
     makeElem("p", "", `To ${toEnv}`),
     makeElem("p", "", `Source image ${validation.sourceImage || "unknown"}`),
@@ -2310,15 +2372,17 @@ async function handlePromotionConfirmSubmit(event) {
 
   const typed = String(dom.inputs.promotionConfirmInput.value || "").trim();
   if (typed !== state.promotion.confirmationPhrase) {
-    setStatus("Promotion confirmation phrase does not match.", "warning");
+    setStatus("Transition confirmation phrase does not match.", "warning");
     syncPromotionConfirmationState();
     return;
   }
 
-  setStatus(`Promoting ${fromEnv} to ${toEnv}...`, "warning");
+  const action = validation.action || transitionActionForTarget(toEnv);
+  const actionLabel = action === "release" ? "Release" : "Promotion";
+  setStatus(`${actionLabel} ${fromEnv} to ${toEnv}...`, "warning");
 
   try {
-    const response = await requestAPI("POST", "/api/events/promotion", {
+    const response = await requestAPI("POST", transitionEndpoint(action), {
       project_id: project.id,
       from_env: fromEnv,
       to_env: toEnv,
@@ -2330,7 +2394,7 @@ async function handlePromotionConfirmSubmit(event) {
 
     closeModal("promotion");
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus(`Promotion ${fromEnv} → ${toEnv} accepted.`, "success", { toast: true });
+    setStatus(`${actionLabel} ${fromEnv} -> ${toEnv} accepted.`, "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }

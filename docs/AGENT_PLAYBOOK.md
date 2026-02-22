@@ -13,7 +13,7 @@ Task lookup helpers:
 ## Add/Change API Endpoint
 
 1. Update route wiring in `api_types.go` if needed.
-2. Implement handler in the matching `api_*.go` file (`api_processes.go` for deploy/promotion events).
+2. Implement handler in the matching `api_*.go` file (`api_processes.go` for deploy/promotion/release events).
 3. Reuse `api_runop.go` for op orchestration (do not duplicate wait/publish logic).
 4. Add/adjust tests in `api_handlers_test.go` or `api_webhooks_test.go`.
 5. Run `make test-api`, then `make check`.

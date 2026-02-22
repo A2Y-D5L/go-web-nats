@@ -30,9 +30,9 @@ func registrationWorkerAction(
 			message:   "registration skipped for ci operation",
 			artifacts: nil,
 		}
-	case OpDeploy, OpPromote:
+	case OpDeploy, OpPromote, OpRelease:
 		outcome = repoBootstrapOutcome{
-			message:   "registration skipped for deployment/promotion operation",
+			message:   "registration skipped for deployment/promotion/release operation",
 			artifacts: nil,
 		}
 	default:

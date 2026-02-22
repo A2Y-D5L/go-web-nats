@@ -35,7 +35,7 @@ type ProjectStatus struct {
 	Phase      string    `json:"phase"`        // Ready | Reconciling | Deleting | Error
 	UpdatedAt  time.Time `json:"updated_at"`   //
 	LastOpID   string    `json:"last_op_id"`   //
-	LastOpKind string    `json:"last_op_kind"` // create|update|delete|ci|deploy|promote
+	LastOpKind string    `json:"last_op_kind"` // create|update|delete|ci|deploy|promote|release
 	Message    string    `json:"message,omitempty"`
 }
 
@@ -56,7 +56,23 @@ const (
 	OpCI      OperationKind = "ci"
 	OpDeploy  OperationKind = "deploy"
 	OpPromote OperationKind = "promote"
+	OpRelease OperationKind = "release"
 )
+
+type DeliveryStage string
+
+const (
+	DeliveryStageDeploy  DeliveryStage = "deploy"
+	DeliveryStagePromote DeliveryStage = "promote"
+	DeliveryStageRelease DeliveryStage = "release"
+)
+
+type DeliveryLifecycle struct {
+	Stage       DeliveryStage `json:"stage,omitempty"`
+	Environment string        `json:"environment,omitempty"`
+	FromEnv     string        `json:"from_env,omitempty"`
+	ToEnv       string        `json:"to_env,omitempty"`
+}
 
 type OpStep struct {
 	Worker    string    `json:"worker"`
@@ -68,14 +84,15 @@ type OpStep struct {
 }
 
 type Operation struct {
-	ID        string        `json:"id"`
-	Kind      OperationKind `json:"kind"`
-	ProjectID string        `json:"project_id"`
-	Requested time.Time     `json:"requested"`
-	Finished  time.Time     `json:"finished"`
-	Status    string        `json:"status"` // queued|running|done|error
-	Error     string        `json:"error,omitempty"`
-	Steps     []OpStep      `json:"steps"`
+	ID        string            `json:"id"`
+	Kind      OperationKind     `json:"kind"`
+	ProjectID string            `json:"project_id"`
+	Delivery  DeliveryLifecycle `json:"delivery,omitzero"`
+	Requested time.Time         `json:"requested"`
+	Finished  time.Time         `json:"finished"`
+	Status    string            `json:"status"` // queued|running|done|error
+	Error     string            `json:"error,omitempty"`
+	Steps     []OpStep          `json:"steps"`
 }
 
 var (

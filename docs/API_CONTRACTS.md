@@ -135,7 +135,7 @@ Rules:
 
 - `project_id` is required.
 - `environment` is optional and defaults to `dev`.
-- Only `dev` is accepted by deployment events; higher environments must use promotion events.
+- Only `dev` is accepted by deployment events; higher environments must use promotion or release transitions.
 
 Success response:
 
@@ -169,7 +169,43 @@ Rules:
 
 - `project_id`, `from_env`, and `to_env` are required.
 - `from_env` and `to_env` must differ.
-- Both environments must be defined for the project (except `dev`, which is always supported for deployment/promotion state).
+- Both environments must be defined for the project (except `dev`, which is always supported for deployment/promotion/release state).
+- If `to_env` is production (`prod` or `production`), the operation is classified as `release` (not `promote`).
+
+Success response:
+
+- Status: `200 OK`
+
+```json
+{
+  "project": {},
+  "op": {},
+  "final": {}
+}
+```
+
+## Release Events
+
+Endpoint:
+
+- `POST /api/events/release`
+
+Request body:
+
+```json
+{
+  "project_id": "project-id",
+  "from_env": "staging",
+  "to_env": "prod"
+}
+```
+
+Rules:
+
+- `project_id` and `from_env` are required.
+- `to_env` is optional and defaults to `prod`.
+- `to_env` must resolve to a production environment (`prod` or `production`) defined for the project.
+- `from_env` and `to_env` must differ.
 
 Success response:
 
@@ -207,7 +243,19 @@ Endpoint:
 
 - `GET /api/ops/{opID}`
 
-Response is an `Operation` object with step-level worker details.
+Response is an `Operation` object with step-level worker details. Process operations now include `delivery` metadata:
+
+```json
+{
+  "kind": "deploy | promote | release",
+  "delivery": {
+    "stage": "deploy | promote | release",
+    "environment": "dev",
+    "from_env": "dev",
+    "to_env": "staging"
+  }
+}
+```
 
 Common status codes:
 
