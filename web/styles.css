@@ -184,13 +184,6 @@ a {
   flex-wrap: wrap;
 }
 
-.landing-filters {
-  display: grid;
-  grid-template-columns: minmax(220px, 420px);
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
-}
-
 .hidden-controls {
   display: none;
 }
@@ -231,13 +224,6 @@ a {
 .panel-copy {
   color: var(--ink-body);
   font-size: 0.87rem;
-}
-
-.project-dock {
-  position: sticky;
-  top: var(--space-3);
-  max-height: calc(100vh - 2rem);
-  overflow: auto;
 }
 
 .field {
@@ -335,137 +321,6 @@ a {
   box-shadow: none;
 }
 
-.intent-hub {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
-  gap: var(--space-3);
-  background: linear-gradient(132deg, rgba(12, 52, 63, 0.96), rgba(18, 71, 84, 0.96));
-  color: #ecf7f2;
-  border-color: rgba(168, 216, 211, 0.36);
-}
-
-.intent-main {
-  display: grid;
-  gap: var(--space-2);
-  align-content: start;
-}
-
-.intent-kicker {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 0.7rem;
-  color: rgba(232, 248, 241, 0.8);
-}
-
-.intent-main h2 {
-  font-family: var(--font-display);
-  font-size: clamp(1.28rem, 2.1vw, 1.8rem);
-  line-height: 1.1;
-}
-
-.intent-detail {
-  color: rgba(231, 247, 241, 0.9);
-  max-width: 64ch;
-}
-
-.intent-main .btn {
-  width: fit-content;
-}
-
-.intent-persona {
-  border: 1px solid rgba(170, 216, 213, 0.35);
-  border-radius: var(--radius-md);
-  background: rgba(9, 36, 43, 0.4);
-  padding: var(--space-3);
-  display: grid;
-  gap: var(--space-2);
-  align-content: start;
-}
-
-.intent-persona .field > span {
-  color: rgba(224, 242, 234, 0.8);
-}
-
-.intent-persona select {
-  border-color: rgba(181, 223, 214, 0.5);
-  background: rgba(241, 251, 247, 0.92);
-  color: #213a3c;
-}
-
-.intent-persona h3 {
-  font-size: 1.02rem;
-}
-
-.intent-persona .helper-text {
-  color: rgba(228, 244, 236, 0.88);
-}
-
-.persona-checklist {
-  margin: 0;
-  padding-left: 1rem;
-  display: grid;
-  gap: 0.32rem;
-  font-size: 0.81rem;
-  color: rgba(231, 247, 241, 0.93);
-}
-
-.goal-path-panel {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.goal-path {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.goal-step {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  background: #fffefb;
-  padding: 0.65rem 0.7rem;
-  display: grid;
-  gap: 0.22rem;
-  border-left-width: 4px;
-  transition: transform var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard);
-}
-
-.goal-step-title {
-  font-weight: 700;
-  font-size: 0.82rem;
-}
-
-.goal-step-detail {
-  color: var(--ink-body);
-  font-size: 0.76rem;
-  line-height: 1.35;
-}
-
-.goal-step--done {
-  border-left-color: #3d9059;
-  background: var(--ok-100);
-}
-
-.goal-step--current {
-  border-left-color: #2f6f9a;
-  background: var(--info-100);
-  transform: translateY(-1px);
-}
-
-.goal-step--pending {
-  border-left-color: #7f9188;
-}
-
-.goal-step--blocked {
-  border-left-color: #bb6a1f;
-  background: var(--warn-100);
-}
-
 .metric-card {
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-md);
@@ -524,10 +379,6 @@ a {
 
 .status-banner.tone-error {
   background: var(--error-100);
-}
-
-.project-overview .panel-head {
-  margin-bottom: var(--space-3);
 }
 
 .selected-actions {
@@ -1179,13 +1030,6 @@ a {
   border-color: color-mix(in srgb, var(--accent-600) 70%, transparent);
 }
 
-.footer-note {
-  color: var(--ink-muted);
-  font-size: 0.79rem;
-  line-height: 1.4;
-  text-align: right;
-}
-
 .muted {
   color: var(--ink-muted);
 }
@@ -1366,35 +1210,18 @@ a {
   .environment-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .goal-path {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 1060px) {
-  .landing-filters,
   .form-grid,
   .compact-form,
   .advanced-grid {
     grid-template-columns: 1fr;
   }
 
-  .intent-hub {
-    grid-template-columns: 1fr;
-  }
-
-  .goal-path {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .selected-actions,
   .landing-actions {
     width: 100%;
-  }
-
-  .footer-note {
-    text-align: left;
   }
 }
 
@@ -1414,10 +1241,6 @@ a {
   .system-strip,
   .environment-grid,
   .action-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .goal-path {
     grid-template-columns: 1fr;
   }
 
