@@ -64,7 +64,14 @@ Webhook-specific note:
 
 1. Edit `web/index.html` for semantic structure and accessibility.
 2. Edit `web/styles.css` using tokenized styles and responsive layout updates.
-3. Edit `web/app.js` for state management, API calls, rendering, and polling behavior.
+3. Edit the focused frontend JS module:
+   - `web/app_core.js` for shared state/utilities/forms.
+   - `web/app_render_projects_ops.js` for project rail and operation views.
+   - `web/app_data_artifacts.js` for API/journey/artifact data flows.
+   - `web/app_render_surfaces.js` for top-level panel rendering.
+   - `web/app_flow.js` for modal/action/monitoring flows.
+   - `web/app_events.js` for bindings/init.
+   - `web/app.js` only as the bootstrap shim.
 4. Keep endpoint contracts aligned with `docs/API_CONTRACTS.md`.
 5. Run `make js-check`, then `make check`.
 

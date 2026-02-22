@@ -30,7 +30,13 @@ Primary agent contract: `AGENTS.md`
 - `ui_embed.go`: embedded static web assets.
 - `web/index.html`: semantic UI structure and panel composition for the embedded dashboard.
 - `web/styles.css`: frontend design tokens, layout system, and component/state styling.
-- `web/app.js`: client-side state, API calls, rendering, operation polling, and artifact preview logic.
+- `web/app_core.js`: frontend DOM bindings, shared constants/state, utility helpers, and form spec builders.
+- `web/app_render_projects_ops.js`: project list/selection rendering plus operation progress/timeline/history rendering.
+- `web/app_data_artifacts.js`: API request helper, journey loading, artifact parsing, environment snapshots, and deploy/promotion guardrails.
+- `web/app_render_surfaces.js`: journey/artifact/environment/system strip rendering and top-level render orchestration helpers.
+- `web/app_flow.js`: modal flows, operation monitoring, project refresh/selection lifecycle, and action handlers.
+- `web/app_events.js`: DOM event wiring and async frontend initialization function.
+- `web/app.js`: frontend entrypoint shim that starts `init`.
 - `config_runtime.go`: runtime defaults/timeouts and HTTP/artifact roots.
 - `config_subjects.go`: NATS subjects and KV key/bucket names.
 - `config_domain.go`: project schema/domain defaults and phase constants.
@@ -88,7 +94,7 @@ Primary agent contract: `AGENTS.md`
 - Change worker pub/sub flow: `workers_defs.go`, `workers_loop.go`, `workers_resultmsg.go`, and `messages.go`.
 - Change persistence behavior: `store.go`.
 - Change local artifact layout: `artifacts_fs.go`.
-- Change frontend UX/UI behavior: start in `web/index.html`, `web/styles.css`, and `web/app.js`.
+- Change frontend UX/UI behavior: start in `web/index.html`, `web/styles.css`, and the `web/app_*.js` module matching the concern.
 - Change defaults/constants: start in `config_runtime.go`, `config_subjects.go`, `config_domain.go`, `config_filesystem.go`.
 - Change agent docs/context: start in `AGENTS.md`, `CODEMAP.md`, `TASKMAP.yaml`, `docs/AGENT_PLAYBOOK.md`.
 

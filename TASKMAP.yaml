@@ -108,6 +108,12 @@ tasks:
     files:
       - web/index.html
       - web/styles.css
+      - web/app_core.js
+      - web/app_render_projects_ops.js
+      - web/app_data_artifacts.js
+      - web/app_render_surfaces.js
+      - web/app_flow.js
+      - web/app_events.js
       - web/app.js
       - ui_embed.go
     tests: []

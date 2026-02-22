@@ -131,7 +131,16 @@ cover: prepare-go-env ## Run tests with coverage report
 	$(GO) tool cover -func="$(COVER_OUT)"
 
 js-check: ## Syntax-check frontend JS
-	$(NODE) --check web/app.js
+	@set -euo pipefail; \
+	files="$$(rg --files web -g '*.js' | sort)"; \
+	if [[ -z "$$files" ]]; then \
+		echo "No frontend JS files found."; \
+		exit 0; \
+	fi; \
+	while IFS= read -r file; do \
+		$(NODE) --check "$$file"; \
+	done <<< "$$files"; \
+	echo "Frontend JS syntax clean."
 
 agent-check: ## Validate agent context files and task-map references
 	@set -euo pipefail; \

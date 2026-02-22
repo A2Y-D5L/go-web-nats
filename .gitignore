@@ -15,6 +15,9 @@
 !CODEMAP.md
 !TASKMAP.yaml
 !docs/**/*.md
+!web/**/*.html
+!web/**/*.css
+!web/**/*.js
 !*.go
 !**/*.go
 !scripts/**/*.sh
