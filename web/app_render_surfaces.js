@@ -14,6 +14,29 @@ function journeyStatusLabel(status) {
   }
 }
 
+function journeyNextActionInstruction(nextAction) {
+  const kind = String(nextAction?.kind || "none");
+  const fromEnv = String(nextAction?.from_env || "");
+  const toEnv = String(nextAction?.to_env || "");
+  const detail = String(nextAction?.detail || "").trim();
+
+  let summary = "No follow-up action is required right now.";
+  if (kind === "build") {
+    summary = "Starts a build from source/main and streams progress in Activity.";
+  } else if (kind === "deploy_dev") {
+    summary = "Deploys the latest built image to dev for validation.";
+  } else if (kind === "promote") {
+    summary = `Opens promotion review for moving ${fromEnv || "source"} to ${toEnv || "target"}.`;
+  } else if (kind === "release") {
+    summary = `Opens release review for moving ${fromEnv || "source"} to ${toEnv || "production"}.`;
+  } else if (kind === "investigate") {
+    summary = "Review recent activity and outputs before retrying.";
+  }
+
+  if (!detail) return summary;
+  return `${summary} ${detail}`;
+}
+
 function renderWorkspaceShell() {
   const project = getSelectedProject();
   const shouldShowWorkspace = state.ui.workspaceOpen && Boolean(project);
@@ -75,12 +98,17 @@ function renderJourneyPanel() {
   dom.text.journeyStatusLine.textContent = journey.summary || "Journey status is available.";
 
   const nextAction = journey.next_action || { kind: "none", label: "No suggested action", detail: "" };
-  nextActionCard.textContent = `${nextAction.label || "No suggested action"}: ${nextAction.detail || "No action needed."}`;
+  nextActionCard.textContent = journeyNextActionInstruction(nextAction);
   nextActionButton.dataset.actionKind = nextAction.kind || "none";
   nextActionButton.dataset.fromEnv = nextAction.from_env || "";
   nextActionButton.dataset.toEnv = nextAction.to_env || "";
   nextActionButton.textContent = nextAction.label || "Run suggested step";
   nextActionButton.disabled = !["build", "deploy_dev", "promote", "release"].includes(nextAction.kind);
+
+  if (projectHasRunningOperation()) {
+    nextActionButton.disabled = true;
+    nextActionCard.textContent = "Suggested step is temporarily paused while current app activity is running.";
+  }
 
   const milestones = Array.isArray(journey.milestones) ? journey.milestones : [];
   if (!milestones.length) {

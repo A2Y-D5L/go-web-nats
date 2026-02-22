@@ -467,6 +467,35 @@ function deployGuardrailState() {
   };
 }
 
+function buildGuardrailState() {
+  const project = getSelectedProject();
+  if (!project) {
+    return {
+      disabled: true,
+      message: "Select an app first.",
+      summary: "Choose an app to trigger a source build.",
+      tone: "warning",
+    };
+  }
+
+  if (projectHasRunningOperation()) {
+    const opKind = state.operation.payload?.kind;
+    return {
+      disabled: true,
+      message: `Wait for ${operationLabel(opKind)} to finish before starting another build.`,
+      summary: "Another app activity is currently running.",
+      tone: "warning",
+    };
+  }
+
+  return {
+    disabled: false,
+    message: "Build trigger is ready.",
+    summary: "Build uses source/main with refs/heads/main by default.",
+    tone: "info",
+  };
+}
+
 function ensurePromotionSelections(project) {
   if (!project) {
     state.promotion.fromEnv = "";
@@ -595,6 +624,32 @@ function renderDeployPanel() {
   dom.buttons.deployDev.disabled = guardrail.disabled;
   dom.text.deploySummary.textContent = guardrail.summary;
   dom.text.deployGuardrail.textContent = guardrail.message;
+
+  if (projectHasRunningOperation()) {
+    setPanelInlineStatus(
+      dom.text.deployPanelStatus,
+      "Delivery controls are paused while current activity is in progress.",
+      "warning"
+    );
+    return;
+  }
+
+  setPanelInlineStatus(
+    dom.text.deployPanelStatus,
+    guardrail.disabled ? "Resolve delivery guardrails before continuing." : "Ready: deliver the latest built image to dev.",
+    guardrail.disabled ? "warning" : "success"
+  );
+}
+
+function renderBuildPanel() {
+  const guardrail = buildGuardrailState();
+  dom.buttons.webhook.disabled = guardrail.disabled;
+  dom.inputs.webhookRepo.disabled = guardrail.disabled;
+  dom.inputs.webhookBranch.disabled = guardrail.disabled;
+  dom.inputs.webhookRef.disabled = guardrail.disabled;
+  dom.inputs.webhookCommit.disabled = guardrail.disabled;
+
+  setPanelInlineStatus(dom.text.buildPanelStatus, `${guardrail.summary} ${guardrail.message}`, guardrail.tone);
 }
 
 function renderPromotionPanel() {
@@ -623,9 +678,29 @@ function renderPromotionPanel() {
   dom.buttons.openPromotionModal.textContent =
     state.promotion.action === "release" ? "Review release" : "Review promotion";
   dom.buttons.openPromotionModal.disabled = !validation.valid;
+  dom.inputs.promotionFrom.disabled = projectHasRunningOperation();
+  dom.inputs.promotionTo.disabled = projectHasRunningOperation();
+
+  if (projectHasRunningOperation()) {
+    setPanelInlineStatus(
+      dom.text.promotionPanelStatus,
+      "Environment moves are paused while current activity is in progress.",
+      "warning"
+    );
+    return;
+  }
+
+  setPanelInlineStatus(
+    dom.text.promotionPanelStatus,
+    validation.valid
+      ? `${actionLabel} path ready. Review move details, then confirm.`
+      : "Adjust environment selection or readiness checks before continuing.",
+    validation.valid ? "success" : "warning"
+  );
 }
 
 function renderActionPanels() {
+  renderBuildPanel();
   renderDeployPanel();
   renderPromotionPanel();
 }

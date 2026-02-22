@@ -226,6 +226,16 @@ function bindEvents() {
 
     if (typing) return;
 
+    if (key === "/") {
+      event.preventDefault();
+      if (state.ui.workspaceOpen) {
+        closeWorkspace();
+      }
+      dom.inputs.projectSearch.focus();
+      dom.inputs.projectSearch.select();
+      return;
+    }
+
     if (key === "r") {
       event.preventDefault();
       dom.buttons.refresh.click();

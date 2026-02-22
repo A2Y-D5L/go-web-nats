@@ -248,8 +248,9 @@ Config contracts are modeled from:
 The embedded UI (`/`) now mirrors backend execution semantics directly:
 
 - system strip with project/health/op/build mode status
-- searchable/sortable project inventory with phase badges
+- always-visible search/filter/sort controls for project inventory
 - selected-project action workspace for create/update/delete + source webhook CI
+- one-click `Build latest source` primary action with advanced webhook payload overrides in an expandable section
 - explicit dev deploy with promotion/release transition guardrails
 - live operation timeline streamed by SSE with polling fallback
 - artifact explorer with preview/download, BuildKit metadata signal, and imageBuilder output visibility

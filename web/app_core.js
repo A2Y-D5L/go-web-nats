@@ -17,6 +17,7 @@ const dom = {
     loadArtifacts: document.getElementById("loadArtifactsBtn"),
     copyPreview: document.getElementById("copyPreviewBtn"),
     deployDev: document.getElementById("deployDevBtn"),
+    buildLatest: document.getElementById("buildLatestBtn"),
     openPromotionModal: document.getElementById("openPromotionModalBtn"),
     journeyNextAction: document.getElementById("journeyNextActionBtn"),
 
@@ -90,8 +91,11 @@ const dom = {
 
     deploySummary: document.getElementById("deploySummary"),
     deployGuardrail: document.getElementById("deployGuardrail"),
+    deployPanelStatus: document.getElementById("deployPanelStatus"),
+    buildPanelStatus: document.getElementById("buildPanelStatus"),
     promotionDraftSummary: document.getElementById("promotionDraftSummary"),
     promotionGuardrail: document.getElementById("promotionGuardrail"),
+    promotionPanelStatus: document.getElementById("promotionPanelStatus"),
 
     artifactStats: document.getElementById("artifactStats"),
     buildkitSignal: document.getElementById("buildkitSignal"),
@@ -105,6 +109,7 @@ const dom = {
     promotionConfirmHint: document.getElementById("promotionConfirmHint"),
 
     opRaw: document.getElementById("lastOp"),
+    opTransportStatus: document.getElementById("opTransportStatus"),
   },
   containers: {
     projects: document.getElementById("projects"),
@@ -133,7 +138,13 @@ const dom = {
   },
 };
 
-dom.buttons.webhook = dom.forms.webhook.querySelector("button[type='submit']");
+dom.buttons.webhook = dom.buttons.buildLatest || dom.forms.webhook.querySelector("button[type='submit']");
+
+const defaultSourceWebhookPayload = {
+  repo: "source",
+  branch: "main",
+  ref: "refs/heads/main",
+};
 
 const runtimeProfiles = [
   { value: "go_1.26", label: "Go version 1.26 (recommended)" },
@@ -369,6 +380,13 @@ function setStatus(message, tone = "info", { toast = false } = {}) {
   if (toast && message) {
     pushToast(message, tone);
   }
+}
+
+function setPanelInlineStatus(target, message, tone = "info") {
+  if (!target) return;
+  target.textContent = message || "";
+  target.className = "panel-inline-status";
+  target.classList.add(`tone-${tone || "info"}`);
 }
 
 function renderStatus() {
@@ -673,13 +691,29 @@ function buildUpdateSpec() {
   };
 }
 
-function buildWebhookPayload(projectID) {
+function generatedWebhookCommitHint() {
+  const now = Date.now().toString(16);
+  const random = Math.floor(Math.random() * 0xffffff)
+    .toString(16)
+    .padStart(6, "0");
+  return `manual-${now}-${random}`;
+}
+
+function buildWebhookPayload(projectID, { generateCommit = false } = {}) {
+  const repo = String(dom.inputs.webhookRepo.value || defaultSourceWebhookPayload.repo).trim();
+  const branch = String(dom.inputs.webhookBranch.value || defaultSourceWebhookPayload.branch).trim();
+  const ref = String(dom.inputs.webhookRef.value || defaultSourceWebhookPayload.ref).trim();
+  let commit = String(dom.inputs.webhookCommit.value || "").trim();
+  if (!commit && generateCommit) {
+    commit = generatedWebhookCommitHint();
+  }
+
   return {
     project_id: projectID,
-    repo: dom.inputs.webhookRepo.value.trim(),
-    branch: dom.inputs.webhookBranch.value.trim(),
-    ref: dom.inputs.webhookRef.value.trim(),
-    commit: dom.inputs.webhookCommit.value.trim(),
+    repo: repo || defaultSourceWebhookPayload.repo,
+    branch: branch || defaultSourceWebhookPayload.branch,
+    ref: ref || defaultSourceWebhookPayload.ref,
+    commit,
   };
 }
 
@@ -786,6 +820,8 @@ function projectMatchesSearch(project, term) {
     project.spec?.runtime || "",
     formatRuntimeLiteral(project.spec?.runtime || ""),
     project.status?.phase || "",
+    project.status?.message || "",
+    project.status?.last_op_kind || "",
     envs.join(" "),
   ]
     .join(" ")

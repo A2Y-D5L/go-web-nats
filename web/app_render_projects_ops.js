@@ -73,11 +73,12 @@ function renderProjectsList() {
 function renderSelectionPanel() {
   const project = getSelectedProject();
   const hasSelection = Boolean(project);
+  const hasRunningOperation = hasSelection && projectHasRunningOperation();
 
-  dom.buttons.openUpdateModal.disabled = !hasSelection;
-  dom.buttons.openDeleteModal.disabled = !hasSelection;
+  dom.buttons.openUpdateModal.disabled = !hasSelection || hasRunningOperation;
+  dom.buttons.openDeleteModal.disabled = !hasSelection || hasRunningOperation;
   dom.buttons.loadArtifacts.disabled = !hasSelection;
-  dom.buttons.webhook.disabled = !hasSelection;
+  dom.buttons.webhook.disabled = !hasSelection || hasRunningOperation;
 
   dom.text.selected.replaceChildren();
 
@@ -367,7 +368,56 @@ function renderOperationPanel() {
   renderOperationErrorSurface(op);
   renderOperationTimeline(op);
   renderOperationHistory();
+  renderOperationTransportStatus(op);
   dom.text.opRaw.textContent = op ? pretty(op) : "";
+}
+
+function renderOperationTransportStatus(op) {
+  if (!dom.text.opTransportStatus) return;
+
+  if (!op) {
+    setPanelInlineStatus(dom.text.opTransportStatus, "Realtime stream connects after an action starts.", "info");
+    return;
+  }
+
+  const terminal = isTerminalOperationStatus(op.status);
+  if (state.operation.usingPolling && !terminal) {
+    setPanelInlineStatus(
+      dom.text.opTransportStatus,
+      "Realtime stream unavailable. Using polling fallback for activity updates.",
+      "warning"
+    );
+    return;
+  }
+
+  if (state.operation.eventSource && !terminal) {
+    setPanelInlineStatus(
+      dom.text.opTransportStatus,
+      "Realtime stream connected. Steps update live without refreshing.",
+      "success"
+    );
+    return;
+  }
+
+  if (!terminal) {
+    setPanelInlineStatus(dom.text.opTransportStatus, "Connecting realtime activity stream...", "info");
+    return;
+  }
+
+  if (op.status === "done") {
+    setPanelInlineStatus(
+      dom.text.opTransportStatus,
+      "Activity completed. Review timeline and outputs for the final result.",
+      "success"
+    );
+    return;
+  }
+
+  setPanelInlineStatus(
+    dom.text.opTransportStatus,
+    "Activity failed. Review recovery hints and retry when ready.",
+    "error"
+  );
 }
 
 function projectHasRunningOperation() {

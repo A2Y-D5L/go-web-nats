@@ -184,12 +184,13 @@ a {
   flex-wrap: wrap;
 }
 
-.hidden-controls {
-  display: none;
-}
-
 .landing-project-list {
   max-height: none;
+}
+
+.landing-filter-grid {
+  grid-template-columns: minmax(0, 1.8fr) repeat(2, minmax(0, 1fr));
+  align-items: end;
 }
 
 .workspace-header-panel {
@@ -498,6 +499,28 @@ a {
   min-height: 1.2rem;
   font-size: 0.8rem;
   color: var(--warn-700);
+}
+
+.panel-inline-status {
+  min-height: 1.2rem;
+  font-size: 0.8rem;
+  color: var(--ink-body);
+}
+
+.panel-inline-status.tone-info {
+  color: var(--info-600);
+}
+
+.panel-inline-status.tone-success {
+  color: var(--ok-600);
+}
+
+.panel-inline-status.tone-warning {
+  color: var(--warn-700);
+}
+
+.panel-inline-status.tone-error {
+  color: var(--error-700);
 }
 
 .form-grid {
@@ -1216,6 +1239,10 @@ a {
   .form-grid,
   .compact-form,
   .advanced-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-filter-grid {
     grid-template-columns: 1fr;
   }
 

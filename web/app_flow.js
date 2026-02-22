@@ -243,6 +243,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
     if (state.operation.usingPolling) return;
     state.operation.usingPolling = true;
     closeOperationEventSource();
+    renderOperationPanel();
 
     const poll = async () => {
       if (token !== state.operation.token) return;
@@ -279,6 +280,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
     const source = new EventSource(`/api/ops/${encodeURIComponent(opID)}/events`);
     state.operation.eventSource = source;
     state.operation.usingPolling = false;
+    renderOperationPanel();
 
     const streamEvents = [
       "op.bootstrap",
@@ -493,6 +495,15 @@ function selectProject(projectID) {
   });
 }
 
+function primeAcceptedOperation(op) {
+  if (!op?.id) return;
+  state.operation.payload = op;
+  upsertOperationHistory(op);
+  renderOperationPanel();
+  renderSystemStrip();
+  renderActionPanels();
+}
+
 async function handleCreateSubmit(event) {
   event.preventDefault();
   setStatus("Creating app...", "info");
@@ -511,11 +522,12 @@ async function handleCreateSubmit(event) {
     }
 
     if (response.op?.id) {
+      primeAcceptedOperation(response.op);
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
     closeModal("create");
-    setStatus("App creation accepted.", "success", { toast: true });
+    setStatus("App creation accepted. Live activity is now tracking progress.", "success", { toast: true });
   } catch (error) {
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
@@ -547,11 +559,12 @@ async function handleUpdateSubmit(event) {
     }
 
     if (response.op?.id) {
+      primeAcceptedOperation(response.op);
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
     closeModal("update");
-    setStatus("App update accepted.", "success", { toast: true });
+    setStatus("App update accepted. Live activity is now tracking progress.", "success", { toast: true });
   } catch (error) {
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
@@ -569,7 +582,7 @@ async function handleWebhookSubmit(event) {
   setStatus("Starting build from source change...", "info");
 
   try {
-    const payload = buildWebhookPayload(project.id);
+    const payload = buildWebhookPayload(project.id, { generateCommit: true });
     const response = await requestAPI("POST", "/api/webhooks/source", payload);
 
     if (!response.accepted) {
@@ -578,11 +591,12 @@ async function handleWebhookSubmit(event) {
     }
 
     if (response.op?.id) {
+      primeAcceptedOperation(response.op);
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus("Build run accepted.", "success", { toast: true });
+    setStatus("Build run accepted. Live activity is now tracking progress.", "success", { toast: true });
   } catch (error) {
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
@@ -610,11 +624,12 @@ async function handleDeployDevClick() {
     });
 
     if (response.op?.id) {
+      primeAcceptedOperation(response.op);
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus("Dev delivery accepted.", "success", { toast: true });
+    setStatus("Dev delivery accepted. Live activity is now tracking progress.", "success", { toast: true });
   } catch (error) {
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
@@ -663,12 +678,15 @@ async function handlePromotionConfirmSubmit(event) {
     });
 
     if (response.op?.id) {
+      primeAcceptedOperation(response.op);
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
     closeModal("promotion");
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus(`${actionLabel} ${fromEnv} -> ${toEnv} accepted.`, "success", { toast: true });
+    setStatus(`${actionLabel} ${fromEnv} -> ${toEnv} accepted. Live activity is now tracking progress.`, "success", {
+      toast: true,
+    });
   } catch (error) {
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
@@ -700,12 +718,13 @@ async function handleDeleteConfirmSubmit(event) {
     });
 
     if (response.op?.id) {
+      primeAcceptedOperation(response.op);
       await startOperationMonitor(response.op.id, { announce: true });
     }
 
     closeModal("delete");
     await refreshProjects({ silent: true, preserveSelection: true });
-    setStatus("App deletion accepted.", "success", { toast: true });
+    setStatus("App deletion accepted. Live activity is now tracking progress.", "success", { toast: true });
   } catch (error) {
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
