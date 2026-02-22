@@ -47,6 +47,7 @@ Primary agent contract: `AGENTS.md`
 - `store.go`: KV-backed persistence API for projects and operations.
 - `artifacts_fs.go`: filesystem artifact store implementation.
 - `waiters.go`: in-memory operation waiter hub for request/response synchronization.
+- `op_events.go`: operation SSE event schema, in-process replay hub, and lifecycle event emit helpers.
 - `workers_defs.go`: worker interface/types and constructor wiring.
 - `workers_loop.go`: worker subscription loop and message execution flow.
 - `workers_resultmsg.go`: worker result shaping/publish helpers.
@@ -70,6 +71,7 @@ Primary agent contract: `AGENTS.md`
 - `api_projects.go`: project CRUD handlers.
 - `api_processes.go`: deployment, promotion, and release event handlers.
 - `api_artifacts_ops.go`: artifact and op read endpoints.
+- `api_op_events.go`: operation SSE stream endpoint (`/api/ops/{id}/events`) and stream writer helpers.
 - `api_runop.go`: op orchestration path (publish, wait, finalize).
 - `nats_subscriptions.go`: final worker result subscription for waking API waiters.
 - `utils.go`: small shared helpers (`newID`, JSON write utilities).

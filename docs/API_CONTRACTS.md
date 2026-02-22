@@ -36,28 +36,30 @@ Rules:
 - `action` must be one of `create`, `update`, `delete`.
 - `project_id` is required for `update` and `delete`.
 - `spec` is validated for `create` and `update`; it is ignored for `delete`.
+- Trigger behavior is async: the API enqueues work and returns immediately with operation metadata.
 
 Success (`create` / `update`) response:
 
-- Status: `200 OK`
+- Status: `202 Accepted`
 
 ```json
 {
+  "accepted": true,
   "project": {},
-  "op": {},
-  "final": {}
+  "op": {}
 }
 ```
 
 Success (`delete`) response:
 
-- Status: `200 OK`
+- Status: `202 Accepted`
 
 ```json
 {
-  "deleted": true,
-  "op": {},
-  "final": {}
+  "accepted": true,
+  "deleted": false,
+  "project_id": "project-id",
+  "op": {}
 }
 ```
 
@@ -139,13 +141,13 @@ Rules:
 
 Success response:
 
-- Status: `200 OK`
+- Status: `202 Accepted`
 
 ```json
 {
+  "accepted": true,
   "project": {},
-  "op": {},
-  "final": {}
+  "op": {}
 }
 ```
 
@@ -174,13 +176,13 @@ Rules:
 
 Success response:
 
-- Status: `200 OK`
+- Status: `202 Accepted`
 
 ```json
 {
+  "accepted": true,
   "project": {},
-  "op": {},
-  "final": {}
+  "op": {}
 }
 ```
 
@@ -209,13 +211,13 @@ Rules:
 
 Success response:
 
-- Status: `200 OK`
+- Status: `202 Accepted`
 
 ```json
 {
+  "accepted": true,
   "project": {},
-  "op": {},
-  "final": {}
+  "op": {}
 }
 ```
 
@@ -234,7 +236,8 @@ Endpoints:
 
 Common status codes:
 
-- Success: `200 OK`
+- Success (`GET`): `200 OK`
+- Accepted (`POST`/`PUT`/`DELETE`): `202 Accepted`
 - Validation errors: `400 Bad Request`
 - Not found (by id): `404 Not Found`
 
@@ -303,6 +306,7 @@ Response:
 Endpoint:
 
 - `GET /api/ops/{opID}`
+- `GET /api/ops/{opID}/events`
 
 Response is an `Operation` object with step-level worker details. Process operations now include `delivery` metadata:
 
@@ -323,6 +327,63 @@ Common status codes:
 - Success: `200 OK`
 - Invalid id: `400 Bad Request`
 - Not found: `404 Not Found`
+
+### Operation Event Stream (SSE)
+
+Endpoint:
+
+- `GET /api/ops/{opID}/events`
+
+Headers:
+
+- `Content-Type: text/event-stream`
+- `Cache-Control: no-cache`
+- `Connection: keep-alive`
+- `X-Accel-Buffering: no`
+
+Behavior:
+
+- Supports replay using `Last-Event-ID`.
+- If `Last-Event-ID` is missing or outside retained history, stream begins with an `op.bootstrap` snapshot event.
+- Emits heartbeat events (`op.heartbeat`) periodically to keep the stream alive.
+
+Event types:
+
+- `op.bootstrap`
+- `op.status`
+- `step.started`
+- `step.ended`
+- `step.artifacts`
+- `op.completed`
+- `op.failed`
+- `op.heartbeat`
+
+Payload baseline fields:
+
+- `event_id`
+- `sequence`
+- `op_id`
+- `project_id`
+- `kind`
+- `status`
+- `at` (RFC3339 UTC)
+
+Payload enrichment fields (when available):
+
+- `worker`
+- `step_index`
+- `total_steps`
+- `progress_percent`
+- `duration_ms`
+- `message`
+- `error`
+- `artifacts` (bounded preview list)
+- `delivery`:
+  - `stage`
+  - `environment`
+  - `from_env`
+  - `to_env`
+- `hint`
 
 ## Artifacts
 

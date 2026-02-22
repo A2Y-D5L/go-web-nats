@@ -14,10 +14,10 @@ import (
 func (a *API) createProjectFromSpec(
 	ctx context.Context,
 	spec ProjectSpec,
-) (Project, Operation, WorkerResultMsg, error) {
+) (Project, Operation, error) {
 	spec = normalizeProjectSpec(spec)
 	if err := validateProjectSpec(spec); err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, err
+		return Project{}, Operation{}, err
 	}
 
 	projectID := newID()
@@ -37,30 +37,30 @@ func (a *API) createProjectFromSpec(
 	}
 	putErr := a.store.PutProject(ctx, p)
 	if putErr != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, errors.New("failed to persist project")
+		return Project{}, Operation{}, errors.New("failed to persist project")
 	}
 
-	op, final, err := a.runOp(ctx, OpCreate, projectID, spec, emptyOpRunOptions())
+	op, err := a.enqueueOp(ctx, OpCreate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, err
+		return Project{}, Operation{}, err
 	}
 	p, _ = a.store.GetProject(ctx, projectID)
-	return p, op, final, nil
+	return p, op, nil
 }
 
 func (a *API) updateProjectFromSpec(
 	ctx context.Context,
 	projectID string,
 	spec ProjectSpec,
-) (Project, Operation, WorkerResultMsg, error) {
+) (Project, Operation, error) {
 	spec = normalizeProjectSpec(spec)
 	if err := validateProjectSpec(spec); err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, err
+		return Project{}, Operation{}, err
 	}
 
 	p, err := a.store.GetProject(ctx, projectID)
 	if err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, err
+		return Project{}, Operation{}, err
 	}
 	p.Spec = spec
 	p.Status.Phase = "Reconciling"
@@ -68,35 +68,35 @@ func (a *API) updateProjectFromSpec(
 	p.Status.UpdatedAt = time.Now().UTC()
 	putErr := a.store.PutProject(ctx, p)
 	if putErr != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, errors.New("failed to persist project")
+		return Project{}, Operation{}, errors.New("failed to persist project")
 	}
 
-	op, final, err := a.runOp(ctx, OpUpdate, projectID, spec, emptyOpRunOptions())
+	op, err := a.enqueueOp(ctx, OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
-		return Project{}, Operation{}, WorkerResultMsg{}, err
+		return Project{}, Operation{}, err
 	}
 	p, _ = a.store.GetProject(ctx, projectID)
-	return p, op, final, nil
+	return p, op, nil
 }
 
 func (a *API) deleteProject(
 	ctx context.Context,
 	projectID string,
-) (Operation, WorkerResultMsg, error) {
+) (Operation, error) {
 	p, err := a.store.GetProject(ctx, projectID)
 	if err != nil {
-		return Operation{}, WorkerResultMsg{}, err
+		return Operation{}, err
 	}
 	p.Status.Phase = projectPhaseDel
 	p.Status.Message = statusMessageDelQueue
 	p.Status.UpdatedAt = time.Now().UTC()
 	_ = a.store.PutProject(ctx, p)
 
-	op, final, err := a.runOp(ctx, OpDelete, projectID, zeroProjectSpec(), emptyOpRunOptions())
+	op, err := a.enqueueOp(ctx, OpDelete, projectID, zeroProjectSpec(), emptyOpRunOptions())
 	if err != nil {
-		return Operation{}, WorkerResultMsg{}, err
+		return Operation{}, err
 	}
-	return op, final, nil
+	return op, nil
 }
 
 func (a *API) handleRegistrationEvents(w http.ResponseWriter, r *http.Request) {
@@ -131,12 +131,16 @@ func decodeRegistrationEvent(r *http.Request) (RegistrationEvent, error) {
 }
 
 func (a *API) handleRegistrationCreate(w http.ResponseWriter, r *http.Request, spec ProjectSpec) {
-	project, op, final, err := a.createProjectFromSpec(r.Context(), spec)
+	project, op, err := a.createProjectFromSpec(r.Context(), spec)
 	if err != nil {
 		writeRegistrationError(w, err)
 		return
 	}
-	writeProjectOpFinalResponse(w, project, op, final)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"project":  project,
+		"op":       op,
+	})
 }
 
 func (a *API) handleRegistrationUpdate(
@@ -150,12 +154,16 @@ func (a *API) handleRegistrationUpdate(
 		http.Error(w, "project_id required", http.StatusBadRequest)
 		return
 	}
-	project, op, final, err := a.updateProjectFromSpec(r.Context(), projectID, spec)
+	project, op, err := a.updateProjectFromSpec(r.Context(), projectID, spec)
 	if err != nil {
 		writeRegistrationError(w, err)
 		return
 	}
-	writeProjectOpFinalResponse(w, project, op, final)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"project":  project,
+		"op":       op,
+	})
 }
 
 func (a *API) handleRegistrationDelete(w http.ResponseWriter, r *http.Request, projectID string) {
@@ -164,28 +172,16 @@ func (a *API) handleRegistrationDelete(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "project_id required", http.StatusBadRequest)
 		return
 	}
-	op, final, err := a.deleteProject(r.Context(), projectID)
+	op, err := a.deleteProject(r.Context(), projectID)
 	if err != nil {
 		writeRegistrationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"deleted": true,
-		"op":      op,
-		"final":   final,
-	})
-}
-
-func writeProjectOpFinalResponse(
-	w http.ResponseWriter,
-	project Project,
-	op Operation,
-	final WorkerResultMsg,
-) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": project,
-		"op":      op,
-		"final":   final,
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted":   true,
+		"deleted":    false,
+		"project_id": projectID,
+		"op":         op,
 	})
 }
 

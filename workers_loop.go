@@ -12,10 +12,21 @@ func startWorker(
 	ctx context.Context,
 	workerName, natsURL, inSubj, outSubj string,
 	artifacts ArtifactStore,
+	opEvents *opEventHub,
 	fn workerFn,
 ) error {
 	workerLog := appLoggerForProcess().Source(workerName)
-	go runWorkerLoop(ctx, workerName, natsURL, inSubj, outSubj, artifacts, fn, workerLog)
+	go runWorkerLoop(
+		ctx,
+		workerName,
+		natsURL,
+		inSubj,
+		outSubj,
+		artifacts,
+		opEvents,
+		fn,
+		workerLog,
+	)
 
 	return nil
 }
@@ -24,6 +35,7 @@ func runWorkerLoop(
 	ctx context.Context,
 	workerName, natsURL, inSubj, outSubj string,
 	artifacts ArtifactStore,
+	opEvents *opEventHub,
 	fn workerFn,
 	workerLog sourceLogger,
 ) {
@@ -48,6 +60,7 @@ func runWorkerLoop(
 		workerLog.Errorf("store error: %v", err)
 		return
 	}
+	store.setOpEvents(opEvents)
 	workerLog.Infof("ready: subscribe=%s publish=%s", inSubj, outSubj)
 
 	sub, err := nc.Subscribe(inSubj, func(m *nats.Msg) {

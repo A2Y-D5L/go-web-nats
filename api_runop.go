@@ -3,7 +3,6 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -57,13 +56,13 @@ func transitionOpRunOptions(fromEnv, toEnv string, stage DeliveryStage) opRunOpt
 	}
 }
 
-func (a *API) runOp(
+func (a *API) enqueueOp(
 	ctx context.Context,
 	kind OperationKind,
 	projectID string,
 	spec ProjectSpec,
 	opts opRunOptions,
-) (Operation, WorkerResultMsg, error) {
+) (Operation, error) {
 	apiLog := appLoggerForProcess().Source("api")
 	opID := newID()
 	now := time.Now().UTC()
@@ -80,18 +79,16 @@ func (a *API) runOp(
 		Steps:     []OpStep{},
 	}
 	if err := a.store.PutOp(ctx, op); err != nil {
-		return Operation{}, WorkerResultMsg{}, fmt.Errorf("persist op: %w", err)
+		return Operation{}, fmt.Errorf("persist op: %w", err)
 	}
 	apiLog.Infof("queued op=%s kind=%s project=%s", opID, kind, projectID)
 
 	if kind != OpDelete {
 		a.setQueuedProjectStatus(ctx, opID, kind, projectID, spec, now)
-	} else {
-		_ = finalizeOp(ctx, a.store, opID, projectID, kind, "running", "")
 	}
 
-	ch := a.waiters.register(opID)
-	defer a.waiters.unregister(opID)
+	emitOpBootstrap(a.opEvents, op, "operation accepted and queued")
+	emitOpStatus(a.opEvents, op, "queued")
 
 	opMsg := newProjectOpMsg(opID, kind, projectID, spec, opts, now)
 	body, _ := json.Marshal(opMsg)
@@ -101,39 +98,10 @@ func (a *API) runOp(
 	if err := a.nc.Publish(startSubject, body); err != nil {
 		_ = finalizeOp(finalizeCtx, a.store, opID, projectID, kind, "error", err.Error())
 		apiLog.Errorf("publish failed op=%s kind=%s project=%s: %v", opID, kind, projectID, err)
-		return Operation{}, WorkerResultMsg{}, fmt.Errorf("publish op: %w", err)
+		return Operation{}, fmt.Errorf("publish op: %w", err)
 	}
 	apiLog.Debugf("published op=%s subject=%s", opID, startSubject)
-
-	waitCtx, cancel := context.WithTimeout(ctx, apiWaitTimeout)
-	defer cancel()
-
-	var final WorkerResultMsg
-	select {
-	case <-waitCtx.Done():
-		_ = finalizeOp(
-			finalizeCtx,
-			a.store,
-			opID,
-			projectID,
-			kind,
-			"error",
-			"timeout waiting for workers",
-		)
-		apiLog.Errorf("timeout op=%s kind=%s project=%s", opID, kind, projectID)
-		return Operation{}, WorkerResultMsg{}, errors.New("timeout waiting for workers")
-	case final = <-ch:
-	}
-
-	if final.Err != "" {
-		_ = finalizeOp(finalizeCtx, a.store, opID, projectID, kind, "error", final.Err)
-		apiLog.Errorf("op=%s failed in %s: %s", opID, final.Worker, final.Err)
-		return Operation{}, final, errors.New(final.Err)
-	}
-
-	op, _ = a.store.GetOp(ctx, opID)
-	apiLog.Infof("completed op=%s kind=%s project=%s", opID, kind, projectID)
-	return op, final, nil
+	return op, nil
 }
 
 func (a *API) setQueuedProjectStatus(

@@ -15,8 +15,10 @@ type API struct {
 	store     *Store
 	artifacts ArtifactStore
 	waiters   *waiterHub
+	opEvents  *opEventHub
 
-	sourceTriggerMu sync.Mutex
+	opHeartbeatInterval time.Duration
+	sourceTriggerMu     sync.Mutex
 }
 
 func (a *API) routes() http.Handler {
@@ -60,6 +62,14 @@ func (s *statusRecorder) Write(p []byte) (int, error) {
 		s.status = http.StatusOK
 	}
 	return s.ResponseWriter.Write(p)
+}
+
+func (s *statusRecorder) Flush() {
+	flusher, ok := s.ResponseWriter.(http.Flusher)
+	if !ok {
+		return
+	}
+	flusher.Flush()
 }
 
 func (a *API) withRequestLogging(next http.Handler) http.Handler {

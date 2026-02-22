@@ -16,11 +16,13 @@ const (
 
 func NewTestAPI(artifacts ArtifactStore) *API {
 	return &API{
-		nc:              nil,
-		store:           nil,
-		artifacts:       artifacts,
-		waiters:         nil,
-		sourceTriggerMu: sync.Mutex{},
+		nc:                  nil,
+		store:               nil,
+		artifacts:           artifacts,
+		waiters:             nil,
+		opEvents:            nil,
+		opHeartbeatInterval: 0,
+		sourceTriggerMu:     sync.Mutex{},
 	}
 }
 

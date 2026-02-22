@@ -23,7 +23,8 @@ func markOpStepStart(
 	if err != nil {
 		return err
 	}
-	op.Status = "running"
+	prevStatus := op.Status
+	op.Status = opStatusRunning
 	op.Steps = append(op.Steps, OpStep{
 		Worker:    worker,
 		StartedAt: startedAt,
@@ -32,7 +33,16 @@ func markOpStepStart(
 		Error:     "",
 		Artifacts: nil,
 	})
-	return store.PutOp(ctx, op)
+	putErr := store.PutOp(ctx, op)
+	if putErr != nil {
+		return putErr
+	}
+
+	if prevStatus != op.Status {
+		emitOpStatus(store.opEvents, op, "operation started")
+	}
+	emitOpStepStarted(store.opEvents, op, worker, len(op.Steps), msg)
+	return nil
 }
 
 func markOpStepEnd(
@@ -47,6 +57,9 @@ func markOpStepEnd(
 	if err != nil {
 		return err
 	}
+	prevStatus := op.Status
+	stepIndex := 0
+	var stepStartedAt time.Time
 	// Find last step for worker that doesn't have EndedAt set.
 	for i := len(op.Steps) - 1; i >= 0; i-- {
 		if op.Steps[i].Worker == worker && op.Steps[i].EndedAt.IsZero() {
@@ -56,15 +69,41 @@ func markOpStepEnd(
 			}
 			op.Steps[i].Error = stepErr
 			op.Steps[i].Artifacts = artifacts
+			stepIndex = i + 1
+			stepStartedAt = op.Steps[i].StartedAt
 			break
 		}
 	}
 	if stepErr != "" {
-		op.Status = "error"
+		op.Status = opStatusError
 		op.Error = stepErr
 		op.Finished = time.Now().UTC()
 	}
-	return store.PutOp(ctx, op)
+	putErr := store.PutOp(ctx, op)
+	if putErr != nil {
+		return putErr
+	}
+
+	if prevStatus != op.Status {
+		emitOpStatus(store.opEvents, op, "operation status updated")
+	}
+	if stepIndex > 0 {
+		emitOpStepEnded(
+			store.opEvents,
+			op,
+			worker,
+			stepIndex,
+			message,
+			stepErr,
+			artifacts,
+			stepStartedAt,
+			endedAt,
+		)
+	}
+	if stepErr != "" {
+		emitOpTerminal(store.opEvents, op)
+	}
+	return nil
 }
 
 func finalizeOp(
@@ -78,6 +117,8 @@ func finalizeOp(
 	if err != nil {
 		return err
 	}
+	prevStatus := op.Status
+	prevError := op.Error
 	op.Status = status
 	op.Error = errMsg
 	op.Finished = time.Now().UTC()
@@ -110,5 +151,12 @@ func finalizeOp(
 	p.Status.LastOpID = opID
 	p.Status.LastOpKind = string(kind)
 	_ = store.PutProject(ctx, p)
+
+	if prevStatus != op.Status || prevError != op.Error {
+		emitOpStatus(store.opEvents, op, "operation status updated")
+	}
+	if status == "done" || status == "error" {
+		emitOpTerminal(store.opEvents, op)
+	}
 	return nil
 }

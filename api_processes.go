@@ -54,7 +54,7 @@ func (a *API) handleDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	op, final, err := a.runOp(
+	op, err := a.enqueueOp(
 		r.Context(),
 		OpDeploy,
 		project.ID,
@@ -66,10 +66,10 @@ func (a *API) handleDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, _ = a.store.GetProject(r.Context(), project.ID)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": project,
-		"op":      op,
-		"final":   final,
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"project":  project,
+		"op":       op,
 	})
 }
 
@@ -88,7 +88,7 @@ func (a *API) handlePromotionEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project_id required", http.StatusBadRequest)
 		return
 	}
-	op, final, project, err := a.runTransitionLifecycle(
+	op, project, err := a.runTransitionLifecycle(
 		r,
 		strings.TrimSpace(evt.ProjectID),
 		evt.FromEnv,
@@ -99,10 +99,10 @@ func (a *API) handlePromotionEvents(w http.ResponseWriter, r *http.Request) {
 		writeTransitionError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": project,
-		"op":      op,
-		"final":   final,
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"project":  project,
+		"op":       op,
 	})
 }
 
@@ -126,7 +126,7 @@ func (a *API) handleReleaseEvents(w http.ResponseWriter, r *http.Request) {
 		toEnv = defaultReleaseEnvironment
 	}
 
-	op, final, project, err := a.runTransitionLifecycle(
+	op, project, err := a.runTransitionLifecycle(
 		r,
 		strings.TrimSpace(evt.ProjectID),
 		evt.FromEnv,
@@ -137,10 +137,10 @@ func (a *API) handleReleaseEvents(w http.ResponseWriter, r *http.Request) {
 		writeTransitionError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": project,
-		"op":      op,
-		"final":   final,
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"project":  project,
+		"op":       op,
 	})
 }
 
@@ -175,17 +175,17 @@ func (a *API) runTransitionLifecycle(
 	fromEnvRaw string,
 	toEnvRaw string,
 	releaseOnly bool,
-) (Operation, WorkerResultMsg, Project, error) {
+) (Operation, Project, error) {
 	fromEnv := normalizeEnvironmentName(fromEnvRaw)
 	toEnv := normalizeEnvironmentName(toEnvRaw)
 	if fromEnv == "" || toEnv == "" {
-		return Operation{}, WorkerResultMsg{}, Project{}, requestError(
+		return Operation{}, Project{}, requestError(
 			http.StatusBadRequest,
 			"from_env and to_env are required",
 		)
 	}
 	if !isValidEnvironmentName(fromEnv) || !isValidEnvironmentName(toEnv) {
-		return Operation{}, WorkerResultMsg{}, Project{}, requestError(
+		return Operation{}, Project{}, requestError(
 			http.StatusBadRequest,
 			"from_env and to_env must be valid environment names",
 		)
@@ -194,28 +194,28 @@ func (a *API) runTransitionLifecycle(
 	project, err := a.store.GetProject(r.Context(), projectID)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			return Operation{}, WorkerResultMsg{}, Project{}, requestError(http.StatusNotFound, "not found")
+			return Operation{}, Project{}, requestError(http.StatusNotFound, "not found")
 		}
-		return Operation{}, WorkerResultMsg{}, Project{}, fmt.Errorf("failed to read project: %w", err)
+		return Operation{}, Project{}, fmt.Errorf("failed to read project: %w", err)
 	}
 	spec := normalizeProjectSpec(project.Spec)
 
 	resolvedFromEnv, ok := resolveProjectEnvironmentName(spec, fromEnv)
 	if !ok {
-		return Operation{}, WorkerResultMsg{}, Project{}, requestError(
+		return Operation{}, Project{}, requestError(
 			http.StatusBadRequest,
 			fmt.Sprintf("from_env %q is not defined for project", fromEnv),
 		)
 	}
 	resolvedToEnv, ok := resolveProjectEnvironmentName(spec, toEnv)
 	if !ok {
-		return Operation{}, WorkerResultMsg{}, Project{}, requestError(
+		return Operation{}, Project{}, requestError(
 			http.StatusBadRequest,
 			fmt.Sprintf("to_env %q is not defined for project", toEnv),
 		)
 	}
 	if resolvedFromEnv == resolvedToEnv {
-		return Operation{}, WorkerResultMsg{}, Project{}, requestError(
+		return Operation{}, Project{}, requestError(
 			http.StatusBadRequest,
 			"from_env and to_env must differ",
 		)
@@ -223,7 +223,7 @@ func (a *API) runTransitionLifecycle(
 
 	stage := transitionDeliveryStage(resolvedToEnv)
 	if releaseOnly && stage != DeliveryStageRelease {
-		return Operation{}, WorkerResultMsg{}, Project{}, requestError(
+		return Operation{}, Project{}, requestError(
 			http.StatusBadRequest,
 			fmt.Sprintf(
 				"release endpoint requires production target environment (got %q)",
@@ -233,7 +233,7 @@ func (a *API) runTransitionLifecycle(
 	}
 	kind := transitionOperationKind(stage)
 
-	op, final, err := a.runOp(
+	op, err := a.enqueueOp(
 		r.Context(),
 		kind,
 		project.ID,
@@ -241,13 +241,13 @@ func (a *API) runTransitionLifecycle(
 		transitionOpRunOptions(resolvedFromEnv, resolvedToEnv, stage),
 	)
 	if err != nil {
-		return Operation{}, WorkerResultMsg{}, Project{}, err
+		return Operation{}, Project{}, err
 	}
 	latestProject, readErr := a.store.GetProject(r.Context(), project.ID)
 	if readErr == nil {
 		project = latestProject
 	}
-	return op, final, project, nil
+	return op, project, nil
 }
 
 func transitionDeliveryStage(toEnv string) DeliveryStage {

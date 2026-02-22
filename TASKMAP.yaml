@@ -30,6 +30,7 @@ tasks:
       - api_projects.go
       - api_processes.go
       - api_artifacts_ops.go
+      - api_op_events.go
       - api_types.go
     tests:
       - api_handlers_test.go
@@ -87,6 +88,7 @@ tasks:
       - messages.go
       - nats_subscriptions.go
       - waiters.go
+      - op_events.go
     tests:
       - waiters_test.go
       - workers_messages_test.go

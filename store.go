@@ -18,6 +18,7 @@ import (
 type Store struct {
 	kvProjects jetstream.KeyValue
 	kvOps      jetstream.KeyValue
+	opEvents   *opEventHub
 }
 
 func newStore(ctx context.Context, js jetstream.JetStream) (*Store, error) {
@@ -31,7 +32,18 @@ func newStore(ctx context.Context, js jetstream.JetStream) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{kvProjects: projectsKV, kvOps: opsKV}, nil
+	return &Store{
+		kvProjects: projectsKV,
+		kvOps:      opsKV,
+		opEvents:   nil,
+	}, nil
+}
+
+func (s *Store) setOpEvents(hub *opEventHub) {
+	if s == nil {
+		return
+	}
+	s.opEvents = hub
 }
 
 func (s *Store) PutProject(ctx context.Context, p Project) error {

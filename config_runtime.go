@@ -33,11 +33,15 @@ const (
 	gitOpTimeout              = 20 * time.Second
 	gitReadTimeout            = 10 * time.Second
 	commitWatcherPollInterval = 2 * time.Second
+	opEventsRetention         = 30 * time.Minute
+	opEventsHeartbeatInterval = 10 * time.Second
 
 	shortIDLength          = 12
 	httpServerErrThreshold = 500
 	httpClientErrThreshold = 400
 	touchedArtifactsCap    = 8
+	opEventsHistoryLimit   = 256
+	opEventArtifactsLimit  = 8
 )
 
 func parseImageBuilderMode(raw string) (imageBuilderMode, error) {

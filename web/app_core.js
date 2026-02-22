@@ -247,9 +247,13 @@ const state = {
   operation: {
     activeOpID: "",
     payload: null,
+    eventSource: null,
+    usingPolling: false,
     timer: null,
     token: 0,
     failureCount: 0,
+    sseFailureCount: 0,
+    terminalHandledOpID: "",
     history: [],
   },
   promotion: {

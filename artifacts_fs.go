@@ -109,6 +109,7 @@ func (a *FSArtifacts) ReadFile(projectID, relPath string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("invalid relPath")
 	}
+	// #nosec G703 -- full path is constrained by relPath guards and securejoin above.
 	return os.ReadFile(full)
 }
 

@@ -60,7 +60,7 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		op, final, err := a.runOp(r.Context(), OpCreate, projectID, spec, emptyOpRunOptions())
+		op, err := a.enqueueOp(r.Context(), OpCreate, projectID, spec, emptyOpRunOptions())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -68,10 +68,10 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 
 		// Return project + last op for the UI
 		p, _ = a.store.GetProject(r.Context(), projectID)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project": p,
-			"op":      op,
-			"final":   final,
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"accepted": true,
+			"project":  p,
+			"op":       op,
 		})
 
 	default:
@@ -161,16 +161,16 @@ func (a *API) handleProjectUpdateByID(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
-	op, final, err := a.runOp(r.Context(), OpUpdate, projectID, spec, emptyOpRunOptions())
+	op, err := a.enqueueOp(r.Context(), OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	project, _ = a.store.GetProject(r.Context(), projectID)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": project,
-		"op":      op,
-		"final":   final,
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": true,
+		"project":  project,
+		"op":       op,
 	})
 }
 
@@ -184,7 +184,7 @@ func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, pr
 	project.Status.UpdatedAt = time.Now().UTC()
 	_ = a.store.PutProject(r.Context(), project)
 
-	op, final, err := a.runOp(
+	op, err := a.enqueueOp(
 		r.Context(),
 		OpDelete,
 		projectID,
@@ -195,10 +195,11 @@ func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, pr
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"deleted": true,
-		"op":      op,
-		"final":   final,
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted":   true,
+		"deleted":    false,
+		"project_id": projectID,
+		"op":         op,
 	})
 }
 

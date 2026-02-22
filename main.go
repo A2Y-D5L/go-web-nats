@@ -46,6 +46,8 @@ func Run() {
 	if err != nil {
 		mainLog.Fatalf("store: %v", err)
 	}
+	opEvents := newOpEventHub(opEventsHistoryLimit, opEventsRetention)
+	store.setOpEvents(opEvents)
 
 	artifacts := NewFSArtifacts(defaultArtifactsRoot)
 	mkdirErr := os.MkdirAll(defaultArtifactsRoot, dirModePrivateRead)
@@ -53,19 +55,9 @@ func Run() {
 		mainLog.Fatalf("mkdir artifacts root: %v", mkdirErr)
 	}
 
-	workers := []Worker{
-		NewRegistrationWorker(natsURL, artifacts),
-		NewRepoBootstrapWorker(natsURL, artifacts),
-		NewImageBuilderWorker(natsURL, artifacts),
-		NewManifestRendererWorker(natsURL, artifacts),
-		NewDeploymentWorker(natsURL, artifacts),
-		NewPromotionWorker(natsURL, artifacts),
-	}
-	for _, worker := range workers {
-		startErr := worker.Start(ctx)
-		if startErr != nil {
-			mainLog.Fatalf("start worker: %v", startErr)
-		}
+	startErr := startPlatformWorkers(ctx, natsURL, artifacts, opEvents)
+	if startErr != nil {
+		mainLog.Fatalf("start worker: %v", startErr)
 	}
 
 	waiters := newWaiterHub()
@@ -86,13 +78,7 @@ func Run() {
 		mainLog.Fatalf("flush: %v", flushErr)
 	}
 
-	api := &API{
-		nc:              nc,
-		store:           store,
-		artifacts:       artifacts,
-		waiters:         waiters,
-		sourceTriggerMu: sync.Mutex{},
-	}
+	api := newRuntimeAPI(nc, store, artifacts, waiters, opEvents)
 	watcherStarted := startSourceCommitWatcher(ctx, api)
 	builderMode, builderModeErr := imageBuilderModeFromEnv()
 	srv := &http.Server{
@@ -106,6 +92,46 @@ func Run() {
 	listenErr := srv.ListenAndServe()
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 		mainLog.Fatalf("http server: %v", listenErr)
+	}
+}
+
+func startPlatformWorkers(
+	ctx context.Context,
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) error {
+	workers := []Worker{
+		NewRegistrationWorker(natsURL, artifacts, opEvents),
+		NewRepoBootstrapWorker(natsURL, artifacts, opEvents),
+		NewImageBuilderWorker(natsURL, artifacts, opEvents),
+		NewManifestRendererWorker(natsURL, artifacts, opEvents),
+		NewDeploymentWorker(natsURL, artifacts, opEvents),
+		NewPromotionWorker(natsURL, artifacts, opEvents),
+	}
+	for _, worker := range workers {
+		if err := worker.Start(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newRuntimeAPI(
+	nc *nats.Conn,
+	store *Store,
+	artifacts ArtifactStore,
+	waiters *waiterHub,
+	opEvents *opEventHub,
+) *API {
+	return &API{
+		nc:                  nc,
+		store:               store,
+		artifacts:           artifacts,
+		waiters:             waiters,
+		opEvents:            opEvents,
+		opHeartbeatInterval: opEventsHeartbeatInterval,
+		sourceTriggerMu:     sync.Mutex{},
 	}
 }
 

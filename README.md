@@ -82,6 +82,11 @@ Payload:
 
 `action` supports: `create`, `update`, `delete`.
 
+Registration triggers are async:
+
+- handlers return `202 Accepted` with `accepted: true` and an `op` reference
+- clients should monitor operation progress via SSE (`/api/ops/{opID}/events`) or fallback polling (`/api/ops/{opID}`)
+
 ### 2) Source webhook events (repo pathway)
 
 Webhook endpoint:
@@ -105,6 +110,7 @@ Rules:
 - only source repo webhooks are accepted (`repo` omitted or `source`)
 - only `main` branch triggers CI (supports `main`, `heads/main`, `refs/heads/main`)
 - accepted events trigger pipeline kind `ci`
+- accepted responses are `202 Accepted` and include operation metadata
 
 ## Delivery Transitions
 
@@ -118,6 +124,17 @@ Lifecycle classification:
 
 - Non-production target environment => `promote`.
 - Production target environment => `release`.
+
+Deployment/promotion/release event handlers are async and return `202 Accepted` with an `op` reference.
+
+## Realtime Operation Streaming
+
+Operation state is available through:
+
+- `GET /api/ops/{opID}` for snapshot polling
+- `GET /api/ops/{opID}/events` for SSE streaming (`op.bootstrap`, `op.status`, `step.*`, `op.completed`/`op.failed`, `op.heartbeat`)
+
+SSE supports reconnect replay via `Last-Event-ID` against a bounded in-memory event history.
 
 ## Local Repos And Hooks
 
@@ -185,6 +202,7 @@ Trigger dedupe:
 | `POST` | `/api/events/release` | Explicit release API |
 | `POST` | `/api/webhooks/source` | Source repo webhook API |
 | `GET` | `/api/ops/{opID}` | Operation details |
+| `GET` | `/api/ops/{opID}/events` | Operation realtime event stream (SSE) |
 | `GET` | `/api/projects/{id}/artifacts` | List artifact files |
 | `GET` | `/api/projects/{id}/artifacts/{path...}` | Download artifact file |
 
@@ -223,7 +241,7 @@ The embedded UI (`/`) now mirrors backend execution semantics directly:
 - searchable/sortable project inventory with phase badges
 - selected-project action workspace for create/update/delete + source webhook CI
 - explicit dev deploy with promotion/release transition guardrails
-- live operation timeline with ordered worker steps and duration/status details
+- live operation timeline streamed by SSE with polling fallback
 - artifact explorer with preview/download, BuildKit metadata signal, and imageBuilder output visibility
 
 Keyboard shortcuts:

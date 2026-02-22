@@ -93,9 +93,16 @@ function stopOperationMonitor({ clearPayload = false } = {}) {
     clearTimeout(state.operation.timer);
     state.operation.timer = null;
   }
+  if (state.operation.eventSource) {
+    state.operation.eventSource.close();
+    state.operation.eventSource = null;
+  }
 
   state.operation.token += 1;
   state.operation.failureCount = 0;
+  state.operation.sseFailureCount = 0;
+  state.operation.usingPolling = false;
+  state.operation.terminalHandledOpID = "";
   state.operation.activeOpID = "";
 
   if (clearPayload) {
@@ -171,63 +178,167 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
   if (state.operation.activeOpID === opID && state.operation.timer) {
     return;
   }
+  if (state.operation.activeOpID === opID && state.operation.eventSource) {
+    return;
+  }
 
   stopOperationMonitor({ clearPayload: false });
   state.operation.activeOpID = opID;
   const token = state.operation.token;
 
-  const poll = async () => {
-    if (token !== state.operation.token) return;
+  const closeOperationEventSource = () => {
+    if (!state.operation.eventSource) return;
+    state.operation.eventSource.close();
+    state.operation.eventSource = null;
+  };
+
+  const finalizeTerminalOperation = async (op) => {
+    if (!op || state.operation.terminalHandledOpID === op.id) return;
+    state.operation.terminalHandledOpID = op.id;
+    closeOperationEventSource();
+    if (state.operation.timer) {
+      clearTimeout(state.operation.timer);
+      state.operation.timer = null;
+    }
+
+    if (announce) {
+      const tone = op.status === "done" ? "success" : "error";
+      setStatus(`${operationLabel(op.kind)} finished with status ${op.status}.`, tone, { toast: true });
+    }
 
     try {
-      const op = await requestAPI("GET", `/api/ops/${encodeURIComponent(opID)}`);
-      if (token !== state.operation.token) return;
+      await refreshProjects({ silent: true, preserveSelection: true });
+    } catch (_error) {
+      // Keep operation visibility even if refresh fails.
+    }
 
-      state.operation.payload = op;
-      state.operation.failureCount = 0;
-      upsertOperationHistory(op);
-      renderOperationPanel();
-      renderSystemStrip();
-
-      if (isTerminalOperationStatus(op.status)) {
-        state.operation.timer = null;
-
-        if (announce) {
-          const tone = op.status === "done" ? "success" : "error";
-          setStatus(`${operationLabel(op.kind)} finished with status ${op.status}.`, tone, { toast: true });
-        }
-
-        try {
-          await refreshProjects({ silent: true, preserveSelection: true });
-        } catch (_error) {
-          // Keep operation visibility even if refresh fails.
-        }
-
-        if (getSelectedProject()) {
-          try {
-            await loadArtifacts({ silent: true });
-            await loadJourney({ silent: true });
-          } catch (_error) {
-            // Keep operation view even if refresh fails.
-          }
-        }
-
-        return;
+    if (getSelectedProject()) {
+      try {
+        await loadArtifacts({ silent: true });
+        await loadJourney({ silent: true });
+      } catch (_error) {
+        // Keep operation view even if refresh fails.
       }
-
-      const delay = op.status === "running" ? 1200 : 1600;
-      state.operation.timer = setTimeout(poll, delay);
-    } catch (error) {
-      if (token !== state.operation.token) return;
-
-      state.operation.failureCount += 1;
-      const backoff = Math.min(5000, 1500 + state.operation.failureCount * 700);
-      setStatus(`Activity monitor warning: ${error.message}`, "warning");
-      state.operation.timer = setTimeout(poll, backoff);
     }
   };
 
-  await poll();
+  const fetchLatestOp = async () => {
+    const op = await requestAPI("GET", `/api/ops/${encodeURIComponent(opID)}`);
+    if (token !== state.operation.token) return null;
+
+    state.operation.payload = op;
+    state.operation.failureCount = 0;
+    state.operation.sseFailureCount = 0;
+    upsertOperationHistory(op);
+    renderOperationPanel();
+    renderSystemStrip();
+
+    if (isTerminalOperationStatus(op.status)) {
+      await finalizeTerminalOperation(op);
+    }
+    return op;
+  };
+
+  const startPolling = async () => {
+    if (state.operation.usingPolling) return;
+    state.operation.usingPolling = true;
+    closeOperationEventSource();
+
+    const poll = async () => {
+      if (token !== state.operation.token) return;
+
+      try {
+        const op = await fetchLatestOp();
+        if (token !== state.operation.token || !op) return;
+        if (isTerminalOperationStatus(op.status)) {
+          state.operation.timer = null;
+          return;
+        }
+
+        const delay = op.status === "running" ? 1200 : 1600;
+        state.operation.timer = setTimeout(poll, delay);
+      } catch (error) {
+        if (token !== state.operation.token) return;
+
+        state.operation.failureCount += 1;
+        const backoff = Math.min(5000, 1500 + state.operation.failureCount * 700);
+        setStatus(`Activity monitor warning: ${error.message}`, "warning");
+        state.operation.timer = setTimeout(poll, backoff);
+      }
+    };
+
+    await poll();
+  };
+
+  const startSSE = () => {
+    if (typeof window.EventSource === "undefined") {
+      void startPolling();
+      return;
+    }
+
+    const source = new EventSource(`/api/ops/${encodeURIComponent(opID)}/events`);
+    state.operation.eventSource = source;
+    state.operation.usingPolling = false;
+
+    const streamEvents = [
+      "op.bootstrap",
+      "op.status",
+      "step.started",
+      "step.ended",
+      "step.artifacts",
+      "op.completed",
+      "op.failed",
+      "op.heartbeat",
+    ];
+
+    const onEvent = (event) => {
+      if (token !== state.operation.token) return;
+
+      state.operation.sseFailureCount = 0;
+
+      if (event.type === "op.heartbeat") {
+        return;
+      }
+
+      void fetchLatestOp().catch((error) => {
+        if (token !== state.operation.token) return;
+        state.operation.failureCount += 1;
+        setStatus(`Activity stream warning: ${error.message}`, "warning");
+      });
+
+      if (event.type === "op.completed" || event.type === "op.failed") {
+        closeOperationEventSource();
+      }
+    };
+
+    streamEvents.forEach((eventName) => source.addEventListener(eventName, onEvent));
+
+    source.onerror = () => {
+      if (token !== state.operation.token) return;
+      state.operation.sseFailureCount += 1;
+      if (state.operation.sseFailureCount < 4 || state.operation.usingPolling) {
+        return;
+      }
+      setStatus("Realtime stream disconnected repeatedly. Falling back to polling.", "warning", { toast: true });
+      closeOperationEventSource();
+      void startPolling();
+    };
+  };
+
+  try {
+    const first = await fetchLatestOp();
+    if (token !== state.operation.token) return;
+    if (!first || isTerminalOperationStatus(first.status)) {
+      return;
+    }
+  } catch (error) {
+    if (token !== state.operation.token) return;
+    setStatus(`Activity monitor warning: ${error.message}`, "warning");
+    await startPolling();
+    return;
+  }
+
+  startSSE();
 }
 
 async function loadArtifacts({ silent = false } = {}) {
@@ -404,7 +515,7 @@ async function handleCreateSubmit(event) {
     }
 
     closeModal("create");
-    setStatus("App created.", "success", { toast: true });
+    setStatus("App creation accepted.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -440,7 +551,7 @@ async function handleUpdateSubmit(event) {
     }
 
     closeModal("update");
-    setStatus("App updated.", "success", { toast: true });
+    setStatus("App update accepted.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }
@@ -588,16 +699,13 @@ async function handleDeleteConfirmSubmit(event) {
       project_id: project.id,
     });
 
-    if (response.op) {
-      state.operation.payload = response.op;
-      upsertOperationHistory(response.op);
-      renderOperationPanel();
+    if (response.op?.id) {
+      await startOperationMonitor(response.op.id, { announce: true });
     }
 
     closeModal("delete");
-    clearSelection();
-    await refreshProjects({ silent: true, preserveSelection: false });
-    setStatus("App deleted.", "success", { toast: true });
+    await refreshProjects({ silent: true, preserveSelection: true });
+    setStatus("App deletion accepted.", "success", { toast: true });
   } catch (error) {
     setStatus(error.message, statusToneFromError(error), { toast: true });
   }

@@ -12,11 +12,13 @@ type WorkerBase struct {
 	subjectIn  string
 	subjectOut string
 	artifacts  ArtifactStore
+	opEvents   *opEventHub
 }
 
 func newWorkerBase(
 	name, natsURL, subjectIn, subjectOut string,
 	artifacts ArtifactStore,
+	opEvents *opEventHub,
 ) WorkerBase {
 	return WorkerBase{
 		name:       name,
@@ -24,6 +26,7 @@ func newWorkerBase(
 		subjectIn:  subjectIn,
 		subjectOut: subjectOut,
 		artifacts:  artifacts,
+		opEvents:   opEvents,
 	}
 }
 
@@ -36,7 +39,11 @@ type (
 	PromotionWorker        struct{ WorkerBase }
 )
 
-func NewRegistrationWorker(natsURL string, artifacts ArtifactStore) *RegistrationWorker {
+func NewRegistrationWorker(
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) *RegistrationWorker {
 	return &RegistrationWorker{
 		WorkerBase: newWorkerBase(
 			"registrar",
@@ -44,11 +51,16 @@ func NewRegistrationWorker(natsURL string, artifacts ArtifactStore) *Registratio
 			subjectProjectOpStart,
 			subjectRegistrationDone,
 			artifacts,
+			opEvents,
 		),
 	}
 }
 
-func NewRepoBootstrapWorker(natsURL string, artifacts ArtifactStore) *RepoBootstrapWorker {
+func NewRepoBootstrapWorker(
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) *RepoBootstrapWorker {
 	return &RepoBootstrapWorker{
 		WorkerBase: newWorkerBase(
 			"repoBootstrap",
@@ -56,11 +68,16 @@ func NewRepoBootstrapWorker(natsURL string, artifacts ArtifactStore) *RepoBootst
 			subjectRegistrationDone,
 			subjectBootstrapDone,
 			artifacts,
+			opEvents,
 		),
 	}
 }
 
-func NewImageBuilderWorker(natsURL string, artifacts ArtifactStore) *ImageBuilderWorker {
+func NewImageBuilderWorker(
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) *ImageBuilderWorker {
 	return &ImageBuilderWorker{
 		WorkerBase: newWorkerBase(
 			"imageBuilder",
@@ -68,11 +85,16 @@ func NewImageBuilderWorker(natsURL string, artifacts ArtifactStore) *ImageBuilde
 			subjectBootstrapDone,
 			subjectBuildDone,
 			artifacts,
+			opEvents,
 		),
 	}
 }
 
-func NewManifestRendererWorker(natsURL string, artifacts ArtifactStore) *ManifestRendererWorker {
+func NewManifestRendererWorker(
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) *ManifestRendererWorker {
 	return &ManifestRendererWorker{
 		WorkerBase: newWorkerBase(
 			"manifestRenderer",
@@ -80,11 +102,16 @@ func NewManifestRendererWorker(natsURL string, artifacts ArtifactStore) *Manifes
 			subjectBuildDone,
 			subjectDeployDone,
 			artifacts,
+			opEvents,
 		),
 	}
 }
 
-func NewDeploymentWorker(natsURL string, artifacts ArtifactStore) *DeploymentWorker {
+func NewDeploymentWorker(
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) *DeploymentWorker {
 	return &DeploymentWorker{
 		WorkerBase: newWorkerBase(
 			"deployer",
@@ -92,11 +119,16 @@ func NewDeploymentWorker(natsURL string, artifacts ArtifactStore) *DeploymentWor
 			subjectDeploymentStart,
 			subjectDeploymentDone,
 			artifacts,
+			opEvents,
 		),
 	}
 }
 
-func NewPromotionWorker(natsURL string, artifacts ArtifactStore) *PromotionWorker {
+func NewPromotionWorker(
+	natsURL string,
+	artifacts ArtifactStore,
+	opEvents *opEventHub,
+) *PromotionWorker {
 	return &PromotionWorker{
 		WorkerBase: newWorkerBase(
 			"promoter",
@@ -104,6 +136,7 @@ func NewPromotionWorker(natsURL string, artifacts ArtifactStore) *PromotionWorke
 			subjectPromotionStart,
 			subjectPromotionDone,
 			artifacts,
+			opEvents,
 		),
 	}
 }
@@ -116,6 +149,7 @@ func (w *RegistrationWorker) Start(ctx context.Context) error {
 		w.subjectIn,
 		w.subjectOut,
 		w.artifacts,
+		w.opEvents,
 		registrationWorkerAction,
 	)
 }
@@ -128,6 +162,7 @@ func (w *RepoBootstrapWorker) Start(ctx context.Context) error {
 		w.subjectIn,
 		w.subjectOut,
 		w.artifacts,
+		w.opEvents,
 		repoBootstrapWorkerAction,
 	)
 }
@@ -140,6 +175,7 @@ func (w *ImageBuilderWorker) Start(ctx context.Context) error {
 		w.subjectIn,
 		w.subjectOut,
 		w.artifacts,
+		w.opEvents,
 		imageBuilderWorkerAction,
 	)
 }
@@ -152,6 +188,7 @@ func (w *ManifestRendererWorker) Start(ctx context.Context) error {
 		w.subjectIn,
 		w.subjectOut,
 		w.artifacts,
+		w.opEvents,
 		manifestRendererWorkerAction,
 	)
 }
@@ -164,6 +201,7 @@ func (w *DeploymentWorker) Start(ctx context.Context) error {
 		w.subjectIn,
 		w.subjectOut,
 		w.artifacts,
+		w.opEvents,
 		deploymentWorkerAction,
 	)
 }
@@ -176,6 +214,7 @@ func (w *PromotionWorker) Start(ctx context.Context) error {
 		w.subjectIn,
 		w.subjectOut,
 		w.artifacts,
+		w.opEvents,
 		promotionWorkerAction,
 	)
 }

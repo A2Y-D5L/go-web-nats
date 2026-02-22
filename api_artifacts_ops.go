@@ -73,16 +73,40 @@ func (a *API) handleProjectArtifacts(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleOpByID(w http.ResponseWriter, r *http.Request) {
 	// GET /api/ops/{id}
+	// GET /api/ops/{id}/events
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	opID := strings.TrimPrefix(r.URL.Path, "/api/ops/")
-	opID = strings.TrimSpace(opID)
-	if opID == "" || strings.Contains(opID, "/") {
+	if !strings.HasPrefix(r.URL.Path, "/api/ops/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/ops/"), "/")
+	if rest == "" {
 		http.Error(w, "bad op id", http.StatusBadRequest)
 		return
 	}
+	parts := strings.Split(rest, "/")
+	opID := strings.TrimSpace(parts[0])
+	if opID == "" {
+		http.Error(w, "bad op id", http.StatusBadRequest)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "events" {
+		a.handleOpEvents(w, r, opID)
+		return
+	}
+	if len(parts) != 1 {
+		http.NotFound(w, r)
+		return
+	}
+	if a.store == nil {
+		http.Error(w, "operation data unavailable", http.StatusInternalServerError)
+		return
+	}
+
 	op, err := a.store.GetOp(r.Context(), opID)
 	if err != nil {
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
