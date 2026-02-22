@@ -1,10 +1,13 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func skipWorkerResult(opMsg ProjectOpMsg, workerName string) WorkerResultMsg {
@@ -44,7 +47,63 @@ func finalizeWorkerResult(
 	return res
 }
 
-func publishWorkerResult(nc *nats.Conn, subject string, res WorkerResultMsg) error {
-	body, _ := json.Marshal(res)
-	return nc.Publish(subject, body)
+func publishWorkerResult(
+	ctx context.Context,
+	js jetstream.JetStream,
+	subject string,
+	res WorkerResultMsg,
+) error {
+	body, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+	_, err = js.Publish(ctx, subject, body, jetstream.WithMsgID(workerResultMessageID(subject, res)))
+	return err
+}
+
+func publishWorkerPoison(
+	ctx context.Context,
+	js jetstream.JetStream,
+	msg WorkerPoisonMsg,
+) error {
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	_, err = js.Publish(
+		ctx,
+		subjectWorkerPoison,
+		body,
+		jetstream.WithMsgID(workerPoisonMessageID(msg)),
+	)
+	return err
+}
+
+func workerResultMessageID(subject string, res WorkerResultMsg) string {
+	return fmt.Sprintf(
+		"worker-result:%s:%s:%s",
+		sanitizeMessageIDComponent(subject),
+		sanitizeMessageIDComponent(res.OpID),
+		sanitizeMessageIDComponent(res.Worker),
+	)
+}
+
+func workerPoisonMessageID(msg WorkerPoisonMsg) string {
+	return fmt.Sprintf(
+		"worker-poison:%s:%s:%s:%d",
+		sanitizeMessageIDComponent(msg.Worker),
+		sanitizeMessageIDComponent(msg.SubjectIn),
+		sanitizeMessageIDComponent(msg.OpID),
+		msg.Attempt,
+	)
+}
+
+func sanitizeMessageIDComponent(in string) string {
+	in = strings.TrimSpace(in)
+	in = strings.ReplaceAll(in, ":", "_")
+	in = strings.ReplaceAll(in, " ", "_")
+	if in == "" {
+		return "none"
+	}
+	return in
 }

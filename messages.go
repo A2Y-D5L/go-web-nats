@@ -35,6 +35,21 @@ type WorkerResultMsg struct {
 	At        time.Time         `json:"at"`
 }
 
+type WorkerPoisonMsg struct {
+	Worker     string            `json:"worker"`
+	SubjectIn  string            `json:"subject_in"`
+	SubjectOut string            `json:"subject_out"`
+	OpID       string            `json:"op_id,omitempty"`
+	Kind       OperationKind     `json:"kind,omitempty"`
+	ProjectID  string            `json:"project_id,omitempty"`
+	Delivery   DeliveryLifecycle `json:"delivery,omitzero"`
+	Attempt    uint64            `json:"attempt"`
+	MaxDeliver int               `json:"max_deliver"`
+	Reason     string            `json:"reason"`
+	RawPayload string            `json:"raw_payload,omitempty"`
+	StoredAt   time.Time         `json:"stored_at"`
+}
+
 func zeroProjectSpec() ProjectSpec {
 	return ProjectSpec{
 		APIVersion:      "",

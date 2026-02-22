@@ -82,3 +82,29 @@ func startEmbeddedNATS() (*server.Server, string, string, bool, error) {
 	}
 	return ns, ns.ClientURL(), storeDir, storeCfg.isEphemeral, nil
 }
+
+func ensureWorkerDeliveryStream(ctx context.Context, js jetstream.JetStream) error {
+	var cfg jetstream.StreamConfig
+	cfg.Name = streamWorkerPipeline
+	cfg.Subjects = []string{
+		subjectProjectOpStart,
+		subjectRegistrationDone,
+		subjectBootstrapDone,
+		subjectBuildDone,
+		subjectDeployDone,
+		subjectDeploymentStart,
+		subjectDeploymentDone,
+		subjectPromotionStart,
+		subjectPromotionDone,
+		subjectWorkerPoison,
+	}
+	cfg.Retention = jetstream.LimitsPolicy
+	cfg.MaxMsgs = workerDeliveryStreamMaxMsgs
+	cfg.MaxBytes = workerDeliveryStreamMaxBytes
+	cfg.Discard = jetstream.DiscardOld
+	cfg.MaxAge = workerDeliveryStreamMaxAge
+	cfg.Storage = jetstream.FileStorage
+	cfg.Replicas = 1
+	_, err := js.CreateOrUpdateStream(ctx, cfg)
+	return err
+}

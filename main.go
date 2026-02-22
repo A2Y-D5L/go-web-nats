@@ -35,6 +35,10 @@ func Run() {
 	if err != nil {
 		mainLog.Fatalf("jetstream: %v", err)
 	}
+	streamErr := ensureWorkerDeliveryStream(ctx, js)
+	if streamErr != nil {
+		mainLog.Fatalf("worker delivery stream: %v", streamErr)
+	}
 
 	store, err := newStore(ctx, js)
 	if err != nil {

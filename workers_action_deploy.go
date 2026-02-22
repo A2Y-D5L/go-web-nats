@@ -60,7 +60,6 @@ func manifestRendererWorkerAction(
 		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
 	}
 	if err != nil {
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		_ = markOpStepEnd(
 			ctx,
 			store,
@@ -71,10 +70,10 @@ func manifestRendererWorkerAction(
 			err.Error(),
 			outcome.artifacts,
 		)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		return res, err
 	}
 
-	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	res.Message = outcome.message
 	res.Artifacts = outcome.artifacts
 	_ = markOpStepEnd(
@@ -87,6 +86,7 @@ func manifestRendererWorkerAction(
 		"",
 		res.Artifacts,
 	)
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	return res, nil
 }
 
@@ -109,8 +109,8 @@ func deploymentWorkerAction(
 
 	if msg.Kind != OpDeploy {
 		err := fmt.Errorf("deployment worker only handles %s operations", OpDeploy)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		return res, err
 	}
 
@@ -120,15 +120,15 @@ func deploymentWorkerAction(
 			"deployment environment %q not supported; use promotion/release for higher environments",
 			targetEnv,
 		)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		return res, err
 	}
 
 	imageTag, err := readBuildImageTagForDeployment(artifacts, msg.ProjectID)
 	if err != nil {
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		return res, err
 	}
 
@@ -143,7 +143,6 @@ func deploymentWorkerAction(
 		targetEnv,
 	)
 	if err != nil {
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		_ = markOpStepEnd(
 			ctx,
 			store,
@@ -154,10 +153,10 @@ func deploymentWorkerAction(
 			err.Error(),
 			outcome.artifacts,
 		)
+		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
 		return res, err
 	}
 
-	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	res.Message = outcome.message
 	res.Artifacts = outcome.artifacts
 	_ = markOpStepEnd(
@@ -170,6 +169,7 @@ func deploymentWorkerAction(
 		"",
 		res.Artifacts,
 	)
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	return res, nil
 }
 

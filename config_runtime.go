@@ -49,7 +49,25 @@ const (
 	touchedArtifactsCap    = 8
 	opEventsHistoryLimit   = 256
 	opEventArtifactsLimit  = 8
+
+	workerDeliveryAckWait    = 15 * time.Second
+	workerDeliveryFetchWait  = 2 * time.Second
+	workerDeliveryMaxDeliver = 5
+
+	workerDeliveryStreamMaxAge   = 24 * time.Hour
+	workerDeliveryStreamMaxMsgs  = int64(20000)
+	workerDeliveryStreamMaxBytes = int64(64 * 1024 * 1024)
 )
+
+func workerDeliveryRetryBackoff() []time.Duration {
+	return []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+		20 * time.Second,
+	}
+}
 
 type imageBuilderModeResolution struct {
 	requestedMode     imageBuilderMode

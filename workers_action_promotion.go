@@ -66,7 +66,6 @@ func promotionWorkerAction(
 		return failPromotionStep(ctx, store, msg, res, err, outcome.artifacts)
 	}
 
-	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	res.Message = outcome.message
 	res.Artifacts = outcome.artifacts
 	_ = markOpStepEnd(
@@ -79,6 +78,7 @@ func promotionWorkerAction(
 		"",
 		res.Artifacts,
 	)
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	return res, nil
 }
 
@@ -90,7 +90,6 @@ func failPromotionStep(
 	stepErr error,
 	artifacts []string,
 ) (WorkerResultMsg, error) {
-	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", stepErr.Error())
 	_ = markOpStepEnd(
 		ctx,
 		store,
@@ -101,6 +100,7 @@ func failPromotionStep(
 		stepErr.Error(),
 		artifacts,
 	)
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", stepErr.Error())
 	return res, stepErr
 }
 

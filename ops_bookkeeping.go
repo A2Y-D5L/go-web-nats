@@ -23,6 +23,11 @@ func markOpStepStart(
 	if err != nil {
 		return err
 	}
+	for i := len(op.Steps) - 1; i >= 0; i-- {
+		if op.Steps[i].Worker == worker && op.Steps[i].EndedAt.IsZero() {
+			return nil
+		}
+	}
 	prevStatus := op.Status
 	op.Status = opStatusRunning
 	op.Steps = append(op.Steps, OpStep{
@@ -58,6 +63,7 @@ func markOpStepEnd(
 		return err
 	}
 	prevStatus := op.Status
+	prevError := op.Error
 	stepIndex := 0
 	var stepStartedAt time.Time
 	// Find last step for worker that doesn't have EndedAt set.
@@ -84,7 +90,8 @@ func markOpStepEnd(
 		return putErr
 	}
 
-	if prevStatus != op.Status {
+	stateChanged := prevStatus != op.Status || prevError != op.Error
+	if stateChanged {
 		emitOpStatus(store.opEvents, op, "operation status updated")
 	}
 	if stepIndex > 0 {
@@ -100,7 +107,7 @@ func markOpStepEnd(
 			endedAt,
 		)
 	}
-	if stepErr != "" {
+	if stepErr != "" && stateChanged {
 		emitOpTerminal(store.opEvents, op)
 	}
 	return nil
@@ -152,10 +159,11 @@ func finalizeOp(
 	p.Status.LastOpKind = string(kind)
 	_ = store.PutProject(ctx, p)
 
-	if prevStatus != op.Status || prevError != op.Error {
+	stateChanged := prevStatus != op.Status || prevError != op.Error
+	if stateChanged {
 		emitOpStatus(store.opEvents, op, "operation status updated")
 	}
-	if status == "done" || status == "error" {
+	if stateChanged && (status == "done" || status == "error") {
 		emitOpTerminal(store.opEvents, op)
 	}
 	return nil

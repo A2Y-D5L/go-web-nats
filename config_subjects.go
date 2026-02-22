@@ -5,6 +5,9 @@ package platform
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
+	// Worker delivery stream.
+	streamWorkerPipeline = "PAAS_WORKER_PIPELINE"
+
 	// API publishes project operations here.
 	subjectProjectOpStart = "paas.project.op.start"
 
@@ -19,6 +22,7 @@ const (
 	subjectDeploymentDone  = "paas.project.process.deployment.done"
 	subjectPromotionStart  = "paas.project.process.promotion.start"
 	subjectPromotionDone   = "paas.project.process.promotion.done"
+	subjectWorkerPoison    = "paas.worker.delivery.poison"
 
 	// KV buckets.
 	kvBucketProjects = "paas_projects"
