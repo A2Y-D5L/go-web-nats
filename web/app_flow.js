@@ -110,12 +110,71 @@ function stopOperationMonitor({ clearPayload = false } = {}) {
   }
 }
 
+function resetOperationHistory() {
+  state.operation.history = [];
+  state.operation.historyLoading = false;
+  state.operation.historyError = "";
+  state.operation.historyNextCursor = "";
+}
+
+async function loadOperationHistory({ silent = false } = {}) {
+  const project = getSelectedProject();
+  if (!project) {
+    resetOperationHistory();
+    renderOperationPanel();
+    return;
+  }
+  const projectID = project.id;
+
+  state.operation.historyLoading = true;
+  state.operation.historyError = "";
+  renderOperationPanel();
+
+  try {
+    const response = await requestAPI(
+      "GET",
+      `/api/projects/${encodeURIComponent(projectID)}/ops?limit=20`
+    );
+    if (getSelectedProject()?.id !== projectID) {
+      return;
+    }
+    const items = Array.isArray(response?.items) ? response.items : [];
+    state.operation.history = items;
+    state.operation.historyNextCursor = String(response?.next_cursor || "").trim();
+
+    if (state.operation.payload?.id) {
+      upsertOperationHistory(state.operation.payload);
+    }
+
+    renderOperationPanel();
+    if (!silent) {
+      setStatus("Activity history refreshed.", "success");
+    }
+  } catch (error) {
+    if (getSelectedProject()?.id !== projectID) {
+      return;
+    }
+    state.operation.historyError = error.message;
+    renderOperationPanel();
+    if (!silent) {
+      throw error;
+    }
+  } finally {
+    if (getSelectedProject()?.id !== projectID) {
+      return;
+    }
+    state.operation.historyLoading = false;
+    renderOperationPanel();
+  }
+}
+
 function clearSelection() {
   state.selectedProjectID = "";
   state.ui.workspaceOpen = false;
   closeAllModals();
   setUpdateDefaults();
   stopOperationMonitor({ clearPayload: true });
+  resetOperationHistory();
   resetArtifacts();
   resetJourney();
   renderAll();
@@ -136,12 +195,14 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     state.selectedProjectID = "";
     state.ui.workspaceOpen = false;
     stopOperationMonitor({ clearPayload: true });
+    resetOperationHistory();
     resetArtifacts();
     resetJourney();
   } else if (!preserveSelection) {
     state.selectedProjectID = "";
     state.ui.workspaceOpen = false;
     stopOperationMonitor({ clearPayload: true });
+    resetOperationHistory();
     resetArtifacts();
     resetJourney();
   }
@@ -153,7 +214,12 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     }
   } else if (!selected) {
     stopOperationMonitor({ clearPayload: true });
+    resetOperationHistory();
     resetJourney();
+  }
+
+  if (selected) {
+    await loadOperationHistory({ silent: true });
   }
 
   renderAll();
@@ -471,6 +537,7 @@ function selectProject(projectID) {
 
   state.selectedProjectID = projectID;
   state.ui.workspaceOpen = true;
+  resetOperationHistory();
   resetArtifacts();
   resetJourney();
 
@@ -492,6 +559,10 @@ function selectProject(projectID) {
 
   void loadJourney({ silent: true }).catch((error) => {
     setStatus(`Journey unavailable: ${error.message}`, "warning");
+  });
+
+  void loadOperationHistory({ silent: true }).catch((error) => {
+    setStatus(`Activity history unavailable: ${error.message}`, "warning");
   });
 }
 

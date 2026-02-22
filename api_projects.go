@@ -112,6 +112,10 @@ func (a *API) resolveProjectIDFromPath(w http.ResponseWriter, r *http.Request) (
 			a.handleProjectArtifacts(w, r)
 			return "", false
 		}
+		if parts[1] == "ops" {
+			a.handleProjectOps(w, r)
+			return "", false
+		}
 		if parts[1] == "journey" {
 			a.handleProjectJourney(w, r)
 			return "", false

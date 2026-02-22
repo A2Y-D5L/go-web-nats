@@ -276,6 +276,7 @@ Endpoints:
 - `PUT /api/projects/{id}`
 - `DELETE /api/projects/{id}`
 - `GET /api/projects/{id}/journey`
+- `GET /api/projects/{id}/ops`
 
 `POST` and `PUT` accept `ProjectSpec` directly as request JSON.
 
@@ -343,6 +344,43 @@ Response:
     "recent_operation": {},
     "last_update_time": "2026-02-22T12:34:56Z"
   }
+}
+```
+
+### Project Operation History
+
+Endpoint:
+
+- `GET /api/projects/{id}/ops`
+
+Query params:
+
+- `limit` (optional, default `20`, max `100`)
+- `cursor` (optional, op id cursor returned by previous page)
+- `before` (optional, RFC3339/RFC3339Nano timestamp or op id)
+
+Purpose:
+
+- Returns persistent operation history for the selected project so activity survives page reloads and browser session boundaries.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": "op-id",
+      "kind": "create | update | delete | ci | deploy | promote | release",
+      "status": "queued | running | done | error",
+      "requested": "2026-02-22T12:30:00Z",
+      "finished": "2026-02-22T12:31:00Z",
+      "error": "",
+      "summary_message": "operation completed",
+      "last_event_sequence": 14,
+      "last_update_at": "2026-02-22T12:31:00Z"
+    }
+  ],
+  "next_cursor": "op-id"
 }
 ```
 

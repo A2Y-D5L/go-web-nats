@@ -21,6 +21,7 @@ const (
 	opStatusDone    = "done"
 	opStatusError   = "error"
 	opMessageFailed = "operation failed"
+	opMessageDone   = "operation completed"
 
 	opEventSubscriberBuffer = 32
 	opTotalStepsFullChain   = 4
@@ -328,7 +329,7 @@ func newOpBootstrapSnapshot(op Operation) opEventPayload {
 		}
 	case opStatusDone:
 		if payload.Message == "" {
-			payload.Message = "operation completed"
+			payload.Message = opMessageDone
 		}
 	case opStatusError:
 		if payload.Message == "" {
@@ -441,7 +442,7 @@ func emitOpTerminal(h *opEventHub, op Operation) {
 		return
 	}
 	if payload.Status == opStatusDone {
-		payload.Message = "operation completed"
+		payload.Message = opMessageDone
 		h.publish(opEventCompleted, payload)
 	}
 }

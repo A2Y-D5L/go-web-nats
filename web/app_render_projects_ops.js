@@ -151,6 +151,7 @@ function upsertOperationHistory(op) {
   if (!op?.id) return;
 
   const step = Array.isArray(op.steps) && op.steps.length ? op.steps[op.steps.length - 1] : null;
+  const summaryMessage = step?.message || op.summary_message || "";
   const summary = {
     id: op.id,
     kind: op.kind,
@@ -158,7 +159,10 @@ function upsertOperationHistory(op) {
     requested: op.requested,
     finished: op.finished,
     error: op.error,
-    message: step?.message || "",
+    summary_message: summaryMessage,
+    message: summaryMessage,
+    last_event_sequence: Number(op.last_event_sequence || 0),
+    last_update_at: op.last_update_at || op.finished || op.requested,
   };
 
   const index = state.operation.history.findIndex((item) => item.id === op.id);
@@ -169,7 +173,7 @@ function upsertOperationHistory(op) {
   }
 
   state.operation.history.sort((a, b) => dateValue(b.requested) - dateValue(a.requested));
-  state.operation.history = state.operation.history.slice(0, 12);
+  state.operation.history = state.operation.history.slice(0, 20);
 }
 
 function deriveRecoveryHints(errorMessage) {
@@ -332,9 +336,25 @@ function renderOperationTimeline(op) {
 function renderOperationHistory() {
   dom.containers.opHistory.replaceChildren();
 
+  if (state.operation.historyLoading && !state.operation.history.length) {
+    renderEmptyState(dom.containers.opHistory, "Loading activity history...");
+    return;
+  }
+
+  if (state.operation.historyError && !state.operation.history.length) {
+    renderEmptyState(dom.containers.opHistory, `Activity history unavailable: ${state.operation.historyError}`);
+    return;
+  }
+
   if (!state.operation.history.length) {
     renderEmptyState(dom.containers.opHistory, "Completed app activities will be listed here.");
     return;
+  }
+
+  if (state.operation.historyError) {
+    dom.containers.opHistory.appendChild(
+      makeElem("p", "history-item-meta", `History refresh warning: ${state.operation.historyError}`)
+    );
   }
 
   for (const item of state.operation.history) {
@@ -352,10 +372,14 @@ function renderOperationHistory() {
       `requested ${toLocalTime(item.requested)} • finished ${toLocalTime(item.finished)} • duration ${duration(
         item.requested,
         item.finished
-      )}`
+      )} • updated ${toLocalTime(item.last_update_at)}`
     );
 
-    const detail = makeElem("p", "history-item-meta", item.error || item.message || "No detail message.");
+    const detail = makeElem(
+      "p",
+      "history-item-meta",
+      item.error || item.summary_message || item.message || "No detail message."
+    );
 
     card.append(head, meta, detail);
     dom.containers.opHistory.appendChild(card);

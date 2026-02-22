@@ -272,6 +272,9 @@ const state = {
     sseFailureCount: 0,
     terminalHandledOpID: "",
     history: [],
+    historyLoading: false,
+    historyError: "",
+    historyNextCursor: "",
   },
   promotion: {
     fromEnv: "",
