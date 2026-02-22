@@ -47,8 +47,9 @@ func Run() {
 	opEvents := newOpEventHub(opEventsHistoryLimit, opEventsRetention)
 	store.setOpEvents(opEvents)
 
-	artifacts := NewFSArtifacts(defaultArtifactsRoot)
-	mkdirErr := os.MkdirAll(defaultArtifactsRoot, dirModePrivateRead)
+	artifactsRoot := resolveArtifactsRoot()
+	artifacts := NewFSArtifacts(artifactsRoot.root)
+	mkdirErr := os.MkdirAll(artifactsRoot.root, dirModePrivateRead)
 	if mkdirErr != nil {
 		mainLog.Fatalf("mkdir artifacts root: %v", mkdirErr)
 	}
@@ -85,7 +86,15 @@ func Run() {
 		ReadHeaderTimeout: defaultReadHeaderWait,
 	}
 
-	logRuntimeStartup(mainLog, natsURL, jsDir, jsDirEphemeral, watcherStarted, builderMode)
+	logRuntimeStartup(
+		mainLog,
+		natsURL,
+		jsDir,
+		jsDirEphemeral,
+		watcherStarted,
+		builderMode,
+		artifactsRoot,
+	)
 
 	listenErr := srv.ListenAndServe()
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
@@ -158,6 +167,7 @@ func logRuntimeStartup(
 	natsStoreEphemeral bool,
 	watcherStarted bool,
 	builderMode imageBuilderModeResolution,
+	artifactsRoot artifactsRootResolution,
 ) {
 	mainLog.Infof("NATS: %s", natsURL)
 	if natsStoreEphemeral {
@@ -166,7 +176,15 @@ func logRuntimeStartup(
 		mainLog.Infof("NATS store dir: %s (persistent)", natsStoreDir)
 	}
 	mainLog.Infof("Portal: http://%s", httpAddr)
-	mainLog.Infof("Artifacts root: %s", defaultArtifactsRoot)
+	mainLog.Infof("Artifacts root: %s", artifactsRoot.root)
+	if shouldLogLegacyArtifactsMigrationNotice(artifactsRoot) {
+		mainLog.Warnf(
+			"Legacy artifacts root detected at %s while new root is empty. Existing artifacts are not auto-migrated; move files manually or keep the legacy root with %s=%s.",
+			artifactsRoot.legacyRoot,
+			artifactsRootEnv,
+			artifactsRoot.legacyRoot,
+		)
+	}
 	mainLog.Infof(
 		"Image builder mode: requested=%s effective=%s explicit=%t",
 		builderMode.requestedMode,

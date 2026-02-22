@@ -140,8 +140,14 @@ SSE supports reconnect replay via `Last-Event-ID` against a bounded in-memory ev
 
 On registration create/update, `repoBootstrap` now creates real local repos at:
 
-- `data/artifacts/<project-id>/repos/source`
-- `data/artifacts/<project-id>/repos/manifests`
+- `<artifacts-root>/<project-id>/repos/source`
+- `<artifacts-root>/<project-id>/repos/manifests`
+
+Default `<artifacts-root>` is OS-aware and outside the module tree:
+
+- macOS: `~/Library/Application Support/EmbeddedWebApp-HTTPAPI-BackendNATS/artifacts`
+- Linux: `$XDG_STATE_HOME/EmbeddedWebApp-HTTPAPI-BackendNATS/artifacts`
+- Linux fallback when `XDG_STATE_HOME` is unset: `~/.local/state/EmbeddedWebApp-HTTPAPI-BackendNATS/artifacts`
 
 The source repo gets local hooks:
 
@@ -161,6 +167,7 @@ Hook endpoint defaults to:
 Optional override:
 
 - `PAAS_LOCAL_API_BASE_URL` (example: `http://127.0.0.1:8080`)
+- `PAAS_ARTIFACTS_ROOT` (optional explicit artifact root override)
 - `PAAS_ENABLE_COMMIT_WATCHER` (`true|false`, default `false`) enables in-process polling watcher for source commits
 - `PAAS_IMAGE_BUILDER_MODE` (`artifact|buildkit`, default `buildkit`)
 - `PAAS_BUILDKIT_ADDR` (optional, default `unix:///run/buildkit/buildkitd.sock` when BuildKit mode is enabled)
@@ -419,12 +426,14 @@ make smoke-registration
 After creating a project, make a commit in the bootstrapped source repo to trigger CI locally:
 
 ```bash
-cd data/artifacts/<project-id>/repos/source
+cd "<artifacts-root>/<project-id>/repos/source"
 git switch main
 echo "// local change" >> main.go
 git add main.go
 git commit -m "feat: local source change"
 ```
+
+`<artifacts-root>` is printed on startup (`Artifacts root: ...`). You can pin it with `PAAS_ARTIFACTS_ROOT`.
 
 ## Quick cURL Examples
 

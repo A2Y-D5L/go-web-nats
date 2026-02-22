@@ -11,7 +11,15 @@ GOLANGCI_LINT ?= golangci-lint
 
 APP_ADDR ?= 127.0.0.1:8080
 API_BASE ?= http://$(APP_ADDR)
-ARTIFACTS_ROOT ?= ./data/artifacts
+ARTIFACTS_APP_NAME ?= EmbeddedWebApp-HTTPAPI-BackendNATS
+UNAME_S ?= $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+ARTIFACTS_ROOT_DEFAULT ?= $(HOME)/Library/Application Support/$(ARTIFACTS_APP_NAME)/artifacts
+else
+XDG_STATE_HOME ?= $(HOME)/.local/state
+ARTIFACTS_ROOT_DEFAULT ?= $(XDG_STATE_HOME)/$(ARTIFACTS_APP_NAME)/artifacts
+endif
+ARTIFACTS_ROOT ?= $(ARTIFACTS_ROOT_DEFAULT)
 LOCAL_BIN_DIR ?= $(HOME)/.local/bin
 BUILDKIT_VERSION ?= v0.27.1
 BUILDKIT_OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -356,13 +364,13 @@ buildkit-start-container: ## Start BuildKit daemon in Docker (macOS-friendly)
 		--addr tcp://0.0.0.0:1234
 
 run-buildkit: ## Run API/UI server with BuildKit support (-tags buildkit)
-	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" PAAS_BUILDKIT_ADDR="$(BUILDKIT_ADDR)" $(GO) run -tags buildkit ./cmd/server
+	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" PAAS_ARTIFACTS_ROOT="$(ARTIFACTS_ROOT)" PAAS_BUILDKIT_ADDR="$(BUILDKIT_ADDR)" $(GO) run -tags buildkit ./cmd/server
 
 run-artifact: ## Run API/UI server with artifact mode fallback
-	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" PAAS_IMAGE_BUILDER_MODE=artifact $(GO) run ./cmd/server
+	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" PAAS_ARTIFACTS_ROOT="$(ARTIFACTS_ROOT)" PAAS_IMAGE_BUILDER_MODE=artifact $(GO) run ./cmd/server
 
 run: ## Run API/UI server locally
-	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" $(GO) run ./cmd/server
+	PAAS_LOCAL_API_BASE_URL="$(API_BASE)" PAAS_ARTIFACTS_ROOT="$(ARTIFACTS_ROOT)" $(GO) run ./cmd/server
 
 dev: run ## Alias for run
 

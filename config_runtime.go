@@ -2,8 +2,11 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -19,9 +22,11 @@ const (
 	httpAddr = "127.0.0.1:8080"
 
 	// Where workers write artifacts.
-	defaultArtifactsRoot = "./data/artifacts"
-	imageBuilderModeEnv  = "PAAS_IMAGE_BUILDER_MODE"
-	natsStoreDirEnv      = "PAAS_NATS_STORE_DIR"
+	artifactsRootEnv       = "PAAS_ARTIFACTS_ROOT"
+	legacyArtifactsRoot    = "./data/artifacts"
+	artifactsAppFolderName = "EmbeddedWebApp-HTTPAPI-BackendNATS"
+	imageBuilderModeEnv    = "PAAS_IMAGE_BUILDER_MODE"
+	natsStoreDirEnv        = "PAAS_NATS_STORE_DIR"
 
 	defaultNATSStoreDir       = "./data/nats"
 	natsStoreDirModeTemp      = "temp"
@@ -117,6 +122,115 @@ type buildkitProbeFunc func(ctx context.Context) error
 type natsStoreDirResolution struct {
 	storeDir    string
 	isEphemeral bool
+}
+
+type artifactsRootResolution struct {
+	root       string
+	fromEnv    bool
+	legacyRoot string
+}
+
+func resolveArtifactsRoot() artifactsRootResolution {
+	raw, exists := os.LookupEnv(artifactsRootEnv)
+	homeDir, _ := os.UserHomeDir()
+	return resolveArtifactsRootRaw(runtime.GOOS, raw, exists, homeDir, os.Getenv("XDG_STATE_HOME"))
+}
+
+func resolveArtifactsRootRaw(
+	goos string,
+	raw string,
+	exists bool,
+	homeDir string,
+	xdgStateHome string,
+) artifactsRootResolution {
+	if exists {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed != "" {
+			return artifactsRootResolution{
+				root:       trimmed,
+				fromEnv:    true,
+				legacyRoot: legacyArtifactsRoot,
+			}
+		}
+	}
+	return artifactsRootResolution{
+		root:       defaultArtifactsRootForOS(goos, homeDir, xdgStateHome),
+		fromEnv:    false,
+		legacyRoot: legacyArtifactsRoot,
+	}
+}
+
+func defaultArtifactsRootForOS(goos string, homeDir string, xdgStateHome string) string {
+	switch goos {
+	case "darwin":
+		if strings.TrimSpace(homeDir) != "" {
+			return filepath.Join(
+				homeDir,
+				"Library",
+				"Application Support",
+				artifactsAppFolderName,
+				"artifacts",
+			)
+		}
+	case "linux":
+		stateRoot := strings.TrimSpace(xdgStateHome)
+		if stateRoot == "" && strings.TrimSpace(homeDir) != "" {
+			stateRoot = filepath.Join(homeDir, ".local", "state")
+		}
+		if stateRoot != "" {
+			return filepath.Join(stateRoot, artifactsAppFolderName, "artifacts")
+		}
+	}
+	if strings.TrimSpace(homeDir) != "" {
+		return filepath.Join(homeDir, ".local", "state", artifactsAppFolderName, "artifacts")
+	}
+	return legacyArtifactsRoot
+}
+
+func shouldLogLegacyArtifactsMigrationNotice(res artifactsRootResolution) bool {
+	if res.fromEnv || sameFilesystemPath(res.root, res.legacyRoot) {
+		return false
+	}
+	legacyExists, legacyErr := dirExists(res.legacyRoot)
+	if legacyErr != nil || !legacyExists {
+		return false
+	}
+	rootEmpty, rootErr := dirEmptyOrMissing(res.root)
+	if rootErr != nil {
+		return false
+	}
+	return rootEmpty
+}
+
+func dirExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
+}
+
+func dirEmptyOrMissing(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, err
+	}
+	return len(entries) == 0, nil
+}
+
+func sameFilesystemPath(a string, b string) bool {
+	aAbs, aErr := filepath.Abs(a)
+	bAbs, bErr := filepath.Abs(b)
+	if aErr != nil || bErr != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return filepath.Clean(aAbs) == filepath.Clean(bAbs)
 }
 
 func resolveNATSStoreDir() natsStoreDirResolution {
