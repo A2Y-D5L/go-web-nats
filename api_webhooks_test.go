@@ -75,7 +75,42 @@ func TestAPI_ShouldSkipSourceCommitMessage(t *testing.T) {
 	}
 }
 
-func TestAPI_MarkSourceCommitSeen(t *testing.T) {
+func TestAPI_ShouldRecordWatcherSeenCommit(t *testing.T) {
+	cases := []struct {
+		name     string
+		accepted bool
+		reason   string
+		want     bool
+	}{
+		{
+			name:     "accepted trigger is recorded",
+			accepted: true,
+			reason:   "",
+			want:     true,
+		},
+		{
+			name:     "dedupe skip is recorded",
+			accepted: false,
+			reason:   "ignored: commit already processed",
+			want:     true,
+		},
+		{
+			name:     "other skip is not recorded",
+			accepted: false,
+			reason:   "ignored: only source repo webhooks trigger ci",
+			want:     false,
+		},
+	}
+	for _, tc := range cases {
+		got := platform.ShouldRecordWatcherSeenCommitForTest(tc.accepted, tc.reason)
+		if got != tc.want {
+			t.Fatalf("%s: shouldRecordWatcherSeenCommit(%v,%q)=%v want %v",
+				tc.name, tc.accepted, tc.reason, got, tc.want)
+		}
+	}
+}
+
+func TestAPI_SourceCommitEnqueueFailureDoesNotSuppressCommit(t *testing.T) {
 	api := platform.NewTestAPI(newMemArtifacts())
 
 	firstSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
@@ -86,12 +121,83 @@ func TestAPI_MarkSourceCommitSeen(t *testing.T) {
 		t.Fatal("expected first commit mark to be new")
 	}
 
+	rollbackErr := platform.RollbackSourceCommitPendingEnqueueForTest(api, "p1", "abc123")
+	if rollbackErr != nil {
+		t.Fatalf("rollback pending enqueue: %v", rollbackErr)
+	}
+
+	secondSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
+	if err != nil {
+		t.Fatalf("second mark source commit after enqueue failure: %v", err)
+	}
+	if !secondSeen {
+		t.Fatal("expected enqueue failure rollback to allow retry for same commit")
+	}
+}
+
+func TestAPI_SourceCommitDuplicateSuccessfulCommitIgnored(t *testing.T) {
+	api := platform.NewTestAPI(newMemArtifacts())
+
+	firstSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
+	if err != nil {
+		t.Fatalf("first mark source commit: %v", err)
+	}
+	if !firstSeen {
+		t.Fatal("expected first commit mark to be new")
+	}
+
+	confirmErr := platform.ConfirmSourceCommitPendingOpForTest(api, "p1", "abc123", "op-ci-1")
+	if confirmErr != nil {
+		t.Fatalf("confirm pending op: %v", confirmErr)
+	}
+	finalizeErr := platform.FinalizeSourceCommitPendingOpForTest(api, "p1", "op-ci-1", true)
+	if finalizeErr != nil {
+		t.Fatalf("finalize successful pending op: %v", finalizeErr)
+	}
+
 	secondSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
 	if err != nil {
 		t.Fatalf("second mark source commit: %v", err)
 	}
 	if secondSeen {
-		t.Fatal("expected second mark with same commit to be duplicate")
+		t.Fatal("expected successful commit to be deduped")
+	}
+}
+
+func TestAPI_SourceCommitDuplicatePendingCommitIgnoredDeterministically(t *testing.T) {
+	api := platform.NewTestAPI(newMemArtifacts())
+
+	firstSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
+	if err != nil {
+		t.Fatalf("first mark source commit: %v", err)
+	}
+	if !firstSeen {
+		t.Fatal("expected first commit mark to be new")
+	}
+
+	confirmErr := platform.ConfirmSourceCommitPendingOpForTest(api, "p1", "abc123", "op-ci-1")
+	if confirmErr != nil {
+		t.Fatalf("confirm pending op: %v", confirmErr)
+	}
+
+	secondSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
+	if err != nil {
+		t.Fatalf("second mark source commit: %v", err)
+	}
+	if secondSeen {
+		t.Fatal("expected pending commit to be deduped")
+	}
+
+	finalizeErr := platform.FinalizeSourceCommitPendingOpForTest(api, "p1", "op-ci-1", false)
+	if finalizeErr != nil {
+		t.Fatalf("finalize failed pending op: %v", finalizeErr)
+	}
+	retrySeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "abc123")
+	if err != nil {
+		t.Fatalf("retry mark source commit after failed pending op: %v", err)
+	}
+	if !retrySeen {
+		t.Fatal("expected failed pending commit to be retryable")
 	}
 
 	blankSeen, err := platform.MarkSourceCommitSeenForTest(api, "p1", "")

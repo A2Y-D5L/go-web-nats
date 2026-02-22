@@ -238,6 +238,7 @@ func handleWorkerDelivery(
 	preDecision, handled := handleWorkerPreExecution(
 		ctx,
 		store,
+		artifacts,
 		workerName,
 		inSubj,
 		outSubj,
@@ -285,6 +286,7 @@ func decodeWorkerOpMsg(rawPayload []byte) (ProjectOpMsg, error) {
 func handleWorkerPreExecution(
 	ctx context.Context,
 	store *Store,
+	artifacts ArtifactStore,
 	workerName, inSubj, outSubj string,
 	opMsg ProjectOpMsg,
 	js jetstream.JetStream,
@@ -299,6 +301,7 @@ func handleWorkerPreExecution(
 		return workerRetryOrPoison(
 			ctx,
 			store,
+			artifacts,
 			js,
 			workerName,
 			inSubj,
@@ -318,6 +321,7 @@ func handleWorkerPreExecution(
 			return workerRetryOrPoison(
 				ctx,
 				store,
+				artifacts,
 				js,
 				workerName,
 				inSubj,
@@ -346,6 +350,7 @@ func handleWorkerPreExecution(
 			return workerRetryOrPoison(
 				ctx,
 				store,
+				artifacts,
 				js,
 				workerName,
 				inSubj,
@@ -391,6 +396,7 @@ func executeWorkerAndPublish(
 		return workerRetryOrPoison(
 			ctx,
 			store,
+			artifacts,
 			js,
 			workerName,
 			inSubj,
@@ -441,6 +447,7 @@ func completedWorkerResultForDelivery(
 func workerRetryOrPoison(
 	ctx context.Context,
 	store *Store,
+	artifacts ArtifactStore,
 	js jetstream.JetStream,
 	workerName, inSubj, outSubj string,
 	opMsg *ProjectOpMsg,
@@ -487,7 +494,7 @@ func workerRetryOrPoison(
 		poisonPublisher,
 	)
 	if opMsg != nil {
-		markWorkerDeliveryFailure(ctx, store, *opMsg, finalReason, workerLog)
+		markWorkerDeliveryFailure(ctx, store, artifacts, *opMsg, finalReason, workerLog)
 		poisonResult := poisonWorkerResult(*opMsg, workerName, finalReason)
 		if err := resultPublisher(ctx, js, outSubj, poisonResult); err != nil {
 			workerLog.Errorf(
@@ -551,6 +558,7 @@ func poisonWorkerResult(opMsg ProjectOpMsg, workerName, reason string) WorkerRes
 func markWorkerDeliveryFailure(
 	ctx context.Context,
 	store *Store,
+	artifacts ArtifactStore,
 	opMsg ProjectOpMsg,
 	reason string,
 	workerLog sourceLogger,
@@ -574,6 +582,12 @@ func markWorkerDeliveryFailure(
 	)
 	if finalizeErr != nil {
 		workerLog.Warnf("finalize op on poison failure op=%s failed: %v", opMsg.OpID, finalizeErr)
+	}
+	if op.Kind == OpCI {
+		stateErr := finalizeSourceCommitPendingOp(artifacts, op.ProjectID, op.ID, false)
+		if stateErr != nil {
+			workerLog.Warnf("finalize ci commit state on poison failure op=%s failed: %v", opMsg.OpID, stateErr)
+		}
 	}
 }
 

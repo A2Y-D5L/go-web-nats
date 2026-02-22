@@ -70,62 +70,82 @@ func scanSourceRepos(
 		return
 	}
 	for _, project := range projects {
-		sourceDir := sourceRepoDir(api.artifacts, project.ID)
-		branch, commit, message, repoErr := gitHeadDetails(ctx, sourceDir)
-		if repoErr != nil {
-			if errors.Is(repoErr, os.ErrNotExist) {
-				continue
-			}
-			watcherLog.Debugf("project=%s read source repo: %v", project.ID, repoErr)
-			continue
+		scanSourceRepoProject(ctx, api, watcherLog, lastSeenCommit, project)
+	}
+}
+
+func scanSourceRepoProject(
+	ctx context.Context,
+	api *API,
+	watcherLog sourceLogger,
+	lastSeenCommit map[string]string,
+	project Project,
+) {
+	sourceDir := sourceRepoDir(api.artifacts, project.ID)
+	branch, commit, message, repoErr := gitHeadDetails(ctx, sourceDir)
+	if repoErr != nil {
+		if errors.Is(repoErr, os.ErrNotExist) {
+			return
 		}
-		if normalizeBranchValue(branch) != branchMain {
-			continue
-		}
-		if shouldSkipSourceCommitMessage(message) {
-			continue
-		}
-		commit = strings.TrimSpace(commit)
-		if commit == "" {
-			continue
-		}
-		if lastSeenCommit[project.ID] == commit {
-			continue
-		}
-		lastSeenCommit[project.ID] = commit
-		evt := SourceRepoWebhookEvent{
-			ProjectID: project.ID,
-			Repo:      "source",
-			Branch:    branchMain,
-			Ref:       "refs/heads/" + branchMain,
-			Commit:    commit,
-		}
-		result, triggerErr := api.triggerSourceRepoCI(ctx, evt, "source.main.watcher")
-		if triggerErr != nil {
-			watcherLog.Warnf(
-				"project=%s commit=%s trigger failed: %v",
-				project.ID,
-				shortID(commit),
-				triggerErr,
-			)
-			continue
-		}
-		if !result.accepted {
-			watcherLog.Debugf(
-				"project=%s commit=%s skipped: %s",
-				project.ID,
-				shortID(commit),
-				result.reason,
-			)
-			continue
-		}
-		watcherLog.Infof(
-			"project=%s commit=%s triggered op=%s",
+		watcherLog.Debugf("project=%s read source repo: %v", project.ID, repoErr)
+		return
+	}
+	if normalizeBranchValue(branch) != branchMain {
+		return
+	}
+	if shouldSkipSourceCommitMessage(message) {
+		return
+	}
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return
+	}
+	if lastSeenCommit[project.ID] == commit {
+		return
+	}
+
+	evt := SourceRepoWebhookEvent{
+		ProjectID: project.ID,
+		Repo:      "source",
+		Branch:    branchMain,
+		Ref:       "refs/heads/" + branchMain,
+		Commit:    commit,
+	}
+	result, triggerErr := api.triggerSourceRepoCI(ctx, evt, "source.main.watcher")
+	if triggerErr != nil {
+		watcherLog.Warnf(
+			"project=%s commit=%s trigger failed: %v",
 			project.ID,
 			shortID(commit),
-			result.op.ID,
+			triggerErr,
 		)
+		return
 	}
+	if shouldRecordWatcherSeenCommit(result) {
+		lastSeenCommit[project.ID] = commit
+	}
+	if !result.accepted {
+		watcherLog.Debugf(
+			"project=%s commit=%s skipped: %s",
+			project.ID,
+			shortID(commit),
+			result.reason,
+		)
+		return
+	}
+	watcherLog.Infof(
+		"project=%s commit=%s triggered op=%s",
+		project.ID,
+		shortID(commit),
+		result.op.ID,
+	)
+}
+
+func shouldRecordWatcherSeenCommit(result sourceRepoWebhookResult) bool {
+	if result.accepted {
+		return true
+	}
+	return result.reason == sourceRepoWebhookCommitIgnoredLabel
 }
 
 func sourceRepoDir(artifacts ArtifactStore, projectID string) string {

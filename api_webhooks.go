@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -11,7 +12,24 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-const sourceRepoLastCICommitPath = "repos/source/.paas/last-ci-commit.txt"
+const (
+	sourceRepoCICommitStatePath         = "repos/source/.paas/ci-commit-state.json"
+	sourceRepoLastCICommitLegacyPath    = "repos/source/.paas/last-ci-commit.txt"
+	sourceRepoCIPendingStatusEnqueued   = "enqueued"
+	sourceRepoCIPendingStatusFailed     = "failed"
+	sourceRepoWebhookCommitIgnoredLabel = "ignored: commit already processed"
+)
+
+type sourceRepoCICommitPendingState struct {
+	Commit string `json:"commit"`
+	Status string `json:"status"` // enqueued | failed
+}
+
+type sourceRepoCICommitState struct {
+	LastSuccessfulCommit string                                    `json:"last_successful_commit,omitempty"`
+	PendingEnqueueCommit string                                    `json:"pending_enqueue_commit,omitempty"`
+	PendingByOpID        map[string]sourceRepoCICommitPendingState `json:"pending_by_op_id,omitempty"`
+}
 
 type sourceRepoWebhookResult struct {
 	accepted bool
@@ -99,15 +117,16 @@ func (a *API) triggerSourceRepoCI(
 	}
 
 	a.sourceTriggerMu.Lock()
+	defer a.sourceTriggerMu.Unlock()
+
 	isNewCommit, markErr := a.markSourceCommitSeen(project.ID, evt.Commit)
-	a.sourceTriggerMu.Unlock()
 	if markErr != nil {
 		return sourceRepoWebhookResult{}, markErr
 	}
 	if !isNewCommit {
 		return sourceRepoWebhookResult{
 			accepted: false,
-			reason:   "ignored: commit already processed",
+			reason:   sourceRepoWebhookCommitIgnoredLabel,
 			project:  project.ID,
 			op:       nil,
 			commit:   strings.TrimSpace(evt.Commit),
@@ -117,7 +136,21 @@ func (a *API) triggerSourceRepoCI(
 
 	op, err := a.enqueueOp(ctx, OpCI, project.ID, project.Spec, emptyOpRunOptions())
 	if err != nil {
+		rollbackErr := a.rollbackSourceCommitPendingEnqueue(project.ID, evt.Commit)
+		if rollbackErr != nil {
+			return sourceRepoWebhookResult{}, errors.Join(err, rollbackErr)
+		}
 		return sourceRepoWebhookResult{}, err
+	}
+	confirmErr := a.confirmSourceCommitPendingOp(project.ID, evt.Commit, op.ID)
+	if confirmErr != nil {
+		appLoggerForProcess().Source("api").Warnf(
+			"project=%s op=%s commit=%s persist ci pending state: %v",
+			project.ID,
+			op.ID,
+			shortID(strings.TrimSpace(evt.Commit)),
+			confirmErr,
+		)
 	}
 	return sourceRepoWebhookResult{
 		accepted: true,
@@ -134,18 +167,202 @@ func (a *API) markSourceCommitSeen(projectID, commit string) (bool, error) {
 	if commit == "" {
 		return true, nil
 	}
-	data, err := a.artifacts.ReadFile(projectID, sourceRepoLastCICommitPath)
-	if err == nil && strings.TrimSpace(string(data)) == commit {
-		return false, nil
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	_, err = a.artifacts.WriteFile(projectID, sourceRepoLastCICommitPath, []byte(commit+"\n"))
+
+	state, err := readSourceRepoCICommitState(a.artifacts, projectID)
 	if err != nil {
 		return false, err
 	}
+	if state.LastSuccessfulCommit == commit || state.hasPendingCommit(commit) {
+		return false, nil
+	}
+
+	state.PendingEnqueueCommit = commit
+	writeErr := writeSourceRepoCICommitState(a.artifacts, projectID, state)
+	if writeErr != nil {
+		return false, writeErr
+	}
 	return true, nil
+}
+
+func (a *API) rollbackSourceCommitPendingEnqueue(projectID, commit string) error {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return nil
+	}
+	state, err := readSourceRepoCICommitState(a.artifacts, projectID)
+	if err != nil {
+		return err
+	}
+	if state.PendingEnqueueCommit != commit {
+		return nil
+	}
+	state.PendingEnqueueCommit = ""
+	return writeSourceRepoCICommitState(a.artifacts, projectID, state)
+}
+
+func (a *API) confirmSourceCommitPendingOp(projectID, commit, opID string) error {
+	commit = strings.TrimSpace(commit)
+	opID = strings.TrimSpace(opID)
+	if commit == "" || opID == "" {
+		return nil
+	}
+	state, err := readSourceRepoCICommitState(a.artifacts, projectID)
+	if err != nil {
+		return err
+	}
+	if state.PendingEnqueueCommit == commit {
+		state.PendingEnqueueCommit = ""
+	}
+	if state.PendingByOpID == nil {
+		state.PendingByOpID = map[string]sourceRepoCICommitPendingState{}
+	}
+	for pendingOpID, pendingState := range state.PendingByOpID {
+		if pendingState.Commit == commit && pendingState.Status == sourceRepoCIPendingStatusFailed {
+			delete(state.PendingByOpID, pendingOpID)
+		}
+	}
+	state.PendingByOpID[opID] = sourceRepoCICommitPendingState{
+		Commit: commit,
+		Status: sourceRepoCIPendingStatusEnqueued,
+	}
+	return writeSourceRepoCICommitState(a.artifacts, projectID, state)
+}
+
+func finalizeSourceCommitPendingOp(
+	artifacts ArtifactStore,
+	projectID, opID string,
+	successful bool,
+) error {
+	opID = strings.TrimSpace(opID)
+	if opID == "" {
+		return nil
+	}
+	state, err := readSourceRepoCICommitState(artifacts, projectID)
+	if err != nil {
+		return err
+	}
+	pendingState, ok := state.PendingByOpID[opID]
+	if !ok {
+		return nil
+	}
+	if !successful {
+		pendingState.Status = sourceRepoCIPendingStatusFailed
+		state.PendingByOpID[opID] = pendingState
+		return writeSourceRepoCICommitState(artifacts, projectID, state)
+	}
+
+	state.LastSuccessfulCommit = pendingState.Commit
+	delete(state.PendingByOpID, opID)
+	for pendingOpID, existing := range state.PendingByOpID {
+		if existing.Commit == pendingState.Commit && existing.Status == sourceRepoCIPendingStatusFailed {
+			delete(state.PendingByOpID, pendingOpID)
+		}
+	}
+	return writeSourceRepoCICommitState(artifacts, projectID, state)
+}
+
+func (state sourceRepoCICommitState) hasPendingCommit(commit string) bool {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return false
+	}
+	for _, pending := range state.PendingByOpID {
+		if pending.Commit == commit && pending.Status == sourceRepoCIPendingStatusEnqueued {
+			return true
+		}
+	}
+	return false
+}
+
+func readSourceRepoCICommitState(
+	artifacts ArtifactStore,
+	projectID string,
+) (sourceRepoCICommitState, error) {
+	data, err := artifacts.ReadFile(projectID, sourceRepoCICommitStatePath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return sourceRepoCICommitState{}, err
+		}
+		return readSourceRepoCICommitLegacyState(artifacts, projectID)
+	}
+
+	var state sourceRepoCICommitState
+	decodeErr := json.Unmarshal(data, &state)
+	if decodeErr != nil {
+		return sourceRepoCICommitState{}, fmt.Errorf("decode source repo ci state: %w", decodeErr)
+	}
+	return normalizeSourceRepoCICommitState(state), nil
+}
+
+func readSourceRepoCICommitLegacyState(
+	artifacts ArtifactStore,
+	projectID string,
+) (sourceRepoCICommitState, error) {
+	data, err := artifacts.ReadFile(projectID, sourceRepoLastCICommitLegacyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return sourceRepoCICommitState{}, nil
+		}
+		return sourceRepoCICommitState{}, err
+	}
+	return sourceRepoCICommitState{
+		LastSuccessfulCommit: strings.TrimSpace(string(data)),
+		PendingEnqueueCommit: "",
+		PendingByOpID:        nil,
+	}, nil
+}
+
+func writeSourceRepoCICommitState(
+	artifacts ArtifactStore,
+	projectID string,
+	state sourceRepoCICommitState,
+) error {
+	state = normalizeSourceRepoCICommitState(state)
+	body, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	_, err = artifacts.WriteFile(projectID, sourceRepoCICommitStatePath, append(body, '\n'))
+	return err
+}
+
+func normalizeSourceRepoCICommitState(state sourceRepoCICommitState) sourceRepoCICommitState {
+	state.LastSuccessfulCommit = strings.TrimSpace(state.LastSuccessfulCommit)
+	state.PendingEnqueueCommit = strings.TrimSpace(state.PendingEnqueueCommit)
+	if len(state.PendingByOpID) == 0 {
+		state.PendingByOpID = nil
+		return state
+	}
+	normalizedPending := make(map[string]sourceRepoCICommitPendingState, len(state.PendingByOpID))
+	for opID, pending := range state.PendingByOpID {
+		normalizedOpID := strings.TrimSpace(opID)
+		normalizedCommit := strings.TrimSpace(pending.Commit)
+		normalizedStatus := normalizeSourceRepoCIPendingStatus(pending.Status)
+		if normalizedOpID == "" || normalizedCommit == "" || normalizedStatus == "" {
+			continue
+		}
+		normalizedPending[normalizedOpID] = sourceRepoCICommitPendingState{
+			Commit: normalizedCommit,
+			Status: normalizedStatus,
+		}
+	}
+	if len(normalizedPending) == 0 {
+		state.PendingByOpID = nil
+		return state
+	}
+	state.PendingByOpID = normalizedPending
+	return state
+}
+
+func normalizeSourceRepoCIPendingStatus(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case sourceRepoCIPendingStatusEnqueued:
+		return sourceRepoCIPendingStatusEnqueued
+	case sourceRepoCIPendingStatusFailed:
+		return sourceRepoCIPendingStatusFailed
+	default:
+		return ""
+	}
 }
 
 func shouldSkipSourceCommitMessage(message string) bool {

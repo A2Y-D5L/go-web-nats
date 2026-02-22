@@ -26,6 +26,7 @@ func imageBuilderWorkerActionWithMode(
 	msg ProjectOpMsg,
 	modeResolution imageBuilderModeResolution,
 ) (WorkerResultMsg, error) {
+	workerLog := appLoggerForProcess().Source("imageBuilder")
 	stepStart := time.Now().UTC()
 	res := newWorkerResultMsg("image builder worker starting")
 	_ = markOpStepStart(
@@ -66,6 +67,17 @@ func imageBuilderWorkerActionWithMode(
 			err.Error(),
 			outcome.artifacts,
 		)
+		if msg.Kind == OpCI {
+			stateErr := finalizeSourceCommitPendingOp(artifacts, msg.ProjectID, msg.OpID, false)
+			if stateErr != nil {
+				workerLog.Warnf(
+					"project=%s op=%s persist failed ci pending state: %v",
+					msg.ProjectID,
+					msg.OpID,
+					stateErr,
+				)
+			}
+		}
 		return res, err
 	}
 

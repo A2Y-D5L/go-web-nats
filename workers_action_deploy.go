@@ -25,6 +25,7 @@ func manifestRendererWorkerAction(
 	artifacts ArtifactStore,
 	msg ProjectOpMsg,
 ) (WorkerResultMsg, error) {
+	workerLog := appLoggerForProcess().Source("manifestRenderer")
 	stepStart := time.Now().UTC()
 	res := newWorkerResultMsg("manifest renderer worker starting")
 	_ = markOpStepStart(
@@ -71,6 +72,17 @@ func manifestRendererWorkerAction(
 			outcome.artifacts,
 		)
 		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
+		if msg.Kind == OpCI {
+			stateErr := finalizeSourceCommitPendingOp(artifacts, msg.ProjectID, msg.OpID, false)
+			if stateErr != nil {
+				workerLog.Warnf(
+					"project=%s op=%s persist failed ci pending state: %v",
+					msg.ProjectID,
+					msg.OpID,
+					stateErr,
+				)
+			}
+		}
 		return res, err
 	}
 
@@ -87,6 +99,17 @@ func manifestRendererWorkerAction(
 		res.Artifacts,
 	)
 	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
+	if msg.Kind == OpCI {
+		stateErr := finalizeSourceCommitPendingOp(artifacts, msg.ProjectID, msg.OpID, true)
+		if stateErr != nil {
+			workerLog.Warnf(
+				"project=%s op=%s persist successful ci commit state: %v",
+				msg.ProjectID,
+				msg.OpID,
+				stateErr,
+			)
+		}
+	}
 	return res, nil
 }
 

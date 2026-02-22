@@ -95,8 +95,35 @@ func ShouldSkipSourceCommitMessageForTest(message string) bool {
 	return shouldSkipSourceCommitMessage(message)
 }
 
+func ShouldRecordWatcherSeenCommitForTest(accepted bool, reason string) bool {
+	return shouldRecordWatcherSeenCommit(sourceRepoWebhookResult{
+		accepted: accepted,
+		reason:   reason,
+		project:  "",
+		op:       nil,
+		commit:   "",
+		trigger:  "",
+	})
+}
+
 func MarkSourceCommitSeenForTest(api *API, projectID, commit string) (bool, error) {
 	return api.markSourceCommitSeen(projectID, commit)
+}
+
+func RollbackSourceCommitPendingEnqueueForTest(api *API, projectID, commit string) error {
+	return api.rollbackSourceCommitPendingEnqueue(projectID, commit)
+}
+
+func ConfirmSourceCommitPendingOpForTest(api *API, projectID, commit, opID string) error {
+	return api.confirmSourceCommitPendingOp(projectID, commit, opID)
+}
+
+func FinalizeSourceCommitPendingOpForTest(
+	api *API,
+	projectID, opID string,
+	successful bool,
+) error {
+	return finalizeSourceCommitPendingOp(api.artifacts, projectID, opID, successful)
 }
 
 func ProjectSupportsEnvironmentForTest(spec ProjectSpec, env string) bool {
