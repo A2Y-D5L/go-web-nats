@@ -4,7 +4,7 @@ Operational runbook for coding agents working in this repository.
 
 ## Objective
 
-- Maintain a local-first demo platform with real behavior (embedded NATS, real local git repos, local webhook loopback, optional in-process commit watcher).
+- Maintain a local-first PaaS platform with real behavior (embedded NATS, real local git repos, local webhook loopback, optional in-process commit watcher).
 - Optimize for safe, incremental, reviewable edits with strong static checks.
 
 ## Start Here (Every Task)
@@ -34,6 +34,9 @@ Operational runbook for coding agents working in this repository.
 - Two API entry pathways must work:
   - registration events: `POST /api/events/registration`
   - source webhook events: `POST /api/webhooks/source`
+- Frontend scope contract must remain intact:
+  - landing surface shows app list (or create-first CTA) only
+  - app details/actions render only inside the selected-app workspace context
 - Source-repo CI trigger dedupe must prevent duplicate CI for the same commit when webhook hooks and watcher both run.
 - Worker chain order and subjects must remain coherent:
   - `registrar` -> `repoBootstrap` -> `imageBuilder` -> `manifestRenderer`

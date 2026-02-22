@@ -1,10 +1,60 @@
 // DOM event bindings and frontend bootstrap initialization.
-function bindEvents() {
-  dom.buttons.openCreateModal.addEventListener("click", () => {
-    openModal("create");
+function initWorkspaceTabs() {
+  const tabs = Array.from(document.querySelectorAll("[data-workspace-tab]"));
+  const panels = Array.from(document.querySelectorAll("[data-workspace-panel]"));
+  if (!tabs.length || !panels.length) {
+    return;
+  }
+
+  const activate = (tabName) => {
+    for (const tab of tabs) {
+      const isActive = tab.dataset.workspaceTab === tabName;
+      tab.classList.toggle("active", isActive);
+      tab.setAttribute("aria-selected", String(isActive));
+      tab.tabIndex = isActive ? 0 : -1;
+    }
+
+    for (const panel of panels) {
+      const isActive = panel.dataset.workspacePanel === tabName;
+      panel.classList.toggle("active", isActive);
+      panel.hidden = !isActive;
+    }
+  };
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => {
+      activate(tab.dataset.workspaceTab || "delivery");
+    });
+
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+        return;
+      }
+
+      event.preventDefault();
+      let nextIndex = index;
+      if (event.key === "ArrowRight") {
+        nextIndex = (index + 1) % tabs.length;
+      } else if (event.key === "ArrowLeft") {
+        nextIndex = (index - 1 + tabs.length) % tabs.length;
+      } else if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = tabs.length - 1;
+      }
+
+      const nextTab = tabs[nextIndex];
+      nextTab.focus();
+      activate(nextTab.dataset.workspaceTab || "delivery");
+    });
   });
 
-  dom.buttons.openCreateFromRail.addEventListener("click", () => {
+  const selectedTab = tabs.find((tab) => tab.getAttribute("aria-selected") === "true");
+  activate(selectedTab?.dataset.workspaceTab || tabs[0].dataset.workspaceTab || "delivery");
+}
+
+function bindEvents() {
+  dom.buttons.openCreateModal.addEventListener("click", () => {
     openModal("create");
   });
 
@@ -35,6 +85,10 @@ function bindEvents() {
 
   dom.buttons.journeyNextAction.addEventListener("click", () => {
     void handleJourneyNextActionClick();
+  });
+
+  dom.buttons.closeWorkspace.addEventListener("click", () => {
+    closeWorkspace();
   });
 
   dom.forms.create.addEventListener("submit", (event) => {
@@ -164,10 +218,9 @@ function bindEvents() {
       return;
     }
 
-    if (!typing && event.key === "/") {
+    if (key === "escape" && state.ui.workspaceOpen) {
       event.preventDefault();
-      dom.inputs.projectSearch.focus();
-      dom.inputs.projectSearch.select();
+      closeWorkspace();
       return;
     }
 
@@ -190,6 +243,7 @@ async function init() {
   setCreateDefaults();
   setUpdateDefaults();
   syncUpdateForm(null);
+  initWorkspaceTabs();
 
   dom.inputs.phaseFilter.value = state.filters.phase;
   dom.inputs.projectSort.value = state.filters.sort;

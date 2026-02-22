@@ -14,6 +14,18 @@ function journeyStatusLabel(status) {
   }
 }
 
+function renderWorkspaceShell() {
+  const project = getSelectedProject();
+  const shouldShowWorkspace = state.ui.workspaceOpen && Boolean(project);
+
+  dom.containers.workspaceShell.classList.toggle("is-hidden", !shouldShowWorkspace);
+  dom.containers.landingPanel.classList.toggle("is-hidden", shouldShowWorkspace);
+
+  dom.text.workspaceHeading.textContent = shouldShowWorkspace
+    ? project.spec?.name || project.id
+    : "Selected app";
+}
+
 function renderJourneyPanel() {
   const project = getSelectedProject();
   const milestoneContainer = dom.containers.journeyMilestones;
@@ -284,6 +296,7 @@ function renderSystemStrip() {
 
 function renderAll() {
   renderStatus();
+  renderWorkspaceShell();
   renderProjectsList();
   renderSelectionPanel();
   renderJourneyPanel();

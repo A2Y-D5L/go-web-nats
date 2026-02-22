@@ -1,6 +1,6 @@
 # EmbeddedWebApp-HTTPAPI-BackendNATS
 
-Single-binary Go demo platform:
+Single-binary Go PaaS platform:
 
 - embeds a web frontend
 - runs an HTTP API
@@ -23,7 +23,7 @@ Quick task scoping commands:
 - `make task-tests TASK=workers.runtime`
 - `make task-audit TASK=api.webhooks`
 
-## What It Demonstrates
+## Core Platform Capabilities
 
 - Registration-driven project lifecycle (`create`, `update`, `delete`)
 - Source-repo webhook driven CI (`main` branch only)
@@ -65,7 +65,7 @@ Payload:
   "spec": {
     "apiVersion": "platform.example.com/v2",
     "kind": "App",
-    "name": "demo-app",
+    "name": "platform-app",
     "runtime": "go_1.26",
     "capabilities": ["http", "metrics"],
     "environments": {
@@ -237,7 +237,7 @@ Keyboard shortcuts:
 Prereqs:
 
 - Go `1.25+` (module target is `1.25.0`)
-- `git` and `curl` (used by local hook + webhook demo loop)
+- `git` and `curl` (used by local hook + webhook loopback flow)
 
 Recommended preflight:
 
@@ -409,7 +409,7 @@ curl -sS -X POST http://127.0.0.1:8080/api/events/registration \
     "spec":{
       "apiVersion":"platform.example.com/v2",
       "kind":"App",
-      "name":"demo-app",
+      "name":"platform-app",
       "runtime":"go_1.26",
       "capabilities":["http"],
       "environments":{"dev":{"vars":{"LOG_LEVEL":"info"}}},

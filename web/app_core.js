@@ -10,7 +10,7 @@ const dom = {
   },
   buttons: {
     openCreateModal: document.getElementById("openCreateModalBtn"),
-    openCreateFromRail: document.getElementById("openCreateFromRailBtn"),
+    closeWorkspace: document.getElementById("closeWorkspaceBtn"),
     openUpdateModal: document.getElementById("openUpdateModalBtn"),
     openDeleteModal: document.getElementById("openDeleteModalBtn"),
     refresh: document.getElementById("refreshBtn"),
@@ -82,6 +82,7 @@ const dom = {
     systemActiveOpMeta: document.getElementById("systemActiveOpMeta"),
     systemBuilderMode: document.getElementById("systemBuilderMode"),
     systemBuilderMeta: document.getElementById("systemBuilderMeta"),
+    workspaceHeading: document.getElementById("workspaceHeading"),
 
     projectStats: document.getElementById("projectStats"),
     selected: document.getElementById("selected"),
@@ -117,6 +118,8 @@ const dom = {
     artifactQuickLinks: document.getElementById("artifactQuickLinks"),
     artifacts: document.getElementById("artifacts"),
     toastStack: document.getElementById("toastStack"),
+    landingPanel: document.getElementById("landingPanel"),
+    workspaceShell: document.getElementById("workspaceShell"),
   },
   envEditors: {
     create: document.getElementById("createEnvList"),
@@ -261,6 +264,7 @@ const state = {
   },
   ui: {
     modal: "none",
+    workspaceOpen: false,
   },
 };
 

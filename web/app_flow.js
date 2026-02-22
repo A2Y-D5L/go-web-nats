@@ -105,11 +105,17 @@ function stopOperationMonitor({ clearPayload = false } = {}) {
 
 function clearSelection() {
   state.selectedProjectID = "";
+  state.ui.workspaceOpen = false;
   closeAllModals();
   setUpdateDefaults();
   stopOperationMonitor({ clearPayload: true });
   resetArtifacts();
   resetJourney();
+  renderAll();
+}
+
+function closeWorkspace() {
+  state.ui.workspaceOpen = false;
   renderAll();
 }
 
@@ -121,11 +127,13 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
 
   if (previousSelection && !state.projects.some((project) => project.id === previousSelection)) {
     state.selectedProjectID = "";
+    state.ui.workspaceOpen = false;
     stopOperationMonitor({ clearPayload: true });
     resetArtifacts();
     resetJourney();
   } else if (!preserveSelection) {
     state.selectedProjectID = "";
+    state.ui.workspaceOpen = false;
     stopOperationMonitor({ clearPayload: true });
     resetArtifacts();
     resetJourney();
@@ -343,11 +351,13 @@ async function previewArtifact(path) {
 
 function selectProject(projectID) {
   if (projectID === state.selectedProjectID) {
-    renderProjectsList();
+    state.ui.workspaceOpen = true;
+    renderAll();
     return;
   }
 
   state.selectedProjectID = projectID;
+  state.ui.workspaceOpen = true;
   resetArtifacts();
   resetJourney();
 

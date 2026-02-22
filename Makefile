@@ -49,7 +49,7 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -pa
 	setup-local setup-buildkit buildkit-install buildkit-go-deps buildkit-check buildkit-start buildkit-start-container run-buildkit run-artifact \
 	run dev wait-api \
 	api-list api-create api-webhook \
-	smoke-registration demo-commit \
+	smoke-registration source-commit \
 	clean clean-artifacts clean-tmp
 
 help: ## Show available targets
@@ -385,7 +385,7 @@ api-list: ## List projects via API
 
 api-create: ## Create a project via registration event (PROJECT_NAME optional)
 	@set -euo pipefail; \
-	name="$${PROJECT_NAME:-demo-$$(date +%s)}"; \
+	name="$${PROJECT_NAME:-platform-$$(date +%s)}"; \
 	echo "Creating project '$$name'..."; \
 	$(CURL) -fsS -X POST "$(API_BASE)/api/events/registration" \
 		-H 'content-type: application/json' \
@@ -420,10 +420,10 @@ smoke-registration: ## Smoke test create/list flow (API must be running)
 	$(CURL) -fsS "$(API_BASE)/api/projects" >/dev/null; \
 	echo "Smoke test passed."
 
-demo-commit: ## Commit in source repo to trigger installed local webhook (PROJECT_ID required)
+source-commit: ## Commit in source repo to trigger installed local webhook (PROJECT_ID required)
 	@set -euo pipefail; \
 	if [[ -z "$(PROJECT_ID)" ]]; then \
-		echo "PROJECT_ID is required. Example: make demo-commit PROJECT_ID=<id>"; \
+		echo "PROJECT_ID is required. Example: make source-commit PROJECT_ID=<id>"; \
 		exit 1; \
 	fi; \
 	repo="$(ARTIFACTS_ROOT)/$(PROJECT_ID)/repos/source"; \
@@ -435,7 +435,7 @@ demo-commit: ## Commit in source repo to trigger installed local webhook (PROJEC
 	$(GIT) checkout -B main >/dev/null 2>&1; \
 	echo "// local change $$(date -u +%FT%TZ)" >> main.go; \
 	$(GIT) add main.go; \
-	$(GIT) commit -m "feat: local source change via make demo-commit"; \
+	$(GIT) commit -m "feat: local source change via make source-commit"; \
 	echo "Committed to $$repo. The hook should POST to $(API_BASE)/api/webhooks/source."
 
 clean-artifacts: ## Remove generated local artifacts

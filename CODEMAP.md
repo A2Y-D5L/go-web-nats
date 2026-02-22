@@ -28,14 +28,14 @@ Primary agent contract: `AGENTS.md`
 - `logging.go`: structured/color logger and source/level formatting.
 - `cmd/server/main.go`: executable entrypoint.
 - `ui_embed.go`: embedded static web assets.
-- `web/index.html`: semantic UI structure and panel composition for the embedded dashboard.
-- `web/styles.css`: frontend design tokens, layout system, and component/state styling.
+- `web/index.html`: frontend shell composition, including apps-only landing surface and selected-app workspace surface.
+- `web/styles.css`: frontend design tokens, landing/workspace layout system, and component/state styling.
 - `web/app_core.js`: frontend DOM bindings, shared constants/state, utility helpers, and form spec builders.
-- `web/app_render_projects_ops.js`: project list/selection rendering plus operation progress/timeline/history rendering.
+- `web/app_render_projects_ops.js`: app list rendering/selection behavior and operation progress/timeline/history rendering.
 - `web/app_data_artifacts.js`: API request helper, journey loading, artifact parsing, environment snapshots, and deploy/promotion guardrails.
-- `web/app_render_surfaces.js`: journey/artifact/environment/system strip rendering and top-level render orchestration helpers.
-- `web/app_flow.js`: modal flows, operation monitoring, project refresh/selection lifecycle, and action handlers.
-- `web/app_events.js`: DOM event wiring and async frontend initialization function.
+- `web/app_render_surfaces.js`: workspace visibility switching, journey/artifact/environment/system strip rendering, and top-level render orchestration helpers.
+- `web/app_flow.js`: modal flows, operation monitoring, project refresh/selection lifecycle, workspace open/close state, and action handlers.
+- `web/app_events.js`: DOM event wiring (including workspace navigation) and async frontend initialization function.
 - `web/app.js`: frontend entrypoint shim that starts `init`.
 - `config_runtime.go`: runtime defaults/timeouts and HTTP/artifact roots.
 - `config_subjects.go`: NATS subjects and KV key/bucket names.

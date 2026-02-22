@@ -17,7 +17,7 @@ Request body:
   "spec": {
     "apiVersion": "platform.example.com/v2",
     "kind": "App",
-    "name": "demo-app",
+    "name": "platform-app",
     "runtime": "go_1.26",
     "capabilities": ["http"],
     "environments": {

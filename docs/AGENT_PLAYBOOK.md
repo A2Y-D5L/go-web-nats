@@ -62,18 +62,21 @@ Webhook-specific note:
 
 ## Change Frontend UI/UX
 
-1. Edit `web/index.html` for semantic structure and accessibility.
-2. Edit `web/styles.css` using tokenized styles and responsive layout updates.
-3. Edit the focused frontend JS module:
+1. Preserve UX scope contract:
+   - landing surface shows app list (or create-first CTA) only
+   - app details/actions appear only in selected-app workspace context
+2. Edit `web/index.html` for semantic structure and accessibility.
+3. Edit `web/styles.css` using tokenized styles and responsive layout updates.
+4. Edit the focused frontend JS module:
    - `web/app_core.js` for shared state/utilities/forms.
-   - `web/app_render_projects_ops.js` for project rail and operation views.
+   - `web/app_render_projects_ops.js` for app-list rendering and operation views.
    - `web/app_data_artifacts.js` for API/journey/artifact data flows.
-   - `web/app_render_surfaces.js` for top-level panel rendering.
-   - `web/app_flow.js` for modal/action/monitoring flows.
-   - `web/app_events.js` for bindings/init.
+   - `web/app_render_surfaces.js` for landing/workspace visibility and top-level panel rendering.
+   - `web/app_flow.js` for modal/action/monitoring and workspace lifecycle flows.
+   - `web/app_events.js` for bindings/init and workspace navigation events.
    - `web/app.js` only as the bootstrap shim.
-4. Keep endpoint contracts aligned with `docs/API_CONTRACTS.md`.
-5. Run `make js-check`, then `make check`.
+5. Keep endpoint contracts aligned with `docs/API_CONTRACTS.md`.
+6. Run `make js-check`, then `make check`.
 
 ## Startup/Infra Changes
 

@@ -7,10 +7,24 @@ function renderProjectsList() {
   dom.containers.projects.replaceChildren();
 
   if (!visible.length) {
-    const message = state.projects.length
-      ? "No apps match current filters. Try broadening search or state."
-      : "No apps created yet. Create your first app to start its delivery journey.";
-    renderEmptyState(dom.containers.projects, message);
+    dom.containers.projects.replaceChildren();
+    if (state.projects.length) {
+      renderEmptyState(dom.containers.projects, "No apps match current filters. Try broadening search or status.");
+      return;
+    }
+
+    const empty = makeElem("div", "empty-state empty-state-cta");
+    empty.append(
+      makeElem("p", "", "No apps created yet."),
+      makeElem("p", "helper-text", "Create your first app to open a dedicated delivery workspace.")
+    );
+    const cta = makeElem("button", "btn btn-primary", "Create app");
+    cta.type = "button";
+    cta.addEventListener("click", () => {
+      openModal("create");
+    });
+    empty.appendChild(cta);
+    dom.containers.projects.appendChild(empty);
     return;
   }
 
