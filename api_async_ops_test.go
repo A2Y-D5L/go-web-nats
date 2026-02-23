@@ -603,3 +603,96 @@ func TestAPI_DeploymentAllowsRetryAfterActiveOperationTerminal(t *testing.T) {
 		t.Fatalf("expected op.id in deployment retry response, got %#v", out.Op)
 	}
 }
+
+func TestAPI_DeleteOpEventsIncludeTerminalWhenProjectRecordMissing(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, 40*time.Millisecond)
+	defer fixture.Close()
+
+	projectID := "project-delete-op-events-1"
+	opID := "op-delete-op-events-1"
+	spec := testProjectSpec("delete-op-events")
+	putProjectFixture(t, fixture, projectID, spec, opID, OpDelete)
+	putOpFixture(t, fixture, opID, projectID, OpDelete, opStatusRunning)
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/ops/"+opID+"/events", nil)
+	if err != nil {
+		t.Fatalf("build delete-op events request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open delete-op sse stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d body=%q", resp.StatusCode, string(payload))
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	events := make(chan sseEvent, 32)
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			eventItem, readErr := readNextSSEEvent(reader)
+			if readErr != nil {
+				errCh <- readErr
+				return
+			}
+			events <- eventItem
+		}
+	}()
+
+	bootstrap := waitForSSEEvent(t, events, errCh, opEventBootstrap, 2*time.Second)
+	var bootstrapPayload opEventPayload
+	if decodeErr := json.Unmarshal([]byte(bootstrap.data), &bootstrapPayload); decodeErr != nil {
+		t.Fatalf("decode bootstrap payload: %v", decodeErr)
+	}
+	if bootstrapPayload.OpID != opID {
+		t.Fatalf("expected bootstrap op id %q, got %q", opID, bootstrapPayload.OpID)
+	}
+	if bootstrapPayload.Status != opStatusRunning {
+		t.Fatalf("expected bootstrap status %q, got %q", opStatusRunning, bootstrapPayload.Status)
+	}
+
+	if err := fixture.api.store.DeleteProject(context.Background(), projectID); err != nil {
+		t.Fatalf("delete project before finalize: %v", err)
+	}
+	if err := finalizeOp(
+		context.Background(),
+		fixture.api.store,
+		opID,
+		projectID,
+		OpDelete,
+		opStatusDone,
+		"",
+	); err != nil {
+		t.Fatalf("finalize delete op with missing project: %v", err)
+	}
+
+	status := waitForSSEEvent(t, events, errCh, opEventStatus, 2*time.Second)
+	var statusPayload opEventPayload
+	if decodeErr := json.Unmarshal([]byte(status.data), &statusPayload); decodeErr != nil {
+		t.Fatalf("decode status payload: %v", decodeErr)
+	}
+	if statusPayload.Status != opStatusDone {
+		t.Fatalf("expected status event status %q, got %q", opStatusDone, statusPayload.Status)
+	}
+
+	completed := waitForSSEEvent(t, events, errCh, opEventCompleted, 2*time.Second)
+	var completedPayload opEventPayload
+	if decodeErr := json.Unmarshal([]byte(completed.data), &completedPayload); decodeErr != nil {
+		t.Fatalf("decode completed payload: %v", decodeErr)
+	}
+	if completedPayload.OpID != opID {
+		t.Fatalf("expected completed op id %q, got %q", opID, completedPayload.OpID)
+	}
+	if completedPayload.Kind != OpDelete {
+		t.Fatalf("expected completed kind %q, got %q", OpDelete, completedPayload.Kind)
+	}
+	if completedPayload.Status != opStatusDone {
+		t.Fatalf("expected completed status %q, got %q", opStatusDone, completedPayload.Status)
+	}
+}

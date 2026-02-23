@@ -2,10 +2,7 @@ package platform
 
 import (
 	"context"
-	"errors"
 	"time"
-
-	"github.com/nats-io/nats.go/jetstream"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -134,37 +131,47 @@ func finalizeOp(
 		return putErr
 	}
 
-	// Best-effort: update project status (except delete where record might be removed later)
+	stateChanged := prevStatus != op.Status || prevError != op.Error
+	if stateChanged {
+		emitOpStatus(store.opEvents, op, "operation status updated")
+	}
+	if stateChanged && (status == opStatusDone || status == opStatusError) {
+		emitOpTerminal(store.opEvents, op)
+	}
+
+	finalizeProjectStatusBestEffort(ctx, store, opID, projectID, kind, status, errMsg)
+	return nil
+}
+
+func finalizeProjectStatusBestEffort(
+	ctx context.Context,
+	store *Store,
+	opID string,
+	projectID string,
+	kind OperationKind,
+	status string,
+	errMsg string,
+) {
 	p, err := store.GetProject(ctx, projectID)
 	if err != nil {
-		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			return nil
-		}
-		return err
+		return
 	}
+
 	switch {
-	case kind == OpDelete && status == "running":
+	case kind == OpDelete && status == opStatusRunning:
 		p.Status.Phase = projectPhaseDel
-	case status == "error":
+	case status == opStatusError:
 		p.Status.Phase = projectPhaseError
 		p.Status.Message = errMsg
-	case status == "done":
+	case status == opStatusDone:
 		if kind != OpDelete {
 			p.Status.Phase = projectPhaseReady
 			p.Status.Message = "ready"
 		}
 	}
+
 	p.Status.UpdatedAt = time.Now().UTC()
 	p.Status.LastOpID = opID
 	p.Status.LastOpKind = string(kind)
 	_ = store.PutProject(ctx, p)
-
-	stateChanged := prevStatus != op.Status || prevError != op.Error
-	if stateChanged {
-		emitOpStatus(store.opEvents, op, "operation status updated")
-	}
-	if stateChanged && (status == "done" || status == "error") {
-		emitOpTerminal(store.opEvents, op)
-	}
-	return nil
 }

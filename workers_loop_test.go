@@ -415,6 +415,10 @@ func TestWorkers_BookkeepingEmitsSingleTerminalEventPerFailureState(t *testing.T
 
 	hub.mu.Lock()
 	stream := hub.streams[opID]
+	if stream == nil {
+		hub.mu.Unlock()
+		t.Fatalf("expected op event stream for %s", opID)
+	}
 	records := append([]opEventRecord(nil), stream.records...)
 	hub.mu.Unlock()
 
@@ -426,6 +430,102 @@ func TestWorkers_BookkeepingEmitsSingleTerminalEventPerFailureState(t *testing.T
 	}
 	if failedEvents != 1 {
 		t.Fatalf("expected exactly one %q event, got %d", opEventFailed, failedEvents)
+	}
+}
+
+func TestWorkers_FinalizeOpEmitsTerminalEventsWhenDeleteProjectMissing(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t)
+	defer fixture.Close()
+
+	hub := newOpEventHub(opEventsHistoryLimit, opEventsRetention)
+	fixture.store.setOpEvents(hub)
+
+	spec := workerRuntimeSpec("worker-delete-missing-project")
+	opID := "op-worker-delete-missing-1"
+	projectID := "project-worker-delete-missing-1"
+	putWorkerRuntimeProjectAndOp(t, fixture.store, projectID, opID, OpDelete, spec)
+
+	if err := fixture.store.DeleteProject(context.Background(), projectID); err != nil {
+		t.Fatalf("delete project fixture: %v", err)
+	}
+
+	if err := finalizeOp(context.Background(), fixture.store, opID, projectID, OpDelete, opStatusDone, ""); err != nil {
+		t.Fatalf("finalize delete op: %v", err)
+	}
+
+	hub.mu.Lock()
+	stream := hub.streams[opID]
+	if stream == nil {
+		hub.mu.Unlock()
+		t.Fatalf("expected op event stream for %s", opID)
+	}
+	records := append([]opEventRecord(nil), stream.records...)
+	hub.mu.Unlock()
+
+	statusDoneEvents := 0
+	completedEvents := 0
+	for _, record := range records {
+		if record.Name == opEventStatus && record.Payload.Status == opStatusDone {
+			statusDoneEvents++
+		}
+		if record.Name == opEventCompleted {
+			completedEvents++
+		}
+	}
+	if statusDoneEvents != 1 {
+		t.Fatalf("expected one done status event, got %d", statusDoneEvents)
+	}
+	if completedEvents != 1 {
+		t.Fatalf("expected one completed terminal event, got %d", completedEvents)
+	}
+}
+
+func TestWorkers_FinalizeOpMalformedProjectRecordStillEmitsTerminalEvents(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t)
+	defer fixture.Close()
+
+	hub := newOpEventHub(opEventsHistoryLimit, opEventsRetention)
+	fixture.store.setOpEvents(hub)
+
+	spec := workerRuntimeSpec("worker-malformed-project")
+	opID := "op-worker-malformed-project-1"
+	projectID := "project-worker-malformed-project-1"
+	putWorkerRuntimeProjectAndOp(t, fixture.store, projectID, opID, OpDeploy, spec)
+
+	_, err := fixture.store.kvProjects.Put(context.Background(), kvProjectKeyPrefix+projectID, []byte("{"))
+	if err != nil {
+		t.Fatalf("write malformed project record: %v", err)
+	}
+
+	finalizeErr := finalizeOp(context.Background(), fixture.store, opID, projectID, OpDeploy, opStatusDone, "")
+	if finalizeErr != nil {
+		t.Fatalf("finalize op with malformed project: %v", finalizeErr)
+	}
+
+	hub.mu.Lock()
+	stream := hub.streams[opID]
+	if stream == nil {
+		hub.mu.Unlock()
+		t.Fatalf("expected op event stream for %s", opID)
+	}
+	records := append([]opEventRecord(nil), stream.records...)
+	hub.mu.Unlock()
+
+	statusDoneEvents := 0
+	completedEvents := 0
+	for _, record := range records {
+		if record.Name == opEventStatus && record.Payload.Status == opStatusDone {
+			statusDoneEvents++
+		}
+		if record.Name == opEventCompleted {
+			completedEvents++
+		}
+	}
+	if statusDoneEvents != 1 {
+		t.Fatalf("expected one done status event, got %d", statusDoneEvents)
+	}
+	if completedEvents != 1 {
+		t.Fatalf("expected one completed terminal event, got %d", completedEvents)
 	}
 }
 
