@@ -147,12 +147,19 @@ function isTerminalOperationStatus(status) {
   return status === "done" || status === "error";
 }
 
-function upsertOperationHistory(op) {
-  if (!op?.id) return;
+function normalizeHistorySequence(value) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return parsed;
+}
 
-  const step = Array.isArray(op.steps) && op.steps.length ? op.steps[op.steps.length - 1] : null;
-  const summaryMessage = step?.message || op.summary_message || "";
-  const summary = {
+function operationHistorySummaryFromPayload(op) {
+  const step = Array.isArray(op?.steps) && op.steps.length ? op.steps[op.steps.length - 1] : null;
+  const summaryMessage = String(step?.message || op?.summary_message || "").trim();
+
+  return {
     id: op.id,
     kind: op.kind,
     status: op.status,
@@ -161,19 +168,76 @@ function upsertOperationHistory(op) {
     error: op.error,
     summary_message: summaryMessage,
     message: summaryMessage,
-    last_event_sequence: Number(op.last_event_sequence || 0),
+    last_event_sequence: normalizeHistorySequence(op.last_event_sequence),
     last_update_at: op.last_update_at || op.finished || op.requested,
   };
+}
+
+function shouldReplaceOperationHistoryEntry(existing, candidate) {
+  if (!existing) {
+    return true;
+  }
+
+  const existingTerminal = isTerminalOperationStatus(existing.status);
+  const candidateTerminal = isTerminalOperationStatus(candidate.status);
+  if (existingTerminal && !candidateTerminal) {
+    return false;
+  }
+  if (!existingTerminal && candidateTerminal) {
+    return true;
+  }
+
+  const existingSeq = normalizeHistorySequence(existing.last_event_sequence);
+  const candidateSeq = normalizeHistorySequence(candidate.last_event_sequence);
+  if (candidateSeq > existingSeq) {
+    return true;
+  }
+  if (candidateSeq < existingSeq) {
+    return false;
+  }
+
+  const existingUpdatedAt = dateValue(existing.last_update_at || existing.finished || existing.requested);
+  const candidateUpdatedAt = dateValue(candidate.last_update_at || candidate.finished || candidate.requested);
+  if (candidateUpdatedAt > existingUpdatedAt) {
+    return true;
+  }
+  if (candidateUpdatedAt < existingUpdatedAt) {
+    return false;
+  }
+
+  const existingDetailLen = String(existing.error || existing.summary_message || existing.message || "").trim().length;
+  const candidateDetailLen = String(
+    candidate.error || candidate.summary_message || candidate.message || ""
+  ).trim().length;
+  return candidateDetailLen > existingDetailLen;
+}
+
+function upsertOperationHistory(op) {
+  if (!op?.id) return;
+
+  const summary = operationHistorySummaryFromPayload(op);
 
   const index = state.operation.history.findIndex((item) => item.id === op.id);
   if (index >= 0) {
-    state.operation.history[index] = summary;
+    if (shouldReplaceOperationHistoryEntry(state.operation.history[index], summary)) {
+      state.operation.history[index] = summary;
+    }
   } else {
     state.operation.history.unshift(summary);
   }
 
-  state.operation.history.sort((a, b) => dateValue(b.requested) - dateValue(a.requested));
-  state.operation.history = state.operation.history.slice(0, 20);
+  state.operation.history.sort((a, b) => {
+    const requestedDiff = dateValue(b.requested) - dateValue(a.requested);
+    if (requestedDiff !== 0) {
+      return requestedDiff;
+    }
+    const sequenceDiff =
+      normalizeHistorySequence(b.last_event_sequence) - normalizeHistorySequence(a.last_event_sequence);
+    if (sequenceDiff !== 0) {
+      return sequenceDiff;
+    }
+    return dateValue(b.last_update_at) - dateValue(a.last_update_at);
+  });
 }
 
 function deriveRecoveryHints(errorMessage) {
@@ -356,7 +420,13 @@ function renderOperationHistory() {
       makeElem("p", "history-item-meta", `History refresh warning: ${state.operation.historyError}`)
     );
   }
+  if (state.operation.historyLoadMoreError) {
+    dom.containers.opHistory.appendChild(
+      makeElem("p", "history-item-meta", `Load-more warning: ${state.operation.historyLoadMoreError}`)
+    );
+  }
 
+  const historyFragment = document.createDocumentFragment();
   for (const item of state.operation.history) {
     const card = makeElem("article", "history-item");
 
@@ -382,7 +452,26 @@ function renderOperationHistory() {
     );
 
     card.append(head, meta, detail);
-    dom.containers.opHistory.appendChild(card);
+    historyFragment.appendChild(card);
+  }
+  dom.containers.opHistory.appendChild(historyFragment);
+
+  if (state.operation.historyLoadingMore || state.operation.historyNextCursor) {
+    const actions = makeElem("div", "history-actions");
+    const loadMoreBtn = makeElem(
+      "button",
+      "btn btn-subtle",
+      state.operation.historyLoadingMore ? "Loading older activity..." : "Load older activity"
+    );
+    loadMoreBtn.type = "button";
+    loadMoreBtn.disabled = state.operation.historyLoading || state.operation.historyLoadingMore;
+    loadMoreBtn.addEventListener("click", () => {
+      void loadMoreOperationHistory({ silent: true }).catch((error) => {
+        setStatus(`Activity history unavailable: ${error.message}`, "warning");
+      });
+    });
+    actions.appendChild(loadMoreBtn);
+    dom.containers.opHistory.appendChild(actions);
   }
 }
 

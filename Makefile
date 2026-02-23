@@ -46,6 +46,7 @@ export GOTMPDIR
 export GOLANGCI_LINT_CACHE
 
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -path './data/*')
+GO_PACKAGE_LIST_CMD = rg --files -g '*.go' -g '!vendor/**' -g '!data/**' -g '!.tmp/**' | awk '{if (index($$0, "/")==0) {print "."} else {sub(/\/[^\/]+$$/, "", $$0); print "./"$$0}}' | sort -u
 
 .PHONY: help \
 	tools tidy \
@@ -58,7 +59,7 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*' -not -pa
 	run dev wait-api \
 	api-list api-create api-webhook \
 	smoke-registration source-commit \
-	clean clean-artifacts clean-tmp
+	clean clean-artifacts clean-legacy-artifacts clean-tmp
 
 help: ## Show available targets
 	@echo "Local development targets:"
@@ -107,35 +108,95 @@ fmt-check: ## Fail if Go formatting is not gofumpt-clean
 	echo "Go formatting clean (gofumpt)."
 
 vet: prepare-go-env ## Run go vet
-	$(GO) vet ./...
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) vet $$pkgs
 
 lint: prepare-go-env ## Run golangci-lint
-	$(GOLANGCI_LINT) run --config .golangci.yml
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GOLANGCI_LINT) run --config .golangci.yml $$pkgs
 
 lint-fix: prepare-go-env ## Run golangci-lint with auto-fix where supported
-	$(GOLANGCI_LINT) run --fix --config .golangci.yml
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GOLANGCI_LINT) run --fix --config .golangci.yml $$pkgs
 
 test: prepare-go-env ## Run unit tests
-	$(GO) test ./...
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test $$pkgs
 
 test-api: prepare-go-env ## Run API-focused tests
-	$(GO) test ./... -run '^TestAPI_'
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test $$pkgs -run '^TestAPI_'
 
 test-workers: prepare-go-env ## Run worker-focused tests
-	$(GO) test ./... -run '^TestWorkers_'
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test $$pkgs -run '^TestWorkers_'
 
 test-store: prepare-go-env ## Run store/artifact-focused tests
-	$(GO) test ./... -run '^TestStore_'
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test $$pkgs -run '^TestStore_'
 
 test-model: prepare-go-env ## Run model/spec-focused tests
-	$(GO) test ./... -run '^TestModel_'
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test $$pkgs -run '^TestModel_'
 
 test-race: prepare-go-env ## Run tests with race detector
-	$(GO) test -race ./...
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test -race $$pkgs
 
 cover: prepare-go-env ## Run tests with coverage report
 	@mkdir -p "$(TMP_DIR)"
-	$(GO) test -coverprofile="$(COVER_OUT)" ./...
+	@set -euo pipefail; \
+	pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+	if [[ -z "$$pkgs" ]]; then \
+		echo "No Go packages found."; \
+		exit 0; \
+	fi; \
+	$(GO) test -coverprofile="$(COVER_OUT)" $$pkgs; \
 	$(GO) tool cover -func="$(COVER_OUT)"
 
 js-check: ## Syntax-check frontend JS
@@ -268,7 +329,12 @@ task-audit: prepare-go-env ## Run scoped verification for a task (TASK=<task-id>
 	if [[ -n "$$test_names" ]]; then \
 		regex="^($$(echo "$$test_names" | tr ' ' '\n' | sed '/^$$/d' | sort -u | paste -sd'|' -))$$"; \
 		echo "Running scoped tests: $$regex"; \
-		$(GO) test ./... -run "$$regex"; \
+		pkgs="$$( $(GO_PACKAGE_LIST_CMD) )"; \
+		if [[ -z "$$pkgs" ]]; then \
+			echo "No Go packages found; skipping scoped go test."; \
+		else \
+			$(GO) test $$pkgs -run "$$regex"; \
+		fi; \
 	else \
 		echo "No mapped tests for task $(TASK); skipping scoped go test."; \
 	fi; \
@@ -448,6 +514,20 @@ source-commit: ## Commit in source repo to trigger installed local webhook (PROJ
 
 clean-artifacts: ## Remove generated local artifacts
 	rm -rf "$(ARTIFACTS_ROOT)"
+
+clean-legacy-artifacts: ## Remove only legacy in-repo runtime artifacts under ./data/artifacts
+	@set -euo pipefail; \
+	target="./data/artifacts"; \
+	abs_target="$$(cd "$$(dirname "$$target")" && pwd)/$$(basename "$$target")"; \
+	echo "Legacy artifact cleanup target: $$abs_target"; \
+	echo "Preconditions: stop local runtime processes before deletion."; \
+	echo "Affected path: $$target"; \
+	if [[ ! -d "$$target" ]]; then \
+		echo "No legacy artifacts directory found. Nothing to remove."; \
+		exit 0; \
+	fi; \
+	rm -rf "$$target"; \
+	echo "Removed legacy artifacts directory: $$target"
 
 clean-tmp: ## Remove local temporary files
 	rm -rf "$(TMP_DIR)"

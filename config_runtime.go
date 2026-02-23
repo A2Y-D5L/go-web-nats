@@ -48,15 +48,17 @@ const (
 	opEventsRetention         = 30 * time.Minute
 	opEventsHeartbeatInterval = 10 * time.Second
 
-	shortIDLength          = 12
-	httpServerErrThreshold = 500
-	httpClientErrThreshold = 400
-	touchedArtifactsCap    = 8
-	opEventsHistoryLimit   = 256
-	opEventArtifactsLimit  = 8
-	projectOpsDefaultLimit = 20
-	projectOpsMaxLimit     = 100
-	projectOpsHistoryCap   = 200
+	shortIDLength                      = 12
+	httpServerErrThreshold             = 500
+	httpClientErrThreshold             = 400
+	touchedArtifactsCap                = 8
+	opEventsHistoryLimit               = 256
+	opEventArtifactsLimit              = 8
+	projectOpsDefaultLimit             = 20
+	projectOpsMaxLimit                 = 100
+	projectOpsHistoryCap               = 200
+	projectOpsBackfillDefaultScanLimit = 5000
+	projectOpsBackfillMaxScanLimit     = 20000
 
 	workerDeliveryAckWait    = 15 * time.Second
 	workerDeliveryFetchWait  = 2 * time.Second

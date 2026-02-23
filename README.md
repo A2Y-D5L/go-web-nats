@@ -438,6 +438,28 @@ git commit -m "feat: local source change"
 
 `<artifacts-root>` is printed on startup (`Artifacts root: ...`). You can pin it with `PAAS_ARTIFACTS_ROOT`.
 
+## Legacy In-Repo Artifacts Cleanup
+
+Historical runs may have left generated files under `./data/artifacts` (inside this module). These are no longer the default runtime location, but they can still pollute local package scans.
+
+Detect legacy in-tree artifacts:
+
+```bash
+find ./data/artifacts -mindepth 1 -maxdepth 2 -print 2>/dev/null
+```
+
+Clean legacy in-tree artifacts safely (explicit, opt-in):
+
+```bash
+make clean-legacy-artifacts
+```
+
+Notes:
+
+- This target removes only `./data/artifacts`.
+- Default runtime artifacts now resolve to an OS-local path outside this module tree unless `PAAS_ARTIFACTS_ROOT` is set.
+- If you intentionally keep artifacts in-repo, set `PAAS_ARTIFACTS_ROOT=./data/artifacts` explicitly.
+
 ## Quick cURL Examples
 
 Create via registration event:

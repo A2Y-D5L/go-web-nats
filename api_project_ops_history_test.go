@@ -127,6 +127,21 @@ func putOpHistoryFixture(
 	}
 }
 
+func putOpHistoryFixtureWithoutProjectIndex(
+	t *testing.T,
+	store *Store,
+	op Operation,
+) {
+	t.Helper()
+	payload, err := json.Marshal(op)
+	if err != nil {
+		t.Fatalf("marshal raw op fixture: %v", err)
+	}
+	if _, putErr := store.kvOps.Put(context.Background(), kvOpKeyPrefix+op.ID, payload); putErr != nil {
+		t.Fatalf("put raw op fixture: %v", putErr)
+	}
+}
+
 func fetchProjectOpsHistory(
 	t *testing.T,
 	client *http.Client,
@@ -367,6 +382,121 @@ func TestAPI_ProjectOpsHistorySupportsBeforeAndRejectsInvalidLimit(t *testing.T)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid limit, got %d", resp.StatusCode)
+	}
+}
+
+func TestAPI_ProjectOpsHistoryBackfillsMissingProjectIndex(t *testing.T) {
+	fixture := newProjectOpsHistoryFixture(t)
+	defer fixture.Close()
+
+	const projectID = "project-history-backfill"
+	putProjectOpsHistoryFixture(t, fixture.api.store, projectID)
+
+	base := time.Now().UTC().Add(-20 * time.Minute)
+	opOne := Operation{
+		ID:        "op-history-backfill-1",
+		Kind:      OpCreate,
+		ProjectID: projectID,
+		Requested: base.Add(1 * time.Minute),
+		Finished:  base.Add(2 * time.Minute),
+		Status:    opStatusDone,
+		Error:     "",
+		Steps: []OpStep{
+			{
+				Worker:    "registrar",
+				StartedAt: base.Add(1 * time.Minute),
+				EndedAt:   base.Add(2 * time.Minute),
+				Message:   "registration complete",
+				Error:     "",
+				Artifacts: nil,
+			},
+		},
+	}
+	opTwo := Operation{
+		ID:        "op-history-backfill-2",
+		Kind:      OpCI,
+		ProjectID: projectID,
+		Requested: base.Add(3 * time.Minute),
+		Finished:  base.Add(4 * time.Minute),
+		Status:    opStatusDone,
+		Error:     "",
+		Steps: []OpStep{
+			{
+				Worker:    "imageBuilder",
+				StartedAt: base.Add(3 * time.Minute),
+				EndedAt:   base.Add(4 * time.Minute),
+				Message:   "image build complete",
+				Error:     "",
+				Artifacts: []string{"build/image.txt"},
+			},
+		},
+	}
+
+	// Write operation records directly into KV to simulate historical data without project_ops index keys.
+	putOpHistoryFixtureWithoutProjectIndex(t, fixture.api.store, opOne)
+	putOpHistoryFixtureWithoutProjectIndex(t, fixture.api.store, opTwo)
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	before := fetchProjectOpsHistory(
+		t,
+		srv.Client(),
+		fmt.Sprintf("%s/api/projects/%s/ops?limit=10", srv.URL, projectID),
+	)
+	if len(before.Items) != 0 {
+		t.Fatalf("expected empty history before index backfill, got %d items", len(before.Items))
+	}
+
+	reportOne, err := fixture.api.store.backfillProjectOpsIndex(
+		context.Background(),
+		projectOpsBackfillDefaultScanLimit,
+	)
+	if err != nil {
+		t.Fatalf("run index backfill: %v", err)
+	}
+	if reportOne.AddedIndexEntries != 2 {
+		t.Fatalf("expected 2 restored index entries, got %d", reportOne.AddedIndexEntries)
+	}
+	if reportOne.UpdatedProjects != 1 {
+		t.Fatalf("expected 1 updated project index, got %d", reportOne.UpdatedProjects)
+	}
+
+	after := fetchProjectOpsHistory(
+		t,
+		srv.Client(),
+		fmt.Sprintf("%s/api/projects/%s/ops?limit=10", srv.URL, projectID),
+	)
+	if len(after.Items) != 2 {
+		t.Fatalf("expected 2 history rows after backfill, got %d", len(after.Items))
+	}
+	if after.Items[0].ID != opTwo.ID || after.Items[1].ID != opOne.ID {
+		t.Fatalf("unexpected backfilled history order: %#v", after.Items)
+	}
+
+	reportTwo, err := fixture.api.store.backfillProjectOpsIndex(
+		context.Background(),
+		projectOpsBackfillDefaultScanLimit,
+	)
+	if err != nil {
+		t.Fatalf("rerun index backfill: %v", err)
+	}
+	if reportTwo.AddedIndexEntries != 0 {
+		t.Fatalf("expected rerun to add 0 entries, got %d", reportTwo.AddedIndexEntries)
+	}
+	if reportTwo.UpdatedProjects != 0 {
+		t.Fatalf("expected rerun to update 0 project indexes, got %d", reportTwo.UpdatedProjects)
+	}
+
+	index, err := fixture.api.store.readProjectOpsIndex(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("read project index after backfill: %v", err)
+	}
+	if len(index.IDs) != 2 {
+		t.Fatalf("expected exactly 2 index ids after rerun, got %d", len(index.IDs))
+	}
+	if index.IDs[0] != opTwo.ID || index.IDs[1] != opOne.ID {
+		t.Fatalf("unexpected index ids after rerun: %#v", index.IDs)
 	}
 }
 

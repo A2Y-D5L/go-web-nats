@@ -38,6 +38,18 @@ type projectOpsListPage struct {
 	NextCursor string
 }
 
+type projectOpsBackfillReport struct {
+	ScannedOps              int
+	RebuiltProjects         int
+	UpdatedProjects         int
+	AddedIndexEntries       int
+	SkippedMalformedOps     int
+	SkippedMissingProjectID int
+	SkippedMissingOpID      int
+	SkippedReadErrors       int
+	Truncated               bool
+}
+
 func newStore(ctx context.Context, js jetstream.JetStream) (*Store, error) {
 	var projectsKV jetstream.KeyValue
 	err := ensureKVBucket(ctx, js, kvBucketProjects, defaultKVProjectHistory, &projectsKV)
@@ -174,6 +186,177 @@ func (s *Store) listProjectOps(
 	)
 }
 
+func (s *Store) backfillProjectOpsIndex(
+	ctx context.Context,
+	maxScan int,
+) (projectOpsBackfillReport, error) {
+	var report projectOpsBackfillReport
+
+	opsByProject, err := s.scanProjectOpsForBackfill(
+		ctx,
+		normalizeProjectOpsBackfillScanLimit(maxScan),
+		&report,
+	)
+	if err != nil {
+		return report, err
+	}
+	if len(opsByProject) == 0 {
+		return report, nil
+	}
+	if rebuildErr := s.rebuildProjectOpsIndexes(ctx, opsByProject, &report); rebuildErr != nil {
+		return report, rebuildErr
+	}
+	return report, nil
+}
+
+func (s *Store) scanProjectOpsForBackfill(
+	ctx context.Context,
+	scanLimit int,
+	report *projectOpsBackfillReport,
+) (map[string][]Operation, error) {
+	keys, err := s.kvOps.Keys(ctx)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrNoKeysFound) {
+			return map[string][]Operation{}, nil
+		}
+		return nil, err
+	}
+	sort.Strings(keys)
+
+	opsByProject := make(map[string][]Operation)
+	for _, key := range keys {
+		if !strings.HasPrefix(key, kvOpKeyPrefix) {
+			continue
+		}
+		if report.ScannedOps >= scanLimit {
+			report.Truncated = true
+			break
+		}
+		report.ScannedOps++
+
+		op, ok := s.readBackfillOp(ctx, key, report)
+		if !ok {
+			continue
+		}
+		projectID := strings.TrimSpace(op.ProjectID)
+		opsByProject[projectID] = append(opsByProject[projectID], op)
+	}
+	return opsByProject, nil
+}
+
+func (s *Store) readBackfillOp(
+	ctx context.Context,
+	key string,
+	report *projectOpsBackfillReport,
+) (Operation, bool) {
+	entry, err := s.kvOps.Get(ctx, key)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) || errors.Is(err, jetstream.ErrKeyDeleted) {
+			return Operation{}, false
+		}
+		report.SkippedReadErrors++
+		return Operation{}, false
+	}
+
+	var op Operation
+	if unmarshalErr := json.Unmarshal(entry.Value(), &op); unmarshalErr != nil {
+		report.SkippedMalformedOps++
+		return Operation{}, false
+	}
+	if strings.TrimSpace(op.ProjectID) == "" {
+		report.SkippedMissingProjectID++
+		return Operation{}, false
+	}
+	if strings.TrimSpace(op.ID) == "" {
+		report.SkippedMissingOpID++
+		return Operation{}, false
+	}
+	return op, true
+}
+
+func (s *Store) rebuildProjectOpsIndexes(
+	ctx context.Context,
+	opsByProject map[string][]Operation,
+	report *projectOpsBackfillReport,
+) error {
+	projectIDs := make([]string, 0, len(opsByProject))
+	for projectID := range opsByProject {
+		projectIDs = append(projectIDs, projectID)
+	}
+	sort.Strings(projectIDs)
+
+	for _, projectID := range projectIDs {
+		report.RebuiltProjects++
+		discoveredIDs := orderedUniqueProjectOpIDs(opsByProject[projectID])
+
+		index, err := s.readProjectOpsIndex(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		mergedIDs := mergeProjectOpsIDs(discoveredIDs, index.IDs, projectOpsHistoryCap)
+		if slices.Equal(index.IDs, mergedIDs) {
+			continue
+		}
+
+		report.AddedIndexEntries += countBackfillAddedIDs(index.IDs, mergedIDs)
+
+		index.IDs = mergedIDs
+		index.UpdatedAt = time.Now().UTC()
+		if writeErr := s.writeProjectOpsIndex(ctx, projectID, index); writeErr != nil {
+			return writeErr
+		}
+		report.UpdatedProjects++
+	}
+	return nil
+}
+
+func orderedUniqueProjectOpIDs(ops []Operation) []string {
+	if len(ops) == 0 {
+		return []string{}
+	}
+	sort.SliceStable(ops, func(i, j int) bool {
+		leftRequested := ops[i].Requested.UTC()
+		rightRequested := ops[j].Requested.UTC()
+		if !leftRequested.Equal(rightRequested) {
+			return leftRequested.After(rightRequested)
+		}
+		return strings.TrimSpace(ops[i].ID) > strings.TrimSpace(ops[j].ID)
+	})
+
+	ids := make([]string, 0, len(ops))
+	seen := make(map[string]struct{}, len(ops))
+	for _, op := range ops {
+		opID := strings.TrimSpace(op.ID)
+		if opID == "" {
+			continue
+		}
+		if _, exists := seen[opID]; exists {
+			continue
+		}
+		seen[opID] = struct{}{}
+		ids = append(ids, opID)
+	}
+	return ids
+}
+
+func countBackfillAddedIDs(existing []string, merged []string) int {
+	if len(merged) == 0 {
+		return 0
+	}
+	existingSet := make(map[string]struct{}, len(existing))
+	for _, opID := range existing {
+		existingSet[strings.TrimSpace(opID)] = struct{}{}
+	}
+	added := 0
+	for _, opID := range merged {
+		if _, exists := existingSet[strings.TrimSpace(opID)]; exists {
+			continue
+		}
+		added++
+	}
+	return added
+}
+
 func (s *Store) collectProjectOpsPage(
 	ctx context.Context,
 	projectID string,
@@ -251,6 +434,53 @@ func normalizeProjectOpsLimit(limit int) int {
 	default:
 		return limit
 	}
+}
+
+func normalizeProjectOpsBackfillScanLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return projectOpsBackfillDefaultScanLimit
+	case limit > projectOpsBackfillMaxScanLimit:
+		return projectOpsBackfillMaxScanLimit
+	default:
+		return limit
+	}
+}
+
+func mergeProjectOpsIDs(primary, secondary []string, limit int) []string {
+	if limit <= 0 {
+		return []string{}
+	}
+	capHint := min(limit, len(primary)+len(secondary))
+	if capHint < 0 {
+		capHint = limit
+	}
+	merged := make([]string, 0, capHint)
+	seen := make(map[string]struct{}, capHint)
+
+	appendFrom := func(ids []string) bool {
+		for _, raw := range ids {
+			opID := strings.TrimSpace(raw)
+			if opID == "" {
+				continue
+			}
+			if _, exists := seen[opID]; exists {
+				continue
+			}
+			seen[opID] = struct{}{}
+			merged = append(merged, opID)
+			if len(merged) >= limit {
+				return true
+			}
+		}
+		return false
+	}
+
+	if appendFrom(primary) {
+		return merged
+	}
+	_ = appendFrom(secondary)
+	return merged
 }
 
 func parseProjectOpsBeforeTime(raw string) (time.Time, bool) {

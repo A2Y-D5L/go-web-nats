@@ -48,6 +48,7 @@ func Run() {
 	}
 	opEvents := newOpEventHub(opEventsHistoryLimit, opEventsRetention)
 	store.setOpEvents(opEvents)
+	runProjectOpsHistoryBackfill(ctx, store, mainLog)
 
 	artifactsRoot := resolveArtifactsRoot()
 	artifacts := NewFSArtifacts(artifactsRoot.root)
@@ -260,4 +261,45 @@ func logRuntimeStartup(
 		mainLog.Infof("Source commit watcher: disabled (git hooks remain active)")
 	}
 	mainLog.Infof("Try: create/update/delete projects; delete cleans project artifacts dir")
+}
+
+func runProjectOpsHistoryBackfill(
+	ctx context.Context,
+	store *Store,
+	mainLog sourceLogger,
+) {
+	mainLog.Infof(
+		"Project operation history index backfill: start (scan_limit=%d)",
+		projectOpsBackfillDefaultScanLimit,
+	)
+	backfillReport, err := store.backfillProjectOpsIndex(ctx, projectOpsBackfillDefaultScanLimit)
+	if err != nil {
+		mainLog.Warnf("Project operation history index backfill failed: %v", err)
+		return
+	}
+	logProjectOpsBackfillReport(mainLog, backfillReport)
+}
+
+func logProjectOpsBackfillReport(mainLog sourceLogger, report projectOpsBackfillReport) {
+	mainLog.Infof(
+		"Project operation history index backfill complete: scanned_ops=%d projects_seen=%d projects_updated=%d restored_entries=%d truncated=%t",
+		report.ScannedOps,
+		report.RebuiltProjects,
+		report.UpdatedProjects,
+		report.AddedIndexEntries,
+		report.Truncated,
+	)
+	if report.SkippedMalformedOps == 0 &&
+		report.SkippedMissingProjectID == 0 &&
+		report.SkippedMissingOpID == 0 &&
+		report.SkippedReadErrors == 0 {
+		return
+	}
+	mainLog.Warnf(
+		"Project operation history index backfill skipped records: malformed=%d missing_project_id=%d missing_op_id=%d read_errors=%d",
+		report.SkippedMalformedOps,
+		report.SkippedMissingProjectID,
+		report.SkippedMissingOpID,
+		report.SkippedReadErrors,
+	)
 }

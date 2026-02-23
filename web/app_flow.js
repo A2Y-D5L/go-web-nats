@@ -113,8 +113,19 @@ function stopOperationMonitor({ clearPayload = false } = {}) {
 function resetOperationHistory() {
   state.operation.history = [];
   state.operation.historyLoading = false;
+  state.operation.historyLoadingMore = false;
   state.operation.historyError = "";
+  state.operation.historyLoadMoreError = "";
   state.operation.historyNextCursor = "";
+}
+
+function operationHistoryEndpoint(projectID, cursor = "") {
+  const params = new URLSearchParams();
+  params.set("limit", String(operationHistoryPageLimit));
+  if (cursor) {
+    params.set("cursor", String(cursor));
+  }
+  return `/api/projects/${encodeURIComponent(projectID)}/ops?${params.toString()}`;
 }
 
 async function loadOperationHistory({ silent = false } = {}) {
@@ -128,18 +139,19 @@ async function loadOperationHistory({ silent = false } = {}) {
 
   state.operation.historyLoading = true;
   state.operation.historyError = "";
+  state.operation.historyLoadMoreError = "";
   renderOperationPanel();
 
   try {
-    const response = await requestAPI(
-      "GET",
-      `/api/projects/${encodeURIComponent(projectID)}/ops?limit=20`
-    );
+    const response = await requestAPI("GET", operationHistoryEndpoint(projectID));
     if (getSelectedProject()?.id !== projectID) {
       return;
     }
     const items = Array.isArray(response?.items) ? response.items : [];
-    state.operation.history = items;
+    state.operation.history = [];
+    for (const item of items) {
+      upsertOperationHistory(item);
+    }
     state.operation.historyNextCursor = String(response?.next_cursor || "").trim();
 
     if (state.operation.payload?.id) {
@@ -164,6 +176,54 @@ async function loadOperationHistory({ silent = false } = {}) {
       return;
     }
     state.operation.historyLoading = false;
+    renderOperationPanel();
+  }
+}
+
+async function loadMoreOperationHistory({ silent = false } = {}) {
+  const project = getSelectedProject();
+  if (!project) {
+    return;
+  }
+  if (state.operation.historyLoading || state.operation.historyLoadingMore) {
+    return;
+  }
+
+  const cursor = String(state.operation.historyNextCursor || "").trim();
+  if (!cursor) {
+    return;
+  }
+
+  const projectID = project.id;
+  state.operation.historyLoadingMore = true;
+  state.operation.historyLoadMoreError = "";
+  renderOperationPanel();
+
+  try {
+    const response = await requestAPI("GET", operationHistoryEndpoint(projectID, cursor));
+    if (getSelectedProject()?.id !== projectID) {
+      return;
+    }
+    const items = Array.isArray(response?.items) ? response.items : [];
+    for (const item of items) {
+      upsertOperationHistory(item);
+    }
+    state.operation.historyNextCursor = String(response?.next_cursor || "").trim();
+    renderOperationPanel();
+  } catch (error) {
+    if (getSelectedProject()?.id !== projectID) {
+      return;
+    }
+    state.operation.historyLoadMoreError = error.message;
+    renderOperationPanel();
+    if (!silent) {
+      throw error;
+    }
+  } finally {
+    if (getSelectedProject()?.id !== projectID) {
+      return;
+    }
+    state.operation.historyLoadingMore = false;
     renderOperationPanel();
   }
 }

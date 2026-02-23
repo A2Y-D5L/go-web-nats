@@ -183,6 +183,7 @@ const buildKitArtifactSet = new Set([
 ]);
 
 const preferredEnvOrder = ["dev", "staging", "prod"];
+const operationHistoryPageLimit = 20;
 
 const workerOrderByKind = {
   create: ["registrar", "repoBootstrap", "imageBuilder", "manifestRenderer"],
@@ -278,7 +279,9 @@ const state = {
     terminalHandledOpID: "",
     history: [],
     historyLoading: false,
+    historyLoadingMore: false,
     historyError: "",
+    historyLoadMoreError: "",
     historyNextCursor: "",
   },
   promotion: {
