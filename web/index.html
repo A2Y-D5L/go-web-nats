@@ -278,6 +278,25 @@
                 <h3>Activity history</h3>
                 <div id="opHistory" class="history-list"></div>
               </div>
+              <div class="history-wrap">
+                <div class="panel-head">
+                  <h3>Release timeline</h3>
+                  <div class="history-actions">
+                    <label class="field compact" for="releaseTimelineEnvironment">
+                      <span>Environment</span>
+                      <select id="releaseTimelineEnvironment"></select>
+                    </label>
+                    <button id="refreshReleaseTimelineBtn" type="button" class="btn btn-subtle">Refresh timeline</button>
+                  </div>
+                </div>
+                <div id="rollbackTargetSummary" class="summary-card">
+                  Rollback target not selected. Choose a release entry to prepare rollback context.
+                </div>
+                <p id="releaseTimelineStatus" class="panel-inline-status">
+                  Select an environment to load release timeline history.
+                </p>
+                <div id="releaseTimeline" class="timeline"></div>
+              </div>
               <details id="opRawWrap" class="raw-details">
                 <summary>Show raw activity payload</summary>
                 <pre id="lastOp" class="codeblock"></pre>

@@ -238,6 +238,7 @@ function clearSelection() {
   resetArtifacts();
   resetOverview();
   resetJourney();
+  resetReleaseTimeline();
   renderAll();
 }
 
@@ -263,6 +264,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     resetArtifacts();
     resetOverview();
     resetJourney();
+    resetReleaseTimeline();
   } else if (!preserveSelection) {
     state.selectedProjectID = "";
     state.ui.workspaceOpen = false;
@@ -271,6 +273,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     resetArtifacts();
     resetOverview();
     resetJourney();
+    resetReleaseTimeline();
   }
 
   const selected = getSelectedProject();
@@ -283,6 +286,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     resetOperationHistory();
     resetOverview();
     resetJourney();
+    resetReleaseTimeline();
   }
 
   if (selected) {
@@ -293,6 +297,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
 
   if (selected) {
     await loadJourney({ silent: true });
+    await loadReleaseTimeline({ silent: true });
   }
 
   if (!silent) {
@@ -349,6 +354,7 @@ async function startOperationMonitor(opID, { announce = true } = {}) {
       try {
         await loadArtifacts({ silent: true });
         await loadJourney({ silent: true });
+        await loadReleaseTimeline({ silent: true });
       } catch (_error) {
         // Keep operation view even if refresh fails.
       }
@@ -608,6 +614,7 @@ function selectProject(projectID) {
   resetArtifacts();
   resetOverview();
   resetJourney();
+  resetReleaseTimeline();
 
   const selected = getSelectedProject();
   syncUpdateForm(selected);
@@ -627,6 +634,10 @@ function selectProject(projectID) {
 
   void loadJourney({ silent: true }).catch((error) => {
     setStatus(`Journey unavailable: ${error.message}`, "warning");
+  });
+
+  void loadReleaseTimeline({ silent: true }).catch((error) => {
+    setStatus(`Release timeline unavailable: ${error.message}`, "warning");
   });
 
   void loadOperationHistory({ silent: true }).catch((error) => {

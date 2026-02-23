@@ -475,12 +475,160 @@ function renderOperationHistory() {
   }
 }
 
+function releaseTimelineStateClass(record) {
+  const kind = String(record?.op_kind || "").trim();
+  if (kind === "release") {
+    return "warning";
+  }
+  return "done";
+}
+
+function renderReleaseTimelinePanel() {
+  const container = dom.containers.releaseTimeline;
+  const statusEl = dom.text.releaseTimelineStatus;
+  const rollbackEl = dom.text.rollbackTargetSummary;
+  const refreshBtn = dom.buttons.refreshReleaseTimeline;
+  const envSelect = dom.inputs.releaseTimelineEnvironment;
+
+  container.replaceChildren();
+
+  const project = getSelectedProject();
+  if (!project) {
+    envSelect.replaceChildren();
+    envSelect.disabled = true;
+    refreshBtn.disabled = true;
+    rollbackEl.textContent = "Rollback target not selected. Choose a release entry to prepare rollback context.";
+    setPanelInlineStatus(statusEl, "Select an app to inspect release timeline history.", "info");
+    renderEmptyState(container, "Release records appear after environment deliveries complete.");
+    return;
+  }
+
+  const environment = ensureReleaseTimelineSelection(project);
+  envSelect.disabled = state.releaseTimeline.loading || state.releaseTimeline.loadingMore;
+  refreshBtn.disabled = state.releaseTimeline.loading || state.releaseTimeline.loadingMore || !environment;
+
+  const selectedRecord = state.releaseTimeline.items.find(
+    (item) => String(item?.id || "").trim() === state.releaseTimeline.selectedReleaseID
+  );
+  if (selectedRecord) {
+    rollbackEl.textContent = `Rollback target prepared: ${String(selectedRecord.id || "").slice(0, 8)} in ${
+      selectedRecord.environment || "environment"
+    } (${selectedRecord.image || "unknown image"}).`;
+  } else {
+    rollbackEl.textContent = "Rollback target not selected. Choose a release entry to prepare rollback context.";
+  }
+
+  if (state.releaseTimeline.loading && !state.releaseTimeline.items.length) {
+    setPanelInlineStatus(statusEl, `Loading ${environment || "selected"} release timeline...`, "info");
+    renderEmptyState(container, "Loading release records...");
+    return;
+  }
+
+  if (state.releaseTimeline.error && !state.releaseTimeline.items.length) {
+    setPanelInlineStatus(statusEl, `Release timeline unavailable: ${state.releaseTimeline.error}`, "warning");
+    renderEmptyState(container, "Release timeline data could not be loaded.");
+    return;
+  }
+
+  if (!state.releaseTimeline.items.length) {
+    setPanelInlineStatus(
+      statusEl,
+      `No release records yet for ${environment || "selected"} environment.`,
+      "info"
+    );
+    renderEmptyState(container, "Release records will appear after successful deploy, promote, or release steps.");
+    return;
+  }
+
+  setPanelInlineStatus(
+    statusEl,
+    `${state.releaseTimeline.items.length} release records loaded for ${
+      environment || "selected"
+    } environment.`,
+    "success"
+  );
+
+  if (state.releaseTimeline.loadMoreError) {
+    container.appendChild(
+      makeElem("p", "history-item-meta", `Load-more warning: ${state.releaseTimeline.loadMoreError}`)
+    );
+  }
+
+  for (const record of state.releaseTimeline.items) {
+    const row = makeElem("article", `timeline-step timeline-step--${releaseTimelineStateClass(record)}`);
+    const head = makeElem("div", "timeline-step-head");
+    head.append(
+      makeElem(
+        "span",
+        "timeline-step-title",
+        `${String(record.delivery_stage || record.op_kind || "delivery").toUpperCase()} • ${String(record.id || "").slice(0, 8)}`
+      ),
+      makeBadge(String(record.environment || "unknown"), "live")
+    );
+
+    const bits = [
+      `created ${toLocalTime(record.created_at)}`,
+      `op ${String(record.op_kind || "unknown")}`,
+      `from ${String(record.from_env || "-")}`,
+      `to ${String(record.to_env || record.environment || "-")}`,
+      `image ${String(record.image || "unknown")}`,
+    ];
+    if (record.rendered_path) {
+      bits.push(`artifact ${record.rendered_path}`);
+    }
+    row.append(head, makeElem("p", "timeline-step-meta", bits.join(" • ")));
+
+    const actions = makeElem("div", "history-actions");
+    const prepareBtn = makeElem(
+      "button",
+      "btn btn-subtle",
+      state.releaseTimeline.selectedReleaseID === record.id ? "Rollback target selected" : "Prepare rollback"
+    );
+    prepareBtn.type = "button";
+    prepareBtn.addEventListener("click", () => {
+      state.releaseTimeline.selectedReleaseID = String(record.id || "").trim();
+      state.releaseTimeline.environment = String(record.environment || state.releaseTimeline.environment || "")
+        .trim()
+        .toLowerCase();
+      renderReleaseTimelinePanel();
+      setStatus(
+        `Rollback target prepared from release ${String(record.id || "").slice(0, 8)}. Execution is deferred to rollback workflow.`,
+        "info",
+        { toast: true }
+      );
+    });
+    actions.appendChild(prepareBtn);
+
+    row.appendChild(actions);
+    container.appendChild(row);
+  }
+
+  if (state.releaseTimeline.loadingMore || state.releaseTimeline.nextCursor) {
+    const actions = makeElem("div", "history-actions");
+    const loadMoreBtn = makeElem(
+      "button",
+      "btn btn-subtle",
+      state.releaseTimeline.loadingMore ? "Loading older releases..." : "Load older releases"
+    );
+    loadMoreBtn.type = "button";
+    loadMoreBtn.disabled = state.releaseTimeline.loading || state.releaseTimeline.loadingMore;
+    loadMoreBtn.addEventListener("click", () => {
+      void loadReleaseTimeline({ silent: true, append: true }).catch((error) => {
+        setStatus(`Release timeline unavailable: ${error.message}`, "warning");
+      });
+    });
+    actions.appendChild(loadMoreBtn);
+    container.appendChild(actions);
+  }
+}
+
 function renderOperationPanel() {
   const op = state.operation.payload;
   renderOperationProgress(op);
   renderOperationErrorSurface(op);
   renderOperationTimeline(op);
   renderOperationHistory();
+  renderReleaseTimelinePanel();
   renderOperationTransportStatus(op);
   dom.text.opRaw.textContent = op ? pretty(op) : "";
 }

@@ -29,7 +29,10 @@ const (
 	kvBucketOps      = "paas_ops"
 
 	// Project keys in KV.
-	kvProjectKeyPrefix         = "project/"
-	kvOpKeyPrefix              = "op/"
-	kvProjectOpsIndexKeyPrefix = "project_ops/"
+	kvProjectKeyPrefix               = "project/"
+	kvOpKeyPrefix                    = "op/"
+	kvReleaseKeyPrefix               = "release/"
+	kvProjectOpsIndexKeyPrefix       = "project_ops/"
+	kvProjectReleaseIndexKeyPrefix   = "project_release_index/"
+	kvProjectReleaseCurrentKeyPrefix = "project_release_current/"
 )

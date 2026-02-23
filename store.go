@@ -27,6 +27,16 @@ type projectOpsIndex struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type projectReleaseIndex struct {
+	IDs       []string  `json:"ids"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type projectReleaseCurrent struct {
+	ID        string    `json:"id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type projectOpsListQuery struct {
 	Limit  int
 	Cursor string
@@ -35,6 +45,16 @@ type projectOpsListQuery struct {
 
 type projectOpsListPage struct {
 	Ops        []Operation
+	NextCursor string
+}
+
+type projectReleaseListQuery struct {
+	Limit  int
+	Cursor string
+}
+
+type projectReleaseListPage struct {
+	Items      []ReleaseRecord
 	NextCursor string
 }
 
@@ -140,6 +160,54 @@ func (s *Store) PutOp(ctx context.Context, op Operation) error {
 	return s.recordProjectOp(ctx, op.ProjectID, op.ID)
 }
 
+func (s *Store) PutRelease(ctx context.Context, release ReleaseRecord) (ReleaseRecord, error) {
+	release = normalizeReleaseRecord(release)
+	if strings.TrimSpace(release.ProjectID) == "" {
+		return ReleaseRecord{}, errors.New("project_id required")
+	}
+	if strings.TrimSpace(release.Environment) == "" {
+		return ReleaseRecord{}, errors.New("environment required")
+	}
+	if strings.TrimSpace(release.OpID) == "" {
+		return ReleaseRecord{}, errors.New("op_id required")
+	}
+	if strings.TrimSpace(release.ID) == "" {
+		release.ID = newID()
+	}
+	if release.CreatedAt.IsZero() {
+		release.CreatedAt = time.Now().UTC()
+	} else {
+		release.CreatedAt = release.CreatedAt.UTC()
+	}
+
+	body, err := json.Marshal(release)
+	if err != nil {
+		return ReleaseRecord{}, err
+	}
+	if _, err = s.kvOps.Put(ctx, kvReleaseKeyPrefix+release.ID, body); err != nil {
+		return ReleaseRecord{}, err
+	}
+	if err = s.recordProjectRelease(ctx, release.ProjectID, release.Environment, release.ID); err != nil {
+		return ReleaseRecord{}, err
+	}
+	if err = s.writeProjectReleaseCurrent(ctx, release.ProjectID, release.Environment, release.ID); err != nil {
+		return ReleaseRecord{}, err
+	}
+	return release, nil
+}
+
+func (s *Store) GetRelease(ctx context.Context, releaseID string) (ReleaseRecord, error) {
+	entry, err := s.kvOps.Get(ctx, kvReleaseKeyPrefix+strings.TrimSpace(releaseID))
+	if err != nil {
+		return ReleaseRecord{}, err
+	}
+	var release ReleaseRecord
+	if unmarshalErr := json.Unmarshal(entry.Value(), &release); unmarshalErr != nil {
+		return ReleaseRecord{}, unmarshalErr
+	}
+	return normalizeReleaseRecord(release), nil
+}
+
 func (s *Store) GetOp(ctx context.Context, opID string) (Operation, error) {
 	e, err := s.kvOps.Get(ctx, kvOpKeyPrefix+opID)
 	if err != nil {
@@ -184,6 +252,64 @@ func (s *Store) listProjectOps(
 		limit,
 		beforeAt,
 	)
+}
+
+func (s *Store) listProjectReleases(
+	ctx context.Context,
+	projectID string,
+	environment string,
+	query projectReleaseListQuery,
+) (projectReleaseListPage, error) {
+	projectID = strings.TrimSpace(projectID)
+	environment = normalizeEnvironmentName(environment)
+	if projectID == "" || environment == "" {
+		return projectReleaseListPage{Items: []ReleaseRecord{}, NextCursor: ""}, nil
+	}
+
+	limit := normalizeProjectReleaseLimit(query.Limit)
+	index, err := s.readProjectReleaseIndex(ctx, projectID, environment)
+	if err != nil {
+		return projectReleaseListPage{}, err
+	}
+	if len(index.IDs) == 0 {
+		return projectReleaseListPage{Items: []ReleaseRecord{}, NextCursor: ""}, nil
+	}
+
+	start := indexStartFromCursor(index.IDs, query.Cursor)
+	if start >= len(index.IDs) {
+		return projectReleaseListPage{Items: []ReleaseRecord{}, NextCursor: ""}, nil
+	}
+
+	items := make([]ReleaseRecord, 0, limit+1)
+	for _, releaseID := range index.IDs[start:] {
+		release, getErr := s.GetRelease(ctx, releaseID)
+		if getErr != nil {
+			if errors.Is(getErr, jetstream.ErrKeyNotFound) {
+				continue
+			}
+			return projectReleaseListPage{}, getErr
+		}
+		if strings.TrimSpace(release.ProjectID) != projectID {
+			continue
+		}
+		if normalizeEnvironmentName(release.Environment) != environment {
+			continue
+		}
+		items = append(items, release)
+		if len(items) > limit {
+			break
+		}
+	}
+
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		nextCursor = strings.TrimSpace(items[len(items)-1].ID)
+	}
+	return projectReleaseListPage{
+		Items:      items,
+		NextCursor: nextCursor,
+	}, nil
 }
 
 func (s *Store) backfillProjectOpsIndex(
@@ -436,6 +562,17 @@ func normalizeProjectOpsLimit(limit int) int {
 	}
 }
 
+func normalizeProjectReleaseLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return projectReleaseDefaultLimit
+	case limit > projectReleaseMaxLimit:
+		return projectReleaseMaxLimit
+	default:
+		return limit
+	}
+}
+
 func normalizeProjectOpsBackfillScanLimit(limit int) int {
 	switch {
 	case limit <= 0:
@@ -481,6 +618,49 @@ func mergeProjectOpsIDs(primary, secondary []string, limit int) []string {
 	}
 	_ = appendFrom(secondary)
 	return merged
+}
+
+func normalizeReleaseRecord(in ReleaseRecord) ReleaseRecord {
+	release := in
+	release.ID = strings.TrimSpace(release.ID)
+	release.ProjectID = strings.TrimSpace(release.ProjectID)
+	release.OpID = strings.TrimSpace(release.OpID)
+	release.Environment = normalizeEnvironmentName(release.Environment)
+	release.FromEnv = normalizeEnvironmentName(release.FromEnv)
+	release.ToEnv = normalizeEnvironmentName(release.ToEnv)
+	release.Image = strings.TrimSpace(release.Image)
+	release.RenderedPath = strings.Trim(strings.TrimSpace(release.RenderedPath), "/")
+	if release.Environment == "" && release.ToEnv != "" {
+		release.Environment = release.ToEnv
+	}
+	if release.ToEnv == "" {
+		release.ToEnv = release.Environment
+	}
+	if release.DeliveryStage == "" {
+		switch release.OpKind {
+		case OpRelease:
+			release.DeliveryStage = DeliveryStageRelease
+		case OpPromote:
+			release.DeliveryStage = DeliveryStagePromote
+		case OpDeploy, OpCreate, OpUpdate, OpDelete, OpCI:
+			release.DeliveryStage = DeliveryStageDeploy
+		default:
+			release.DeliveryStage = DeliveryStageDeploy
+		}
+	}
+	if release.OpKind == "" {
+		switch release.DeliveryStage {
+		case DeliveryStageRelease:
+			release.OpKind = OpRelease
+		case DeliveryStagePromote:
+			release.OpKind = OpPromote
+		case DeliveryStageDeploy:
+			release.OpKind = OpDeploy
+		default:
+			release.OpKind = OpDeploy
+		}
+	}
+	return release
 }
 
 func parseProjectOpsBeforeTime(raw string) (time.Time, bool) {
@@ -535,6 +715,31 @@ func (s *Store) recordProjectOp(ctx context.Context, projectID, opID string) err
 	return s.writeProjectOpsIndex(ctx, projectID, index)
 }
 
+func (s *Store) recordProjectRelease(ctx context.Context, projectID, environment, releaseID string) error {
+	projectID = strings.TrimSpace(projectID)
+	environment = normalizeEnvironmentName(environment)
+	releaseID = strings.TrimSpace(releaseID)
+	if projectID == "" || environment == "" || releaseID == "" {
+		return nil
+	}
+
+	index, err := s.readProjectReleaseIndex(ctx, projectID, environment)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(index.IDs, releaseID) {
+		index.UpdatedAt = time.Now().UTC()
+		return s.writeProjectReleaseIndex(ctx, projectID, environment, index)
+	}
+
+	index.IDs = append([]string{releaseID}, index.IDs...)
+	if len(index.IDs) > projectReleaseHistoryCap {
+		index.IDs = append([]string(nil), index.IDs[:projectReleaseHistoryCap]...)
+	}
+	index.UpdatedAt = time.Now().UTC()
+	return s.writeProjectReleaseIndex(ctx, projectID, environment, index)
+}
+
 func (s *Store) readProjectOpsIndex(ctx context.Context, projectID string) (projectOpsIndex, error) {
 	entry, err := s.kvOps.Get(ctx, projectOpsIndexKey(projectID))
 	if err != nil {
@@ -565,6 +770,125 @@ func (s *Store) writeProjectOpsIndex(ctx context.Context, projectID string, inde
 	return err
 }
 
+func (s *Store) readProjectReleaseIndex(
+	ctx context.Context,
+	projectID string,
+	environment string,
+) (projectReleaseIndex, error) {
+	entry, err := s.kvOps.Get(ctx, projectReleaseIndexKey(projectID, environment))
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return projectReleaseIndex{
+				IDs:       []string{},
+				UpdatedAt: time.Time{},
+			}, nil
+		}
+		return projectReleaseIndex{}, err
+	}
+	var index projectReleaseIndex
+	if unmarshalErr := json.Unmarshal(entry.Value(), &index); unmarshalErr != nil {
+		return projectReleaseIndex{}, unmarshalErr
+	}
+	if index.IDs == nil {
+		index.IDs = []string{}
+	}
+	return index, nil
+}
+
+func (s *Store) writeProjectReleaseIndex(
+	ctx context.Context,
+	projectID string,
+	environment string,
+	index projectReleaseIndex,
+) error {
+	body, err := json.Marshal(index)
+	if err != nil {
+		return err
+	}
+	_, err = s.kvOps.Put(ctx, projectReleaseIndexKey(projectID, environment), body)
+	return err
+}
+
+func (s *Store) readProjectReleaseCurrent(
+	ctx context.Context,
+	projectID string,
+	environment string,
+) (projectReleaseCurrent, bool, error) {
+	entry, err := s.kvOps.Get(ctx, projectReleaseCurrentKey(projectID, environment))
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return projectReleaseCurrent{}, false, nil
+		}
+		return projectReleaseCurrent{}, false, err
+	}
+	var current projectReleaseCurrent
+	if unmarshalErr := json.Unmarshal(entry.Value(), &current); unmarshalErr != nil {
+		return projectReleaseCurrent{}, false, unmarshalErr
+	}
+	current.ID = strings.TrimSpace(current.ID)
+	if current.ID == "" {
+		return projectReleaseCurrent{}, false, nil
+	}
+	return current, true, nil
+}
+
+func (s *Store) writeProjectReleaseCurrent(
+	ctx context.Context,
+	projectID string,
+	environment string,
+	releaseID string,
+) error {
+	current := projectReleaseCurrent{
+		ID:        strings.TrimSpace(releaseID),
+		UpdatedAt: time.Now().UTC(),
+	}
+	body, err := json.Marshal(current)
+	if err != nil {
+		return err
+	}
+	_, err = s.kvOps.Put(ctx, projectReleaseCurrentKey(projectID, environment), body)
+	return err
+}
+
+func (s *Store) getProjectCurrentRelease(
+	ctx context.Context,
+	projectID string,
+	environment string,
+) (ReleaseRecord, bool, error) {
+	current, ok, err := s.readProjectReleaseCurrent(ctx, projectID, environment)
+	if err != nil || !ok {
+		return ReleaseRecord{}, false, err
+	}
+	release, err := s.GetRelease(ctx, current.ID)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			return ReleaseRecord{}, false, nil
+		}
+		return ReleaseRecord{}, false, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	environment = normalizeEnvironmentName(environment)
+	if strings.TrimSpace(release.ProjectID) != projectID {
+		return ReleaseRecord{}, false, nil
+	}
+	if normalizeEnvironmentName(release.Environment) != environment {
+		return ReleaseRecord{}, false, nil
+	}
+	return release, true, nil
+}
+
 func projectOpsIndexKey(projectID string) string {
 	return kvProjectOpsIndexKeyPrefix + strings.TrimSpace(projectID)
+}
+
+func projectReleaseIndexKey(projectID string, environment string) string {
+	projectID = strings.TrimSpace(projectID)
+	environment = normalizeEnvironmentName(environment)
+	return kvProjectReleaseIndexKeyPrefix + projectID + "/" + environment
+}
+
+func projectReleaseCurrentKey(projectID string, environment string) string {
+	projectID = strings.TrimSpace(projectID)
+	environment = normalizeEnvironmentName(environment)
+	return kvProjectReleaseCurrentKeyPrefix + projectID + "/" + environment
 }

@@ -20,6 +20,7 @@ const dom = {
     buildLatest: document.getElementById("buildLatestBtn"),
     openPromotionModal: document.getElementById("openPromotionModalBtn"),
     journeyNextAction: document.getElementById("journeyNextActionBtn"),
+    refreshReleaseTimeline: document.getElementById("refreshReleaseTimelineBtn"),
 
     createAddEnv: document.getElementById("createAddEnvBtn"),
     createCleanKeys: document.getElementById("createCleanKeysBtn"),
@@ -68,6 +69,7 @@ const dom = {
 
     promotionFrom: document.getElementById("promotionFrom"),
     promotionTo: document.getElementById("promotionTo"),
+    releaseTimelineEnvironment: document.getElementById("releaseTimelineEnvironment"),
 
     deleteConfirm: document.getElementById("deleteConfirmInput"),
     promotionConfirmInput: document.getElementById("promotionConfirmInput"),
@@ -96,6 +98,8 @@ const dom = {
     promotionDraftSummary: document.getElementById("promotionDraftSummary"),
     promotionGuardrail: document.getElementById("promotionGuardrail"),
     promotionPanelStatus: document.getElementById("promotionPanelStatus"),
+    releaseTimelineStatus: document.getElementById("releaseTimelineStatus"),
+    rollbackTargetSummary: document.getElementById("rollbackTargetSummary"),
 
     artifactStats: document.getElementById("artifactStats"),
     buildkitSignal: document.getElementById("buildkitSignal"),
@@ -120,6 +124,7 @@ const dom = {
     opTimeline: document.getElementById("opTimeline"),
     opErrorSurface: document.getElementById("opErrorSurface"),
     opHistory: document.getElementById("opHistory"),
+    releaseTimeline: document.getElementById("releaseTimeline"),
     artifactQuickLinks: document.getElementById("artifactQuickLinks"),
     artifacts: document.getElementById("artifacts"),
     toastStack: document.getElementById("toastStack"),
@@ -288,6 +293,16 @@ const state = {
     historyError: "",
     historyLoadMoreError: "",
     historyNextCursor: "",
+  },
+  releaseTimeline: {
+    loading: false,
+    loadingMore: false,
+    error: "",
+    loadMoreError: "",
+    items: [],
+    nextCursor: "",
+    environment: "",
+    selectedReleaseID: "",
   },
   promotion: {
     fromEnv: "",

@@ -99,6 +99,18 @@ function resetOverview() {
   state.overview.data = null;
 }
 
+function resetReleaseTimeline() {
+  state.releaseTimeline.loading = false;
+  state.releaseTimeline.loadingMore = false;
+  state.releaseTimeline.error = "";
+  state.releaseTimeline.loadMoreError = "";
+  state.releaseTimeline.items = [];
+  state.releaseTimeline.nextCursor = "";
+  state.releaseTimeline.environment = "";
+  state.releaseTimeline.selectedReleaseID = "";
+  dom.inputs.releaseTimelineEnvironment.replaceChildren();
+}
+
 async function loadOverview({ silent = false } = {}) {
   const project = getSelectedProject();
   if (!project) {
@@ -266,6 +278,144 @@ async function loadJourney({ silent = false } = {}) {
   } finally {
     state.journey.loading = false;
     renderJourneyPanel();
+  }
+}
+
+function defaultReleaseTimelineEnvironment(project) {
+  const envs = projectEnvironmentNames(project);
+  for (const candidate of ["prod", "production", "staging", "dev"]) {
+    if (envs.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return envs[0] || "";
+}
+
+function ensureReleaseTimelineSelection(project) {
+  if (!project) {
+    state.releaseTimeline.environment = "";
+    state.releaseTimeline.selectedReleaseID = "";
+    dom.inputs.releaseTimelineEnvironment.replaceChildren();
+    return "";
+  }
+
+  const envs = projectEnvironmentNames(project);
+  dom.inputs.releaseTimelineEnvironment.replaceChildren();
+
+  for (const env of envs) {
+    const option = document.createElement("option");
+    option.value = env;
+    option.textContent = env;
+    dom.inputs.releaseTimelineEnvironment.appendChild(option);
+  }
+
+  if (!envs.includes(state.releaseTimeline.environment)) {
+    state.releaseTimeline.environment = defaultReleaseTimelineEnvironment(project);
+    state.releaseTimeline.selectedReleaseID = "";
+  }
+  dom.inputs.releaseTimelineEnvironment.value = state.releaseTimeline.environment;
+  return state.releaseTimeline.environment;
+}
+
+async function loadReleaseTimeline({ silent = false, append = false } = {}) {
+  const project = getSelectedProject();
+  if (!project) {
+    resetReleaseTimeline();
+    renderReleaseTimelinePanel();
+    return;
+  }
+
+  const environment = ensureReleaseTimelineSelection(project);
+  if (!environment) {
+    state.releaseTimeline.items = [];
+    state.releaseTimeline.nextCursor = "";
+    renderReleaseTimelinePanel();
+    return;
+  }
+
+  if (append && !String(state.releaseTimeline.nextCursor || "").trim()) {
+    return;
+  }
+
+  if (append) {
+    state.releaseTimeline.loadingMore = true;
+    state.releaseTimeline.loadMoreError = "";
+  } else {
+    state.releaseTimeline.loading = true;
+    state.releaseTimeline.error = "";
+  }
+  renderReleaseTimelinePanel();
+
+  try {
+    const query = new URLSearchParams();
+    query.set("environment", environment);
+    query.set("limit", String(operationHistoryPageLimit));
+    if (append) {
+      query.set("cursor", String(state.releaseTimeline.nextCursor || "").trim());
+    }
+
+    const response = await requestAPI(
+      "GET",
+      `/api/projects/${encodeURIComponent(project.id)}/releases?${query.toString()}`
+    );
+    if (getSelectedProject()?.id !== project.id) {
+      return;
+    }
+
+    const items = Array.isArray(response?.items) ? response.items : [];
+    if (append) {
+      const merged = [...state.releaseTimeline.items];
+      const existingIDs = new Set(merged.map((item) => String(item?.id || "").trim()));
+      for (const item of items) {
+        const itemID = String(item?.id || "").trim();
+        if (!itemID || existingIDs.has(itemID)) {
+          continue;
+        }
+        existingIDs.add(itemID);
+        merged.push(item);
+      }
+      state.releaseTimeline.items = merged;
+    } else {
+      state.releaseTimeline.items = items;
+      if (!items.some((item) => String(item?.id || "").trim() === state.releaseTimeline.selectedReleaseID)) {
+        state.releaseTimeline.selectedReleaseID = "";
+      }
+    }
+
+    state.releaseTimeline.nextCursor = String(response?.next_cursor || "").trim();
+    renderReleaseTimelinePanel();
+
+    if (!silent && !append) {
+      setStatus(`Release timeline refreshed for ${environment}.`, "success");
+    }
+  } catch (error) {
+    if (getSelectedProject()?.id !== project.id) {
+      return;
+    }
+    if (append) {
+      state.releaseTimeline.loadMoreError = error.message;
+      renderReleaseTimelinePanel();
+      if (!silent) {
+        throw error;
+      }
+      return;
+    }
+
+    state.releaseTimeline.error = error.message;
+    renderReleaseTimelinePanel();
+    if (!silent) {
+      throw error;
+    }
+  } finally {
+    if (getSelectedProject()?.id !== project.id) {
+      return;
+    }
+    if (append) {
+      state.releaseTimeline.loadingMore = false;
+    } else {
+      state.releaseTimeline.loading = false;
+    }
+    renderReleaseTimelinePanel();
   }
 }
 

@@ -95,6 +95,20 @@ type Operation struct {
 	Steps     []OpStep          `json:"steps"`
 }
 
+type ReleaseRecord struct {
+	ID            string        `json:"id"`
+	ProjectID     string        `json:"project_id"`
+	Environment   string        `json:"environment"`
+	OpID          string        `json:"op_id"`
+	OpKind        OperationKind `json:"op_kind"`
+	DeliveryStage DeliveryStage `json:"delivery_stage"`
+	FromEnv       string        `json:"from_env,omitempty"`
+	ToEnv         string        `json:"to_env,omitempty"`
+	Image         string        `json:"image,omitempty"`
+	RenderedPath  string        `json:"rendered_path,omitempty"`
+	CreatedAt     time.Time     `json:"created_at"`
+}
+
 var (
 	projectNameRe  = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	runtimeRe      = regexp.MustCompile(`^[a-z0-9]+([_-][a-z0-9]+)*(\.[0-9]+(\.[0-9]+)*)?$`)

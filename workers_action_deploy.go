@@ -131,28 +131,34 @@ func deploymentWorkerAction(
 	)
 
 	if msg.Kind != OpDeploy {
-		err := fmt.Errorf("deployment worker only handles %s operations", OpDeploy)
-		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-		return res, err
+		return failDeploymentStep(
+			ctx,
+			store,
+			msg,
+			res,
+			fmt.Errorf("deployment worker only handles %s operations", OpDeploy),
+			nil,
+		)
 	}
 
 	targetEnv := resolveDeployEnvironment(msg.DeployEnv)
 	if targetEnv != defaultDeployEnvironment {
-		err := fmt.Errorf(
-			"deployment environment %q not supported; use promotion/release for higher environments",
-			targetEnv,
+		return failDeploymentStep(
+			ctx,
+			store,
+			msg,
+			res,
+			fmt.Errorf(
+				"deployment environment %q not supported; use promotion/release for higher environments",
+				targetEnv,
+			),
+			nil,
 		)
-		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-		return res, err
 	}
 
 	imageTag, err := readBuildImageTagForDeployment(artifacts, msg.ProjectID)
 	if err != nil {
-		_ = markOpStepEnd(ctx, store, msg.OpID, "deployer", time.Now().UTC(), "", err.Error(), nil)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-		return res, err
+		return failDeploymentStep(ctx, store, msg, res, err, nil)
 	}
 
 	spec := normalizeProjectSpec(msg.Spec)
@@ -166,18 +172,10 @@ func deploymentWorkerAction(
 		targetEnv,
 	)
 	if err != nil {
-		_ = markOpStepEnd(
-			ctx,
-			store,
-			msg.OpID,
-			"deployer",
-			time.Now().UTC(),
-			"",
-			err.Error(),
-			outcome.artifacts,
-		)
-		_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", err.Error())
-		return res, err
+		return failDeploymentStep(ctx, store, msg, res, err, outcome.artifacts)
+	}
+	if err = persistDeployReleaseRecord(ctx, store, artifacts, msg, targetEnv, imageTag); err != nil {
+		return failDeploymentStep(ctx, store, msg, res, err, outcome.artifacts)
 	}
 
 	res.Message = outcome.message
@@ -194,6 +192,62 @@ func deploymentWorkerAction(
 	)
 	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	return res, nil
+}
+
+func failDeploymentStep(
+	ctx context.Context,
+	store *Store,
+	msg ProjectOpMsg,
+	res WorkerResultMsg,
+	stepErr error,
+	artifacts []string,
+) (WorkerResultMsg, error) {
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		msg.OpID,
+		"deployer",
+		time.Now().UTC(),
+		"",
+		stepErr.Error(),
+		artifacts,
+	)
+	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", stepErr.Error())
+	return res, stepErr
+}
+
+func persistDeployReleaseRecord(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	targetEnv string,
+	fallbackImage string,
+) error {
+	deployedImage, err := readRenderedEnvImageTag(artifacts, msg.ProjectID, targetEnv)
+	if err != nil {
+		return err
+	}
+	if deployedImage == "" {
+		deployedImage = strings.TrimSpace(fallbackImage)
+	}
+	return persistReleaseRecord(
+		ctx,
+		store,
+		ReleaseRecord{
+			ID:            "",
+			ProjectID:     msg.ProjectID,
+			Environment:   targetEnv,
+			OpID:          msg.OpID,
+			OpKind:        msg.Kind,
+			DeliveryStage: DeliveryStageDeploy,
+			FromEnv:       "",
+			ToEnv:         targetEnv,
+			Image:         deployedImage,
+			RenderedPath:  filepath.ToSlash(filepath.Join("deploy", targetEnv, "rendered.yaml")),
+			CreatedAt:     time.Now().UTC(),
+		},
+	)
 }
 
 func runManifestApplyForEnvironment(
@@ -522,6 +576,14 @@ func updateProjectReadyState(
 		Message:    "ready",
 	}
 	_ = store.PutProject(ctx, project)
+}
+
+func persistReleaseRecord(ctx context.Context, store *Store, release ReleaseRecord) error {
+	if store == nil {
+		return nil
+	}
+	_, err := store.PutRelease(ctx, release)
+	return err
 }
 
 func runManifestRendererDelete(

@@ -59,6 +59,9 @@ const (
 	projectOpsHistoryCap               = 200
 	projectOpsBackfillDefaultScanLimit = 5000
 	projectOpsBackfillMaxScanLimit     = 20000
+	projectReleaseDefaultLimit         = 20
+	projectReleaseMaxLimit             = 100
+	projectReleaseHistoryCap           = 200
 
 	workerDeliveryAckWait    = 15 * time.Second
 	workerDeliveryFetchWait  = 2 * time.Second

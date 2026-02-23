@@ -119,6 +119,20 @@ function bindEvents() {
     void handleLoadArtifactsClick();
   });
 
+  dom.buttons.refreshReleaseTimeline.addEventListener("click", () => {
+    void loadReleaseTimeline({ silent: false }).catch((error) => {
+      setStatus(`Release timeline unavailable: ${error.message}`, "warning", { toast: true });
+    });
+  });
+
+  dom.inputs.releaseTimelineEnvironment.addEventListener("change", () => {
+    state.releaseTimeline.environment = String(dom.inputs.releaseTimelineEnvironment.value || "").trim().toLowerCase();
+    state.releaseTimeline.selectedReleaseID = "";
+    void loadReleaseTimeline({ silent: true }).catch((error) => {
+      setStatus(`Release timeline unavailable: ${error.message}`, "warning");
+    });
+  });
+
   dom.buttons.copyPreview.addEventListener("click", () => {
     void handleCopyPreviewClick();
   });

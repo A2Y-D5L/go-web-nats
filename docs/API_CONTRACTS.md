@@ -356,6 +356,8 @@ Endpoints:
 - `GET /api/projects/{id}/overview`
 - `GET /api/projects/{id}/journey`
 - `GET /api/projects/{id}/ops`
+- `GET /api/projects/{id}/releases`
+- `GET /api/projects/{id}/releases/{release_id}`
 
 `POST` and `PUT` accept `ProjectSpec` directly as request JSON.
 
@@ -503,6 +505,57 @@ Response:
   "next_cursor": "op-id"
 }
 ```
+
+### Project Release Timeline
+
+Endpoints:
+
+- `GET /api/projects/{id}/releases`
+- `GET /api/projects/{id}/releases/{release_id}`
+
+Query params for list:
+
+- `environment` (required; must resolve to a project environment)
+- `limit` (optional, default `20`, max `100`)
+- `cursor` (optional, release id cursor returned by previous page)
+
+Purpose:
+
+- Returns immutable release records per environment so clients can render delivery timelines and prepare rollback targets.
+
+List response:
+
+```json
+{
+  "items": [
+    {
+      "id": "release-id",
+      "project_id": "project-id",
+      "environment": "staging",
+      "op_id": "op-id",
+      "op_kind": "deploy | promote | release",
+      "delivery_stage": "deploy | promote | release",
+      "from_env": "dev",
+      "to_env": "staging",
+      "image": "example.local/my-app:abc123",
+      "rendered_path": "promotions/dev-to-staging/rendered.yaml",
+      "created_at": "2026-02-23T12:34:56Z"
+    }
+  ],
+  "next_cursor": "release-id"
+}
+```
+
+Detail response:
+
+- Returns the same release record shape as one list item.
+
+Common status codes:
+
+- Success: `200 OK`
+- Validation errors: `400 Bad Request`
+- Not found (project or release): `404 Not Found`
+- Data unavailable: `500 Internal Server Error`
 
 ## Operations
 

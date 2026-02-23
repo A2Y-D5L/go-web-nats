@@ -66,6 +66,18 @@ func promotionWorkerAction(
 		return failPromotionStep(ctx, store, msg, res, err, outcome.artifacts)
 	}
 
+	if err = persistTransitionReleaseRecord(
+		ctx,
+		store,
+		artifacts,
+		msg,
+		resolvedFromEnv,
+		resolvedToEnv,
+		transition,
+	); err != nil {
+		return failPromotionStep(ctx, store, msg, res, err, outcome.artifacts)
+	}
+
 	res.Message = outcome.message
 	res.Artifacts = outcome.artifacts
 	_ = markOpStepEnd(
@@ -102,6 +114,44 @@ func failPromotionStep(
 	)
 	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", stepErr.Error())
 	return res, stepErr
+}
+
+func persistTransitionReleaseRecord(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	fromEnv string,
+	toEnv string,
+	transition envTransitionDescriptor,
+) error {
+	targetImage, err := readRenderedEnvImageTag(artifacts, msg.ProjectID, toEnv)
+	if err != nil {
+		return err
+	}
+	return persistReleaseRecord(
+		ctx,
+		store,
+		ReleaseRecord{
+			ID:            "",
+			ProjectID:     msg.ProjectID,
+			Environment:   toEnv,
+			OpID:          msg.OpID,
+			OpKind:        msg.Kind,
+			DeliveryStage: transition.stage,
+			FromEnv:       fromEnv,
+			ToEnv:         toEnv,
+			Image:         targetImage,
+			RenderedPath: filepath.ToSlash(
+				filepath.Join(
+					transition.artifactDir,
+					fmt.Sprintf("%s-to-%s", fromEnv, toEnv),
+					"rendered.yaml",
+				),
+			),
+			CreatedAt: time.Now().UTC(),
+		},
+	)
 }
 
 func validatePromotionRequestEnvironments(

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,23 +87,20 @@ func (a *API) resolveProjectIDFromPath(w http.ResponseWriter, r *http.Request) (
 	}
 	parts := strings.Split(rest, "/")
 	if len(parts) > 1 {
-		if parts[1] == "artifacts" {
+		switch parts[1] {
+		case "artifacts":
 			a.handleProjectArtifacts(w, r)
-			return "", false
-		}
-		if parts[1] == "ops" {
+		case "ops":
 			a.handleProjectOps(w, r)
-			return "", false
-		}
-		if parts[1] == "overview" {
+		case "releases":
+			a.handleProjectReleases(w, r)
+		case "overview":
 			a.handleProjectOverview(w, r)
-			return "", false
-		}
-		if parts[1] == "journey" {
+		case "journey":
 			a.handleProjectJourney(w, r)
-			return "", false
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 		return "", false
 	}
 	projectID := strings.TrimSpace(parts[0])
@@ -197,6 +195,125 @@ func (a *API) getProjectOrWriteError(
 	return Project{}, false
 }
 
+func (a *API) handleProjectReleases(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if a.store == nil {
+		http.Error(w, "release data unavailable", http.StatusInternalServerError)
+		return
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/projects/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/")
+	parts := strings.Split(rest, "/")
+	if len(parts) < projectRelPathPartsMin || parts[1] != "releases" {
+		http.NotFound(w, r)
+		return
+	}
+
+	projectID := strings.TrimSpace(parts[0])
+	if projectID == "" {
+		http.Error(w, "bad project id", http.StatusBadRequest)
+		return
+	}
+	project, ok := a.getProjectOrWriteError(w, r, projectID)
+	if !ok {
+		return
+	}
+
+	if len(parts) == projectRelPathPartsMin {
+		a.handleProjectReleaseList(w, r, project)
+		return
+	}
+	if len(parts) == projectRelPathPartsMin+1 {
+		a.handleProjectReleaseDetail(w, r, projectID, strings.TrimSpace(parts[2]))
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (a *API) handleProjectReleaseList(w http.ResponseWriter, r *http.Request, project Project) {
+	environmentRaw := normalizeEnvironmentName(r.URL.Query().Get("environment"))
+	if environmentRaw == "" {
+		http.Error(w, "environment query parameter required", http.StatusBadRequest)
+		return
+	}
+	environment, ok := resolveProjectEnvironmentName(project.Spec, environmentRaw)
+	if !ok {
+		http.Error(
+			w,
+			fmt.Sprintf("environment %q is not defined for project", environmentRaw),
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	limit, err := parseProjectReleaseLimitParam(r.URL.Query().Get("limit"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	page, err := a.store.listProjectReleases(
+		r.Context(),
+		project.ID,
+		environment,
+		projectReleaseListQuery{
+			Limit:  limit,
+			Cursor: r.URL.Query().Get("cursor"),
+		},
+	)
+	if err != nil {
+		http.Error(w, "failed to list releases", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, projectReleaseListResponse(page))
+}
+
+func (a *API) handleProjectReleaseDetail(
+	w http.ResponseWriter,
+	r *http.Request,
+	projectID string,
+	releaseID string,
+) {
+	if releaseID == "" {
+		http.Error(w, "bad release id", http.StatusBadRequest)
+		return
+	}
+	release, err := a.store.GetRelease(r.Context(), releaseID)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to read release", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(release.ProjectID) != strings.TrimSpace(projectID) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, release)
+}
+
+func parseProjectReleaseLimitParam(raw string) (int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return projectReleaseDefaultLimit, nil
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("bad limit")
+	}
+	return normalizeProjectReleaseLimit(parsed), nil
+}
+
 type projectJourney struct {
 	Summary        string                     `json:"summary"`
 	Milestones     []projectJourneyMilestone  `json:"milestones"`
@@ -259,6 +376,11 @@ type projectOverviewEnv struct {
 	ConfigReadiness  string     `json:"config_readiness"`
 	SecretsReadiness string     `json:"secrets_readiness"`
 	LastDeliveryAt   *time.Time `json:"last_delivery_at,omitempty"`
+}
+
+type projectReleaseListResponse struct {
+	Items      []ReleaseRecord `json:"items"`
+	NextCursor string          `json:"next_cursor,omitempty"`
 }
 
 type transitionArtifact struct {
