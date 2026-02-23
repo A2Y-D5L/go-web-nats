@@ -829,6 +829,10 @@ function ensurePromotionSelections(project) {
   if (!project) {
     state.promotion.fromEnv = "";
     state.promotion.toEnv = "";
+    state.promotion.preview = null;
+    state.promotion.previewError = "";
+    state.promotion.previewLoading = false;
+    state.promotion.blockers = [];
     dom.inputs.promotionFrom.replaceChildren();
     dom.inputs.promotionTo.replaceChildren();
     return;
@@ -985,11 +989,19 @@ function renderPromotionPanel() {
   const project = getSelectedProject();
   ensurePromotionSelections(project);
 
+  const previousFrom = state.promotion.fromEnv;
+  const previousTo = state.promotion.toEnv;
   const fromEnv = dom.inputs.promotionFrom.value;
   const toEnv = dom.inputs.promotionTo.value;
 
   state.promotion.fromEnv = fromEnv;
   state.promotion.toEnv = toEnv;
+  if (previousFrom !== fromEnv || previousTo !== toEnv) {
+    state.promotion.preview = null;
+    state.promotion.previewError = "";
+    state.promotion.previewLoading = false;
+    state.promotion.blockers = [];
+  }
 
   const validation = promotionValidation(project, fromEnv, toEnv);
   state.promotion.sourceImage = validation.sourceImage || "";

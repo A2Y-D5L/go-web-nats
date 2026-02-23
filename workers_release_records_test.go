@@ -166,6 +166,11 @@ func TestWorkers_PromotionAndReleaseSuccessWriteReleaseRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run promote worker action: %v", err)
 	}
+	promoteOp, err := fixture.store.GetOp(context.Background(), promoteOpID)
+	if err != nil {
+		t.Fatalf("get promote op for staged steps: %v", err)
+	}
+	assertPromotionStageSteps(t, promoteOp.Steps)
 
 	stagingPage, err := fixture.store.listProjectReleases(
 		context.Background(),
@@ -222,6 +227,11 @@ func TestWorkers_PromotionAndReleaseSuccessWriteReleaseRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run release worker action: %v", err)
 	}
+	releaseOp, err := fixture.store.GetOp(context.Background(), releaseOpID)
+	if err != nil {
+		t.Fatalf("get release op for staged steps: %v", err)
+	}
+	assertPromotionStageSteps(t, releaseOp.Steps)
 
 	prodPage, err := fixture.store.listProjectReleases(
 		context.Background(),
@@ -254,5 +264,30 @@ func TestWorkers_PromotionAndReleaseSuccessWriteReleaseRecords(t *testing.T) {
 			"releases/staging-to-prod/rendered.yaml",
 			prodRecord.RenderedPath,
 		)
+	}
+}
+
+func assertPromotionStageSteps(t *testing.T, steps []OpStep) {
+	t.Helper()
+	expected := []string{
+		promotionStepPlan,
+		promotionStepRender,
+		promotionStepCommit,
+		promotionStepFinalize,
+	}
+	if len(steps) != len(expected) {
+		t.Fatalf("expected %d staged steps, got %d", len(expected), len(steps))
+	}
+	for idx, want := range expected {
+		got := steps[idx]
+		if got.Worker != want {
+			t.Fatalf("expected step %d worker %q, got %q", idx+1, want, got.Worker)
+		}
+		if got.EndedAt.IsZero() {
+			t.Fatalf("expected step %q to be completed", want)
+		}
+		if got.Error != "" {
+			t.Fatalf("expected step %q to succeed, got error %q", want, got.Error)
+		}
 	}
 }

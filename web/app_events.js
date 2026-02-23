@@ -139,7 +139,7 @@ function bindEvents() {
 
   dom.buttons.openPromotionModal.addEventListener("click", (event) => {
     event.preventDefault();
-    openPromotionConfirmation();
+    void openPromotionConfirmation();
   });
 
   dom.buttons.createModalClose.addEventListener("click", () => closeModal("create"));

@@ -47,7 +47,95 @@ function closeAllModals() {
   state.ui.modal = "none";
 }
 
-function openPromotionConfirmation() {
+function normalizedPromotionPreviewEntries(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function promotionPreviewHasBlockers() {
+  return normalizedPromotionPreviewEntries(state.promotion.blockers).length > 0;
+}
+
+function renderPromotionPreviewDetails(project, validation, preview) {
+  const actionLabel = state.promotion.action === "release" ? "Release" : "Promotion";
+  const blockers = normalizedPromotionPreviewEntries(preview?.blockers);
+  const gates = normalizedPromotionPreviewEntries(preview?.gates);
+  const rolloutPlan = normalizedPromotionPreviewEntries(preview?.rollout_plan);
+  const sourceRelease = preview?.source_release || null;
+  const targetRelease = preview?.target_release || null;
+
+  const sourceImage =
+    validation.sourceImage || sourceRelease?.image || state.promotion.sourceImage || "unknown (not delivered)";
+  const targetImage =
+    validation.targetImage || targetRelease?.image || state.promotion.targetImage || "not currently deployed";
+
+  dom.text.promotionSummary.replaceChildren(
+    makeElem("p", "", `App ${project.spec?.name || project.id}`),
+    makeElem("p", "", `Action ${actionLabel}`),
+    makeElem("p", "", `From ${state.promotion.fromEnv || "-"}`),
+    makeElem("p", "", `To ${state.promotion.toEnv || "-"}`),
+    makeElem("p", "", `Source image ${sourceImage}`),
+    makeElem("p", "", `Target current image ${targetImage}`),
+    makeElem("p", "", `Summary ${String(preview?.change_summary || validation.reason || "Preview unavailable.")}`)
+  );
+
+  dom.containers.promotionPreviewGates.replaceChildren();
+  dom.containers.promotionPreviewBlockers.replaceChildren();
+  dom.containers.promotionRolloutPlan.replaceChildren();
+
+  if (gates.length) {
+    dom.containers.promotionPreviewGates.appendChild(makeElem("p", "promotion-preview-title", "Gates"));
+    const gateList = makeElem("ul", "promotion-preview-items");
+    for (const gate of gates) {
+      const status = String(gate?.status || "warning").trim().toLowerCase();
+      const row = makeElem("li", `promotion-preview-item promotion-preview-item--${status}`);
+      const title = String(gate?.title || gate?.code || "Gate").trim();
+      const detail = String(gate?.detail || "").trim();
+      row.append(makeElem("span", "promotion-preview-label", `${title} (${status})`));
+      if (detail) {
+        row.append(makeElem("span", "promotion-preview-meta", detail));
+      }
+      gateList.appendChild(row);
+    }
+    dom.containers.promotionPreviewGates.appendChild(gateList);
+  }
+
+  if (blockers.length) {
+    dom.containers.promotionPreviewBlockers.appendChild(makeElem("p", "promotion-preview-title", "Blockers"));
+    const blockerList = makeElem("ul", "promotion-preview-items");
+    for (const blocker of blockers) {
+      const row = makeElem("li", "promotion-preview-item promotion-preview-item--blocked");
+      const message = String(blocker?.message || blocker?.code || "Blocked").trim();
+      const why = String(blocker?.why || "").trim();
+      const next = String(blocker?.next_action || "").trim();
+      row.append(makeElem("span", "promotion-preview-label", message));
+      if (why) {
+        row.append(makeElem("span", "promotion-preview-meta", why));
+      }
+      if (next) {
+        row.append(makeElem("span", "promotion-preview-meta", `Next: ${next}`));
+      }
+      blockerList.appendChild(row);
+    }
+    dom.containers.promotionPreviewBlockers.appendChild(blockerList);
+  }
+
+  if (rolloutPlan.length) {
+    dom.containers.promotionRolloutPlan.appendChild(makeElem("p", "promotion-preview-title", "Rollout plan"));
+    const planList = makeElem("ol", "promotion-preview-items");
+    for (const stage of rolloutPlan) {
+      planList.appendChild(makeElem("li", "promotion-preview-item", String(stage || "").trim()));
+    }
+    dom.containers.promotionRolloutPlan.appendChild(planList);
+  }
+
+  if (blockers.length) {
+    dom.text.promotionPreviewStatus.textContent = "Preview blocked. Resolve blockers before confirming this move.";
+    return;
+  }
+  dom.text.promotionPreviewStatus.textContent = "Preview passed. Confirm the phrase to start this move.";
+}
+
+async function openPromotionConfirmation() {
   const project = getSelectedProject();
   if (!project) {
     setStatus("Select an app first.", "warning");
@@ -63,29 +151,60 @@ function openPromotionConfirmation() {
     return;
   }
 
+  state.promotion.previewLoading = true;
+  state.promotion.previewError = "";
+  state.promotion.blockers = [];
+  state.promotion.preview = null;
+
+  setStatus(
+    `Running ${transitionVerb(validation.action || transitionActionForTarget(toEnv))} preview for ${fromEnv} -> ${toEnv}...`,
+    "info"
+  );
+
+  let preview;
+  try {
+    preview = await requestAPI("POST", "/api/events/promotion/preview", {
+      project_id: project.id,
+      from_env: fromEnv,
+      to_env: toEnv,
+    });
+  } catch (error) {
+    state.promotion.previewLoading = false;
+    state.promotion.previewError = error.message;
+    state.promotion.preview = null;
+    state.promotion.blockers = [];
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
+    return;
+  }
+
+  state.promotion.previewLoading = false;
+  state.promotion.previewError = "";
+  state.promotion.preview = preview && typeof preview === "object" ? preview : {};
+  state.promotion.blockers = normalizedPromotionPreviewEntries(state.promotion.preview?.blockers);
+
   state.promotion.sourceImage = validation.sourceImage;
   state.promotion.targetImage = validation.targetImage;
-  state.promotion.action = validation.action || transitionActionForTarget(toEnv);
+  state.promotion.action = String(
+    state.promotion.preview?.action || validation.action || transitionActionForTarget(toEnv)
+  ).toLowerCase();
   state.promotion.confirmationPhrase = `${state.promotion.action} ${fromEnv} to ${toEnv}`;
   const actionLabel = state.promotion.action === "release" ? "Release" : "Promotion";
   dom.text.promotionModalTitle.textContent =
     state.promotion.action === "release" ? "Confirm release" : "Confirm promotion";
   dom.buttons.promotionConfirm.textContent =
     state.promotion.action === "release" ? "Release environment" : "Promote environment";
-
-  dom.text.promotionSummary.replaceChildren(
-    makeElem("p", "", `App ${project.spec?.name || project.id}`),
-    makeElem("p", "", `Action ${actionLabel}`),
-    makeElem("p", "", `From ${fromEnv}`),
-    makeElem("p", "", `To ${toEnv}`),
-    makeElem("p", "", `Source image ${validation.sourceImage || "unknown"}`),
-    makeElem("p", "", `Target current image ${validation.targetImage || "unknown"}`),
-    makeElem("p", "", `Outputs loaded ${state.artifacts.loaded ? "yes" : "no"}`)
-  );
+  renderPromotionPreviewDetails(project, validation, state.promotion.preview);
 
   dom.inputs.promotionConfirmInput.value = "";
   syncPromotionConfirmationState();
   openModal("promotion");
+  if (promotionPreviewHasBlockers()) {
+    setStatus(`${actionLabel} preview found blockers. Resolve blockers before confirming.`, "warning", {
+      toast: true,
+    });
+    return;
+  }
+  setStatus(`${actionLabel} preview is ready. Confirm to proceed.`, "success");
 }
 
 function stopOperationMonitor({ clearPayload = false } = {}) {
@@ -787,7 +906,7 @@ async function handleDeployDevClick() {
 
 async function handlePromotionFormSubmit(event) {
   event.preventDefault();
-  openPromotionConfirmation();
+  await openPromotionConfirmation();
 }
 
 async function handlePromotionConfirmSubmit(event) {
@@ -808,6 +927,19 @@ async function handlePromotionConfirmSubmit(event) {
     closeModal("promotion");
     return;
   }
+  if (state.promotion.previewLoading) {
+    setStatus("Transition preview is still running. Wait for it to finish.", "warning");
+    return;
+  }
+  if (!state.promotion.preview) {
+    setStatus("Transition preview is unavailable. Review move again before confirming.", "warning", { toast: true });
+    return;
+  }
+  if (promotionPreviewHasBlockers()) {
+    setStatus("Preview has blockers. Resolve blockers before confirming this move.", "warning", { toast: true });
+    syncPromotionConfirmationState();
+    return;
+  }
 
   const typed = String(dom.inputs.promotionConfirmInput.value || "").trim();
   if (typed !== state.promotion.confirmationPhrase) {
@@ -816,7 +948,9 @@ async function handlePromotionConfirmSubmit(event) {
     return;
   }
 
-  const action = validation.action || transitionActionForTarget(toEnv);
+  const action = String(state.promotion.action || validation.action || transitionActionForTarget(toEnv))
+    .trim()
+    .toLowerCase();
   const actionLabel = action === "release" ? "Release" : "Promotion";
   setStatus(`${actionLabel} ${fromEnv} to ${toEnv}...`, "warning");
 
@@ -932,7 +1066,7 @@ async function handleJourneyNextActionClick() {
     state.promotion.fromEnv = fromEnv;
     state.promotion.toEnv = toEnv;
     renderPromotionPanel();
-    openPromotionConfirmation();
+    await openPromotionConfirmation();
     return;
   }
 

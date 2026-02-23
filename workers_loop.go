@@ -425,7 +425,7 @@ func completedWorkerResultForDelivery(
 	}
 	for i := len(op.Steps) - 1; i >= 0; i-- {
 		step := op.Steps[i]
-		if step.Worker != workerName || step.EndedAt.IsZero() {
+		if !workerStepMatchesDelivery(step.Worker, workerName) || step.EndedAt.IsZero() {
 			continue
 		}
 		message := strings.TrimSpace(step.Message)
@@ -442,6 +442,15 @@ func completedWorkerResultForDelivery(
 		return finalizeWorkerResult(opMsg, workerName, res), true, nil
 	}
 	return WorkerResultMsg{}, false, nil
+}
+
+func workerStepMatchesDelivery(stepWorker string, workerName string) bool {
+	stepWorker = strings.TrimSpace(stepWorker)
+	workerName = strings.TrimSpace(workerName)
+	if stepWorker == "" || workerName == "" {
+		return false
+	}
+	return stepWorker == workerName || strings.HasPrefix(stepWorker, workerName+".")
 }
 
 func workerRetryOrPoison(

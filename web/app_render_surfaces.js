@@ -413,10 +413,18 @@ function syncDeleteConfirmationState() {
 function syncPromotionConfirmationState() {
   const expected = state.promotion.confirmationPhrase;
   const typed = String(dom.inputs.promotionConfirmInput.value || "").trim();
-  const valid = Boolean(expected) && typed === expected;
+  const hasBlockers = promotionPreviewHasBlockers();
+  const valid = Boolean(expected) && typed === expected && !state.promotion.previewLoading && !hasBlockers;
 
   dom.buttons.promotionConfirm.disabled = !valid;
-  dom.text.promotionConfirmHint.textContent = expected
-    ? `Type "${expected}" exactly to confirm.`
-    : "Move summary unavailable.";
+  if (state.promotion.previewLoading) {
+    dom.text.promotionConfirmHint.textContent = "Preview in progress. Confirmation unlocks when preview completes.";
+    return;
+  }
+  if (hasBlockers) {
+    dom.text.promotionConfirmHint.textContent =
+      "Confirmation disabled while preview blockers are present. Resolve blockers first.";
+    return;
+  }
+  dom.text.promotionConfirmHint.textContent = expected ? `Type "${expected}" exactly to confirm.` : "Move summary unavailable.";
 }

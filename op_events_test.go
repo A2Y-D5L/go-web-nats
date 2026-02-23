@@ -230,3 +230,64 @@ func TestNewOpBootstrapSnapshotUsesTerminalStateFromStoredOp(t *testing.T) {
 		t.Fatalf("expected bootstrap artifacts from latest step, got %d", len(payload.Artifacts))
 	}
 }
+
+func TestOpTotalStepsForPromotionAndRelease(t *testing.T) {
+	t.Parallel()
+
+	if got := opTotalSteps(OpPromote); got != opTotalStepsTransition {
+		t.Fatalf("expected promote total steps %d, got %d", opTotalStepsTransition, got)
+	}
+	if got := opTotalSteps(OpRelease); got != opTotalStepsTransition {
+		t.Fatalf("expected release total steps %d, got %d", opTotalStepsTransition, got)
+	}
+}
+
+func TestOpProgressPercentForPromotionStages(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	op := Operation{
+		ID:        "op-progress-promote",
+		Kind:      OpPromote,
+		ProjectID: "project-progress-promote",
+		Delivery: DeliveryLifecycle{
+			Stage:       DeliveryStagePromote,
+			Environment: "",
+			FromEnv:     "dev",
+			ToEnv:       "staging",
+		},
+		Requested: now.Add(-2 * time.Minute),
+		Finished:  time.Time{},
+		Status:    opStatusRunning,
+		Error:     "",
+		Steps: []OpStep{
+			{
+				Worker:    promotionStepPlan,
+				StartedAt: now.Add(-90 * time.Second),
+				EndedAt:   now.Add(-89 * time.Second),
+				Message:   "planned transition",
+				Error:     "",
+				Artifacts: nil,
+			},
+			{
+				Worker:    promotionStepRender,
+				StartedAt: now.Add(-75 * time.Second),
+				EndedAt:   now.Add(-70 * time.Second),
+				Message:   "rendered transition manifests",
+				Error:     "",
+				Artifacts: []string{"promotions/dev-to-staging/rendered.yaml"},
+			},
+			{
+				Worker:    promotionStepCommit,
+				StartedAt: now.Add(-60 * time.Second),
+				EndedAt:   time.Time{},
+				Message:   "committing transition manifests",
+				Error:     "",
+				Artifacts: nil,
+			},
+		},
+	}
+	if got := opProgressPercent(op); got != 50 {
+		t.Fatalf("expected progress 50 for 2/4 finished promotion steps, got %d", got)
+	}
+}

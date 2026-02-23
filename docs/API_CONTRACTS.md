@@ -210,6 +210,90 @@ Conflict response (project has a queued/running operation):
 
 ## Promotion Events
 
+### Promotion Preview
+
+Endpoint:
+
+- `POST /api/events/promotion/preview`
+
+Request body:
+
+```json
+{
+  "project_id": "project-id",
+  "from_env": "dev",
+  "to_env": "staging"
+}
+```
+
+Purpose:
+
+- Returns a preflight preview for promotion/release transitions before execution.
+
+Response fields:
+
+- `action`: `promote | release`
+- `source_release` (when available)
+- `target_release` (when available)
+- `change_summary`
+- `gates[]` with `status`: `passed | blocked | warning`
+- `blockers[]` with:
+  - `code`
+  - `message`
+  - `why`
+  - `next_action`
+- `rollout_plan[]` ordered stage names
+
+Current blocker codes:
+
+- `active_operation`
+- `invalid_transition`
+- `source_missing_image`
+- `source_not_delivered`
+- `target_unavailable`
+
+Success response:
+
+- Status: `200 OK`
+
+```json
+{
+  "action": "promote",
+  "source_release": {
+    "id": "release-source-id",
+    "environment": "dev",
+    "image": "example.local/my-app:abc123",
+    "op_kind": "deploy",
+    "delivery_stage": "deploy",
+    "created_at": "2026-02-22T12:34:56Z"
+  },
+  "target_release": {
+    "id": "release-target-id",
+    "environment": "staging",
+    "image": "example.local/my-app:prev",
+    "op_kind": "promote",
+    "delivery_stage": "promote",
+    "created_at": "2026-02-21T11:20:00Z"
+  },
+  "change_summary": "Promote image \"example.local/my-app:abc123\" from dev to staging (target currently \"example.local/my-app:prev\").",
+  "gates": [
+    {
+      "code": "active_operation",
+      "title": "No active operation in progress",
+      "status": "passed",
+      "detail": "Transitions should start only when the project has no queued or running operation."
+    }
+  ],
+  "blockers": [],
+  "rollout_plan": ["promoter.plan", "promoter.render", "promoter.commit", "promoter.finalize"]
+}
+```
+
+Error responses:
+
+- Invalid json or missing `project_id`: `400 Bad Request`
+- Project not found: `404 Not Found`
+
 Endpoint:
 
 - `POST /api/events/promotion`
@@ -644,6 +728,13 @@ Payload enrichment fields (when available):
   - `from_env`
   - `to_env`
 - `hint`
+
+Promotion/release staged worker order:
+
+- `promoter.plan`
+- `promoter.render`
+- `promoter.commit`
+- `promoter.finalize`
 
 ## Artifacts
 

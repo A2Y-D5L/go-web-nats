@@ -110,6 +110,7 @@ const dom = {
     deleteConfirmHint: document.getElementById("deleteConfirmHint"),
     promotionModalTitle: document.getElementById("promotionModalTitle"),
     promotionSummary: document.getElementById("promotionSummary"),
+    promotionPreviewStatus: document.getElementById("promotionPreviewStatus"),
     promotionConfirmHint: document.getElementById("promotionConfirmHint"),
 
     opRaw: document.getElementById("lastOp"),
@@ -130,6 +131,9 @@ const dom = {
     toastStack: document.getElementById("toastStack"),
     landingPanel: document.getElementById("landingPanel"),
     workspaceShell: document.getElementById("workspaceShell"),
+    promotionPreviewGates: document.getElementById("promotionPreviewGates"),
+    promotionPreviewBlockers: document.getElementById("promotionPreviewBlockers"),
+    promotionRolloutPlan: document.getElementById("promotionRolloutPlan"),
   },
   envEditors: {
     create: document.getElementById("createEnvList"),
@@ -196,8 +200,8 @@ const workerOrderByKind = {
   delete: ["registrar", "repoBootstrap", "imageBuilder", "manifestRenderer"],
   ci: ["imageBuilder", "manifestRenderer"],
   deploy: ["deployer"],
-  promote: ["promoter"],
-  release: ["promoter"],
+  promote: ["promoter.plan", "promoter.render", "promoter.commit", "promoter.finalize"],
+  release: ["promoter.plan", "promoter.render", "promoter.commit", "promoter.finalize"],
 };
 
 const workerLabelByName = {
@@ -207,6 +211,10 @@ const workerLabelByName = {
   manifestRenderer: "Prepare deployment manifests",
   deployer: "Deliver environment config",
   promoter: "Move release between environments",
+  "promoter.plan": "Plan transition and validate source",
+  "promoter.render": "Render target manifests",
+  "promoter.commit": "Commit manifests to repo",
+  "promoter.finalize": "Persist release record",
 };
 
 const operationLabelByKind = {
@@ -313,6 +321,10 @@ const state = {
     ready: false,
     action: "promote",
     confirmationPhrase: "",
+    preview: null,
+    previewLoading: false,
+    previewError: "",
+    blockers: [],
   },
   ui: {
     modal: "none",

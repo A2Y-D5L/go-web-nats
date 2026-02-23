@@ -8,110 +8,313 @@ import (
 	"time"
 )
 
+const (
+	promotionStepPlan     = "promoter.plan"
+	promotionStepRender   = "promoter.render"
+	promotionStepCommit   = "promoter.commit"
+	promotionStepFinalize = "promoter.finalize"
+)
+
 func promotionWorkerAction(
 	ctx context.Context,
 	store *Store,
 	artifacts ArtifactStore,
 	msg ProjectOpMsg,
 ) (WorkerResultMsg, error) {
-	stepStart := time.Now().UTC()
 	res := newWorkerResultMsg("promotion worker starting")
-	_ = markOpStepStart(
-		ctx,
-		store,
-		msg.OpID,
-		"promoter",
-		stepStart,
-		"promote/release environment manifests",
-	)
 
 	if msg.Kind != OpPromote && msg.Kind != OpRelease {
-		return failPromotionStep(
+		return failPromotionOperation(
 			ctx,
 			store,
 			msg,
 			res,
 			fmt.Errorf("promotion worker only handles %s and %s operations", OpPromote, OpRelease),
-			nil,
 		)
 	}
 
-	spec := normalizeProjectSpec(msg.Spec)
-	resolvedFromEnv, resolvedToEnv, err := validatePromotionRequestEnvironments(spec, msg)
+	stageOutcome, err := runPromotionLifecycleStages(ctx, store, artifacts, msg)
 	if err != nil {
-		return failPromotionStep(ctx, store, msg, res, err, nil)
-	}
-	transition := transitionDescriptorForRequest(msg.Kind, msg.Delivery, resolvedToEnv)
-	if msg.Kind == OpRelease && transition.stage != DeliveryStageRelease {
-		return failPromotionStep(
-			ctx,
-			store,
-			msg,
-			res,
-			fmt.Errorf("release operations require production target environment (got %q)", resolvedToEnv),
-			nil,
-		)
+		res.Artifacts = stageOutcome.artifacts
+		return failPromotionOperation(ctx, store, msg, res, err)
 	}
 
-	outcome, err := runManifestPromotionForEnvironments(
-		ctx,
-		store,
-		artifacts,
-		msg,
-		spec,
-		resolvedFromEnv,
-		resolvedToEnv,
-	)
-	if err != nil {
-		return failPromotionStep(ctx, store, msg, res, err, outcome.artifacts)
-	}
-
-	if err = persistTransitionReleaseRecord(
-		ctx,
-		store,
-		artifacts,
-		msg,
-		resolvedFromEnv,
-		resolvedToEnv,
-		transition,
-	); err != nil {
-		return failPromotionStep(ctx, store, msg, res, err, outcome.artifacts)
-	}
-
-	res.Message = outcome.message
-	res.Artifacts = outcome.artifacts
-	_ = markOpStepEnd(
-		ctx,
-		store,
-		msg.OpID,
-		"promoter",
-		time.Now().UTC(),
-		res.Message,
-		"",
-		res.Artifacts,
-	)
+	res.Message = stageOutcome.message
+	res.Artifacts = stageOutcome.artifacts
 	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "done", "")
 	return res, nil
 }
 
-func failPromotionStep(
+type promotionExecutionState struct {
+	spec            ProjectSpec
+	resolvedFromEnv string
+	resolvedToEnv   string
+	transition      envTransitionDescriptor
+	imageByEnv      map[string]string
+	sourceImage     string
+	outcome         repoBootstrapOutcome
+}
+
+func runPromotionLifecycleStages(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+) (promotionStageOutcome, error) {
+	state := new(promotionExecutionState)
+	state.spec = normalizeProjectSpec(msg.Spec)
+	state.outcome = newRepoBootstrapOutcome()
+
+	stageOutcome, err := runPromotionStage(
+		ctx,
+		store,
+		msg.OpID,
+		promotionStepPlan,
+		"validate promotion/release request and source image",
+		func() (promotionStageOutcome, error) {
+			return runPromotionPlanStage(artifacts, msg, state)
+		},
+	)
+	if err != nil {
+		return stageOutcome, err
+	}
+
+	stageOutcome, err = runPromotionStage(
+		ctx,
+		store,
+		msg.OpID,
+		promotionStepRender,
+		"render transition manifests for target environment",
+		func() (promotionStageOutcome, error) {
+			return runPromotionRenderStage(artifacts, msg, state)
+		},
+	)
+	if err != nil {
+		return stageOutcome, err
+	}
+
+	stageOutcome, err = runPromotionStage(
+		ctx,
+		store,
+		msg.OpID,
+		promotionStepCommit,
+		"commit transition manifests to repo",
+		func() (promotionStageOutcome, error) {
+			return runPromotionCommitStage(ctx, store, artifacts, msg, state)
+		},
+	)
+	if err != nil {
+		return stageOutcome, err
+	}
+
+	return runPromotionStage(
+		ctx,
+		store,
+		msg.OpID,
+		promotionStepFinalize,
+		"persist transition release record and finalize promotion",
+		func() (promotionStageOutcome, error) {
+			return runPromotionFinalizeStage(ctx, store, artifacts, msg, state)
+		},
+	)
+}
+
+func runPromotionPlanStage(
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	state *promotionExecutionState,
+) (promotionStageOutcome, error) {
+	var err error
+	state.resolvedFromEnv, state.resolvedToEnv, err = validatePromotionRequestEnvironments(state.spec, msg)
+	if err != nil {
+		return promotionStageOutcome{}, err
+	}
+	state.transition = transitionDescriptorForRequest(msg.Kind, msg.Delivery, state.resolvedToEnv)
+	if msg.Kind == OpRelease && state.transition.stage != DeliveryStageRelease {
+		return promotionStageOutcome{}, fmt.Errorf(
+			"release operations require production target environment (got %q)",
+			state.resolvedToEnv,
+		)
+	}
+	state.imageByEnv, err = loadManifestImageTags(artifacts, msg.ProjectID, state.spec)
+	if err != nil {
+		return promotionStageOutcome{}, err
+	}
+	state.sourceImage, err = resolvePromotionSourceImage(
+		artifacts,
+		msg.ProjectID,
+		state.resolvedFromEnv,
+		state.imageByEnv,
+	)
+	if err != nil {
+		return promotionStageOutcome{}, err
+	}
+	if state.sourceImage == "" {
+		return promotionStageOutcome{}, fmt.Errorf(
+			"no promoted image found for source environment %q",
+			state.resolvedFromEnv,
+		)
+	}
+	return promotionStageOutcome{
+		message: fmt.Sprintf(
+			"planned %s transition from %s to %s",
+			state.transition.commitVerb,
+			state.resolvedFromEnv,
+			state.resolvedToEnv,
+		),
+		artifacts: nil,
+	}, nil
+}
+
+func runPromotionRenderStage(
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	state *promotionExecutionState,
+) (promotionStageOutcome, error) {
+	state.imageByEnv[state.resolvedToEnv] = state.sourceImage
+	artifactSets, err := renderTransitionManifests(
+		artifacts,
+		msg.ProjectID,
+		state.spec,
+		state.imageByEnv,
+		state.resolvedToEnv,
+		state.sourceImage,
+		state.transition,
+		state.resolvedFromEnv,
+	)
+	state.outcome.artifacts = artifactSets.allArtifacts()
+	if err != nil {
+		return promotionStageOutcome{
+			message:   "",
+			artifacts: state.outcome.artifacts,
+		}, err
+	}
+	return promotionStageOutcome{
+		message: fmt.Sprintf(
+			"rendered %s manifests from %s to %s",
+			state.transition.commitVerb,
+			state.resolvedFromEnv,
+			state.resolvedToEnv,
+		),
+		artifacts: state.outcome.artifacts,
+	}, nil
+}
+
+func runPromotionCommitStage(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	state *promotionExecutionState,
+) (promotionStageOutcome, error) {
+	err := commitEnvironmentTransitionManifestsRepo(
+		ctx,
+		artifacts,
+		msg.ProjectID,
+		state.transition,
+		state.resolvedFromEnv,
+		state.resolvedToEnv,
+		msg.OpID,
+	)
+	if err != nil {
+		return promotionStageOutcome{
+			message:   "",
+			artifacts: state.outcome.artifacts,
+		}, err
+	}
+	updateProjectReadyState(ctx, store, msg, state.spec)
+	return promotionStageOutcome{
+		message: fmt.Sprintf(
+			"committed %s transition manifests",
+			state.transition.commitVerb,
+		),
+		artifacts: state.outcome.artifacts,
+	}, nil
+}
+
+func runPromotionFinalizeStage(
+	ctx context.Context,
+	store *Store,
+	artifacts ArtifactStore,
+	msg ProjectOpMsg,
+	state *promotionExecutionState,
+) (promotionStageOutcome, error) {
+	err := persistTransitionReleaseRecord(
+		ctx,
+		store,
+		artifacts,
+		msg,
+		state.resolvedFromEnv,
+		state.resolvedToEnv,
+		state.transition,
+	)
+	if err != nil {
+		return promotionStageOutcome{
+			message:   "",
+			artifacts: state.outcome.artifacts,
+		}, err
+	}
+	state.outcome.message = fmt.Sprintf(
+		"%s manifests from %s to %s",
+		state.transition.pastVerb,
+		state.resolvedFromEnv,
+		state.resolvedToEnv,
+	)
+	return promotionStageOutcome(state.outcome), nil
+}
+
+type promotionStageOutcome struct {
+	message   string
+	artifacts []string
+}
+
+func runPromotionStage(
+	ctx context.Context,
+	store *Store,
+	opID string,
+	worker string,
+	startMessage string,
+	run func() (promotionStageOutcome, error),
+) (promotionStageOutcome, error) {
+	startedAt := time.Now().UTC()
+	_ = markOpStepStart(ctx, store, opID, worker, startedAt, startMessage)
+
+	outcome, err := run()
+	endedAt := time.Now().UTC()
+	if err != nil {
+		_ = markOpStepEnd(
+			ctx,
+			store,
+			opID,
+			worker,
+			endedAt,
+			"",
+			err.Error(),
+			outcome.artifacts,
+		)
+		return outcome, err
+	}
+
+	_ = markOpStepEnd(
+		ctx,
+		store,
+		opID,
+		worker,
+		endedAt,
+		outcome.message,
+		"",
+		outcome.artifacts,
+	)
+	return outcome, nil
+}
+
+func failPromotionOperation(
 	ctx context.Context,
 	store *Store,
 	msg ProjectOpMsg,
 	res WorkerResultMsg,
 	stepErr error,
-	artifacts []string,
 ) (WorkerResultMsg, error) {
-	_ = markOpStepEnd(
-		ctx,
-		store,
-		msg.OpID,
-		"promoter",
-		time.Now().UTC(),
-		"",
-		stepErr.Error(),
-		artifacts,
-	)
 	_ = finalizeOp(ctx, store, msg.OpID, msg.ProjectID, msg.Kind, "error", stepErr.Error())
 	return res, stepErr
 }

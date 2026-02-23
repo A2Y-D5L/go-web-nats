@@ -48,6 +48,7 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("/api/projects/", a.handleProjectByID)
 	mux.HandleFunc("/api/events/registration", a.handleRegistrationEvents)
 	mux.HandleFunc("/api/events/deployment", a.handleDeploymentEvents)
+	mux.HandleFunc("/api/events/promotion/preview", a.handlePromotionPreviewEvents)
 	mux.HandleFunc("/api/events/promotion", a.handlePromotionEvents)
 	mux.HandleFunc("/api/events/release", a.handleReleaseEvents)
 	mux.HandleFunc("/api/webhooks/source", a.handleSourceRepoWebhook)
@@ -140,4 +141,37 @@ type ReleaseEvent struct {
 	ProjectID string `json:"project_id"`
 	FromEnv   string `json:"from_env"`
 	ToEnv     string `json:"to_env,omitempty"`
+}
+
+type TransitionPreviewGate struct {
+	Code   string `json:"code"`
+	Title  string `json:"title"`
+	Status string `json:"status"` // passed | blocked | warning
+	Detail string `json:"detail,omitempty"`
+}
+
+type TransitionPreviewBlocker struct {
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	Why        string `json:"why"`
+	NextAction string `json:"next_action"`
+}
+
+type TransitionPreviewRelease struct {
+	ID            string        `json:"id"`
+	Environment   string        `json:"environment"`
+	Image         string        `json:"image,omitempty"`
+	OpKind        OperationKind `json:"op_kind,omitempty"`
+	DeliveryStage DeliveryStage `json:"delivery_stage,omitempty"`
+	CreatedAt     time.Time     `json:"created_at"`
+}
+
+type PromotionPreviewResponse struct {
+	Action        string                     `json:"action"` // promote | release
+	SourceRelease *TransitionPreviewRelease  `json:"source_release,omitempty"`
+	TargetRelease *TransitionPreviewRelease  `json:"target_release,omitempty"`
+	ChangeSummary string                     `json:"change_summary"`
+	Gates         []TransitionPreviewGate    `json:"gates"`
+	Blockers      []TransitionPreviewBlocker `json:"blockers"`
+	RolloutPlan   []string                   `json:"rollout_plan"`
 }

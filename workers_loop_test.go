@@ -529,6 +529,58 @@ func TestWorkers_FinalizeOpMalformedProjectRecordStillEmitsTerminalEvents(t *tes
 	}
 }
 
+func TestWorkers_WorkerStepMatchesDeliveryAcceptsStagedStepNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		stepWorker string
+		workerName string
+		want       bool
+	}{
+		{
+			name:       "exact worker name",
+			stepWorker: "promoter",
+			workerName: "promoter",
+			want:       true,
+		},
+		{
+			name:       "staged worker step",
+			stepWorker: "promoter.render",
+			workerName: "promoter",
+			want:       true,
+		},
+		{
+			name:       "different worker",
+			stepWorker: "deployer",
+			workerName: "promoter",
+			want:       false,
+		},
+		{
+			name:       "empty",
+			stepWorker: "",
+			workerName: "promoter",
+			want:       false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := workerStepMatchesDelivery(tc.stepWorker, tc.workerName)
+			if got != tc.want {
+				t.Fatalf(
+					"workerStepMatchesDelivery(%q, %q) = %t, want %t",
+					tc.stepWorker,
+					tc.workerName,
+					got,
+					tc.want,
+				)
+			}
+		})
+	}
+}
+
 func TestWorkers_FinalWaiterReceivesJetStreamPublishedFinalResult(t *testing.T) {
 	fixture := newWorkerDeliveryFixture(t)
 	defer fixture.Close()

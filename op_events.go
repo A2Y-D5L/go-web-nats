@@ -27,6 +27,7 @@ const (
 	opTotalStepsFullChain   = 4
 	opTotalStepsCIChain     = 2
 	opTotalStepsSingle      = 1
+	opTotalStepsTransition  = 4
 	opProgressMin           = 1
 	opProgressMax           = 100
 )
@@ -483,8 +484,10 @@ func opTotalSteps(kind OperationKind) int {
 		return opTotalStepsFullChain
 	case OpCI:
 		return opTotalStepsCIChain
-	case OpDeploy, OpPromote, OpRelease:
+	case OpDeploy:
 		return opTotalStepsSingle
+	case OpPromote, OpRelease:
+		return opTotalStepsTransition
 	default:
 		return 0
 	}

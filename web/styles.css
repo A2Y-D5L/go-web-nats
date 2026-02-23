@@ -1153,6 +1153,52 @@ a {
   font-size: 0.82rem;
 }
 
+.promotion-preview-list {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.promotion-preview-title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-strong);
+}
+
+.promotion-preview-items {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.promotion-preview-item {
+  display: grid;
+  gap: 0.12rem;
+  color: var(--ink-body);
+  font-size: 0.79rem;
+}
+
+.promotion-preview-item--passed .promotion-preview-label {
+  color: var(--ok-700);
+}
+
+.promotion-preview-item--warning .promotion-preview-label {
+  color: var(--warn-700);
+}
+
+.promotion-preview-item--blocked .promotion-preview-label {
+  color: var(--danger-700);
+}
+
+.promotion-preview-label {
+  font-weight: 600;
+}
+
+.promotion-preview-meta {
+  color: var(--ink-soft);
+}
+
 .toast-stack {
   position: fixed;
   right: var(--space-3);
