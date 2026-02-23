@@ -93,6 +93,53 @@ function resetJourney() {
   state.journey.data = null;
 }
 
+function resetOverview() {
+  state.overview.loading = false;
+  state.overview.error = "";
+  state.overview.data = null;
+}
+
+async function loadOverview({ silent = false } = {}) {
+  const project = getSelectedProject();
+  if (!project) {
+    resetOverview();
+    renderJourneyPanel();
+    renderEnvironmentMatrix();
+    return false;
+  }
+
+  state.overview.loading = true;
+  state.overview.error = "";
+  renderJourneyPanel();
+  renderEnvironmentMatrix();
+
+  try {
+    const response = await requestAPI("GET", `/api/projects/${encodeURIComponent(project.id)}/overview`);
+    state.overview.data = response?.overview && typeof response.overview === "object" ? response.overview : null;
+    renderJourneyPanel();
+    renderEnvironmentMatrix();
+    renderSystemStrip();
+    if (!silent) {
+      setStatus("Overview refreshed.", "success");
+    }
+    return Boolean(state.overview.data);
+  } catch (error) {
+    state.overview.error = error.message;
+    state.overview.data = null;
+    renderJourneyPanel();
+    renderEnvironmentMatrix();
+    renderSystemStrip();
+    if (!silent) {
+      throw error;
+    }
+    return false;
+  } finally {
+    state.overview.loading = false;
+    renderJourneyPanel();
+    renderEnvironmentMatrix();
+  }
+}
+
 async function requestAPI(method, url, body) {
   const options = {
     method,
@@ -177,14 +224,27 @@ async function loadSystemStatus({ silent = false } = {}) {
 async function loadJourney({ silent = false } = {}) {
   const project = getSelectedProject();
   if (!project) {
+    resetOverview();
     resetJourney();
     renderJourneyPanel();
+    renderEnvironmentMatrix();
     renderSystemStrip();
+    return;
+  }
+
+  const overviewLoaded = await loadOverview({ silent: true });
+  if (overviewLoaded) {
+    state.journey.loading = false;
+    state.journey.error = "";
+    if (!silent) {
+      setStatus("Overview refreshed.", "success");
+    }
     return;
   }
 
   state.journey.loading = true;
   state.journey.error = "";
+  state.journey.data = null;
   renderJourneyPanel();
 
   try {
@@ -337,6 +397,44 @@ async function buildEnvironmentSnapshots() {
   state.artifacts.envSnapshots = snapshots;
 }
 
+function snapshotFromOverviewEnvironment(environment) {
+  const envName = String(environment?.name || "").trim().toLowerCase();
+  const deliveryState = String(environment?.delivery_state || "pending");
+  const healthStatus = String(environment?.health_status || "unknown");
+  const deliveryType = String(environment?.delivery_type || "none");
+  const deliveryPath = String(environment?.delivery_path || "").trim();
+
+  let stateName = "pending";
+  if (healthStatus === "failing") {
+    stateName = "warning";
+  } else if (deliveryState === "live") {
+    stateName = "done";
+  } else if (healthStatus === "degraded") {
+    stateName = "running";
+  }
+
+  return {
+    env: envName,
+    state: stateName,
+    imageTag: String(environment?.running_image || "").trim(),
+    imageSource: "overview",
+    hasRendered: Boolean(deliveryPath),
+    hasDeployment: Boolean(deliveryPath),
+    hasService: false,
+    deployRenderedPath: deliveryPath || `deploy/${envName}/rendered.yaml`,
+    deployDeploymentPath: `deploy/${envName}/deployment.yaml`,
+    deployServicePath: `deploy/${envName}/service.yaml`,
+    overlayImagePath: `repos/manifests/overlays/${envName}/image.txt`,
+    transitionEvidence: [],
+    healthStatus,
+    deliveryType,
+    deliveryPath,
+    configReadiness: String(environment?.config_readiness || "unknown"),
+    secretsReadiness: String(environment?.secrets_readiness || "unknown"),
+    lastDeliveryAt: String(environment?.last_delivery_at || "").trim(),
+  };
+}
+
 function createEnvironmentSnapshotCard(snapshot) {
   const card = makeElem("article", "environment-card");
   card.dataset.env = snapshot.env;
@@ -350,6 +448,8 @@ function createEnvironmentSnapshotCard(snapshot) {
         ? "live"
         : snapshot.state === "running"
           ? "in progress"
+          : snapshot.state === "warning"
+            ? "needs attention"
           : "not delivered",
       snapshot.state
     )
@@ -361,6 +461,21 @@ function createEnvironmentSnapshotCard(snapshot) {
     makeElem("span", "", `Image source ${snapshot.imageSource || "not available"}`),
     makeElem("span", "", `Delivery config rendered ${snapshot.hasRendered ? "yes" : "no"}`)
   );
+  if (snapshot.healthStatus) {
+    meta.appendChild(makeElem("span", "", `Health ${snapshot.healthStatus}`));
+  }
+  if (snapshot.deliveryType && snapshot.deliveryType !== "none") {
+    meta.appendChild(makeElem("span", "", `Delivery type ${snapshot.deliveryType}`));
+  }
+  if (snapshot.configReadiness) {
+    meta.appendChild(makeElem("span", "", `Config readiness ${snapshot.configReadiness}`));
+  }
+  if (snapshot.secretsReadiness) {
+    meta.appendChild(makeElem("span", "", `Secrets readiness ${snapshot.secretsReadiness}`));
+  }
+  if (hasRealTimestamp(snapshot.lastDeliveryAt)) {
+    meta.appendChild(makeElem("span", "", `Last delivery ${toLocalTime(snapshot.lastDeliveryAt)}`));
+  }
 
   if (transitionEvidence.length) {
     const label = transitionEvidence.map((edge) => `${edge.action} ${edge.from}→${edge.to}`).join(", ");
@@ -372,7 +487,8 @@ function createEnvironmentSnapshotCard(snapshot) {
   const links = makeElem("div", "environment-links");
 
   const maybeLink = (path, label) => {
-    if (!state.artifacts.files.includes(path)) return;
+    if (!path) return;
+    if (state.artifacts.loaded && !state.artifacts.files.includes(path)) return;
 
     const anchor = makeElem("a", "link-chip", label);
     anchor.href = artifactUrl(getSelectedProject().id, path);
@@ -401,6 +517,24 @@ function renderEnvironmentMatrix() {
 
   if (!project) {
     renderEmptyState(container, "Select an app to inspect environment outcomes.");
+    return;
+  }
+
+  const overview = currentOverview();
+  if (state.overview.loading && !overview) {
+    renderEmptyState(container, "Loading server overview for environments...");
+    return;
+  }
+
+  if (overview) {
+    const environments = Array.isArray(overview.environments) ? overview.environments : [];
+    if (!environments.length) {
+      renderEmptyState(container, "No environments available in overview yet.");
+      return;
+    }
+    for (const environment of environments) {
+      container.appendChild(createEnvironmentSnapshotCard(snapshotFromOverviewEnvironment(environment)));
+    }
     return;
   }
 

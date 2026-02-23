@@ -353,6 +353,7 @@ Endpoints:
 - `GET /api/projects/{id}`
 - `PUT /api/projects/{id}`
 - `DELETE /api/projects/{id}`
+- `GET /api/projects/{id}/overview`
 - `GET /api/projects/{id}/journey`
 - `GET /api/projects/{id}/ops`
 
@@ -425,6 +426,46 @@ Response:
   }
 }
 ```
+
+### Project Overview
+
+Endpoint:
+
+- `GET /api/projects/{id}/overview`
+
+Purpose:
+
+- Returns a server-owned read model for workspace delivery status with deterministic environment ordering. This payload is intended as the primary source for environment map/journey summaries in the UI.
+
+Response:
+
+```json
+{
+  "project": {},
+  "overview": {
+    "summary": "Delivery is underway: 1 of 3 environments are live.",
+    "environments": [
+      {
+        "name": "dev",
+        "health_status": "healthy | degraded | failing | unknown",
+        "delivery_state": "live | pending",
+        "running_image": "example.local/my-app:abc123",
+        "delivery_type": "deploy | promote | release | none",
+        "delivery_path": "deploy/dev/rendered.yaml",
+        "config_readiness": "ok | unknown",
+        "secrets_readiness": "unsupported",
+        "last_delivery_at": "2026-02-22T12:34:56Z"
+      }
+    ]
+  }
+}
+```
+
+Notes:
+
+- `overview.environments` ordering is deterministic (`dev` first, production last, other environments sorted between those anchors).
+- `secrets_readiness` is currently `unsupported`; the platform does not expose secret-manager integration through this API.
+- Read model fields avoid exposing raw environment variable maps; project spec remains available under `project`.
 
 ### Project Operation History
 

@@ -94,6 +94,10 @@ func (a *API) resolveProjectIDFromPath(w http.ResponseWriter, r *http.Request) (
 			a.handleProjectOps(w, r)
 			return "", false
 		}
+		if parts[1] == "overview" {
+			a.handleProjectOverview(w, r)
+			return "", false
+		}
 		if parts[1] == "journey" {
 			a.handleProjectJourney(w, r)
 			return "", false
@@ -240,6 +244,23 @@ type projectJourneyArtifactStat struct {
 	Other        int `json:"other"`
 }
 
+type projectOverview struct {
+	Summary      string               `json:"summary"`
+	Environments []projectOverviewEnv `json:"environments"`
+}
+
+type projectOverviewEnv struct {
+	Name             string     `json:"name"`
+	HealthStatus     string     `json:"health_status"`
+	DeliveryState    string     `json:"delivery_state"`
+	RunningImage     string     `json:"running_image,omitempty"`
+	DeliveryType     string     `json:"delivery_type"`
+	DeliveryPath     string     `json:"delivery_path,omitempty"`
+	ConfigReadiness  string     `json:"config_readiness"`
+	SecretsReadiness string     `json:"secrets_readiness"`
+	LastDeliveryAt   *time.Time `json:"last_delivery_at,omitempty"`
+}
+
 type transitionArtifact struct {
 	action string
 	from   string
@@ -262,37 +283,70 @@ const (
 	journeyRankStaging = 40
 	journeyRankOther   = 50
 	journeyRankProd    = 90
+
+	overviewHealthHealthy      = "healthy"
+	overviewHealthDegraded     = "degraded"
+	overviewHealthFailing      = "failing"
+	overviewHealthUnknown      = "unknown"
+	overviewDeliveryTypeNone   = "none"
+	overviewConfigReadinessOK  = "ok"
+	overviewConfigReadinessUnk = "unknown"
+	overviewSecretsUnsupported = "unsupported"
 )
 
+func (a *API) handleProjectOverview(w http.ResponseWriter, r *http.Request) {
+	a.handleProjectReadModel(
+		w,
+		r,
+		"overview",
+		"overview data unavailable",
+		"failed to build project overview",
+		"overview",
+		func(ctx context.Context, project Project, files []string) (any, error) {
+			return a.buildProjectOverview(ctx, project, files)
+		},
+	)
+}
+
 func (a *API) handleProjectJourney(w http.ResponseWriter, r *http.Request) {
+	a.handleProjectReadModel(
+		w,
+		r,
+		"journey",
+		"journey data unavailable",
+		"failed to build project journey",
+		"journey",
+		func(ctx context.Context, project Project, files []string) (any, error) {
+			return a.buildProjectJourney(ctx, project, files)
+		},
+	)
+}
+
+func (a *API) handleProjectReadModel(
+	w http.ResponseWriter,
+	r *http.Request,
+	subresource string,
+	unavailableMessage string,
+	buildFailureMessage string,
+	responseKey string,
+	build func(context.Context, Project, []string) (any, error),
+) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if a.store == nil || a.artifacts == nil {
-		http.Error(w, "journey data unavailable", http.StatusInternalServerError)
+		http.Error(w, unavailableMessage, http.StatusInternalServerError)
 		return
 	}
 
-	if !strings.HasPrefix(r.URL.Path, "/api/projects/") {
-		http.NotFound(w, r)
-		return
-	}
-	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/")
-	parts := strings.Split(rest, "/")
-	if len(parts) != journeyPathPartsExpected || parts[1] != "journey" {
-		http.NotFound(w, r)
-		return
-	}
-
-	projectID := strings.TrimSpace(parts[0])
-	if projectID == "" {
-		http.Error(w, "bad project id", http.StatusBadRequest)
-		return
-	}
-
-	project, ok := a.getProjectOrWriteError(w, r, projectID)
+	projectID, ok := projectIDFromSubresourcePath(w, r, subresource)
 	if !ok {
+		return
+	}
+
+	project, found := a.getProjectOrWriteError(w, r, projectID)
+	if !found {
 		return
 	}
 	files, err := a.artifacts.ListFiles(projectID)
@@ -301,16 +355,140 @@ func (a *API) handleProjectJourney(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	journey, err := a.buildProjectJourney(r.Context(), project, files)
+	readModel, err := build(r.Context(), project, files)
 	if err != nil {
-		http.Error(w, "failed to build project journey", http.StatusInternalServerError)
+		http.Error(w, buildFailureMessage, http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"project": project,
-		"journey": journey,
-	})
+	}
+	payload[responseKey] = readModel
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func projectIDFromSubresourcePath(w http.ResponseWriter, r *http.Request, subresource string) (string, bool) {
+	if !strings.HasPrefix(r.URL.Path, "/api/projects/") {
+		http.NotFound(w, r)
+		return "", false
+	}
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/")
+	parts := strings.Split(rest, "/")
+	if len(parts) != journeyPathPartsExpected || parts[1] != subresource {
+		http.NotFound(w, r)
+		return "", false
+	}
+
+	projectID := strings.TrimSpace(parts[0])
+	if projectID == "" {
+		http.Error(w, "bad project id", http.StatusBadRequest)
+		return "", false
+	}
+	return projectID, true
+}
+
+func (a *API) buildProjectOverview(
+	ctx context.Context,
+	project Project,
+	files []string,
+) (projectOverview, error) {
+	journey, err := a.buildProjectJourney(ctx, project, files)
+	if err != nil {
+		return projectOverview{}, err
+	}
+
+	envs := make([]projectOverviewEnv, 0, len(journey.Environments))
+	for _, env := range journey.Environments {
+		envs = append(envs, buildOverviewEnvironment(project, env, journey.RecentOp))
+	}
+
+	return projectOverview{
+		Summary:      journey.Summary,
+		Environments: envs,
+	}, nil
+}
+
+func buildOverviewEnvironment(
+	project Project,
+	journeyEnv projectJourneyEnv,
+	recentOp *Operation,
+) projectOverviewEnv {
+	deliveryType := strings.TrimSpace(journeyEnv.DeliveryType)
+	if deliveryType == "" {
+		deliveryType = overviewDeliveryTypeNone
+	}
+
+	configReadiness := overviewConfigReadinessUnk
+	if journeyEnv.State == journeyEnvStateLive || strings.TrimSpace(journeyEnv.DeliveryPath) != "" {
+		configReadiness = overviewConfigReadinessOK
+	}
+
+	return projectOverviewEnv{
+		Name:             journeyEnv.Name,
+		HealthStatus:     overviewHealthStatus(project, journeyEnv),
+		DeliveryState:    journeyEnv.State,
+		RunningImage:     journeyEnv.Image,
+		DeliveryType:     deliveryType,
+		DeliveryPath:     journeyEnv.DeliveryPath,
+		ConfigReadiness:  configReadiness,
+		SecretsReadiness: overviewSecretsUnsupported,
+		LastDeliveryAt:   overviewLastDeliveryAt(journeyEnv.Name, recentOp),
+	}
+}
+
+func overviewHealthStatus(project Project, env projectJourneyEnv) string {
+	switch {
+	case project.Status.Phase == projectPhaseError:
+		return overviewHealthFailing
+	case project.Status.Phase == journeyPhaseReconciling && env.State != journeyEnvStateLive:
+		return overviewHealthDegraded
+	case env.State == journeyEnvStateLive:
+		return overviewHealthHealthy
+	default:
+		return overviewHealthUnknown
+	}
+}
+
+func overviewLastDeliveryAt(env string, recentOp *Operation) *time.Time {
+	if recentOp == nil {
+		return nil
+	}
+	if recentOp.Status != opStatusDone {
+		return nil
+	}
+	if !isRecentDeliveryForEnvironment(*recentOp, env) {
+		return nil
+	}
+
+	at := recentOp.Finished
+	if at.IsZero() {
+		at = recentOp.Requested
+	}
+	if at.IsZero() {
+		return nil
+	}
+	at = at.UTC()
+	return &at
+}
+
+func isRecentDeliveryForEnvironment(op Operation, env string) bool {
+	target := normalizeEnvironmentName(env)
+	switch op.Kind {
+	case OpDeploy:
+		delivered := normalizeEnvironmentName(op.Delivery.Environment)
+		if delivered == "" {
+			delivered = defaultDeployEnvironment
+		}
+		return delivered == target
+	case OpPromote, OpRelease:
+		delivered := normalizeEnvironmentName(op.Delivery.ToEnv)
+		return delivered != "" && delivered == target
+	case OpCreate, OpUpdate, OpDelete, OpCI:
+		return false
+	default:
+		return false
+	}
 }
 
 func (a *API) buildProjectJourney(

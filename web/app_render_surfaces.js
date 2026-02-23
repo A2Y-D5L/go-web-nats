@@ -67,7 +67,8 @@ function renderJourneyPanel() {
     return;
   }
 
-  if (state.journey.loading) {
+  const journey = currentJourney();
+  if ((state.overview.loading && !journey) || (state.journey.loading && !journey)) {
     dom.text.journeyStatusLine.textContent = "Loading journey snapshot...";
     nextActionCard.textContent = "Preparing suggested next step...";
     nextActionButton.disabled = true;
@@ -76,16 +77,16 @@ function renderJourneyPanel() {
     return;
   }
 
-  if (state.journey.error) {
+  const journeyError = journey ? "" : state.journey.error || state.overview.error;
+  if (journeyError) {
     dom.text.journeyStatusLine.textContent = "Journey snapshot unavailable.";
-    nextActionCard.textContent = state.journey.error;
+    nextActionCard.textContent = journeyError;
     nextActionButton.disabled = true;
     nextActionButton.textContent = "Run suggested step";
     renderEmptyState(milestoneContainer, "Journey data could not be loaded.");
     return;
   }
 
-  const journey = currentJourney();
   if (!journey) {
     dom.text.journeyStatusLine.textContent = "Journey data is not available yet.";
     nextActionCard.textContent = "Refresh to retry.";

@@ -157,3 +157,27 @@ func TestAPI_HandleProjectByIDJourneyReportsUnavailableWhenStoreMissing(t *testi
 		t.Fatalf("expected 500, got %d body=%q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestAPI_HandleProjectByIDOverviewRejectsUnsupportedMethod(t *testing.T) {
+	api := platform.NewTestAPI(newMemArtifacts())
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/p1/overview", nil)
+	rec := httptest.NewRecorder()
+
+	platform.InvokeHandleProjectByIDForTest(api, rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPI_HandleProjectByIDOverviewReportsUnavailableWhenStoreMissing(t *testing.T) {
+	api := platform.NewTestAPI(newMemArtifacts())
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/p1/overview", nil)
+	rec := httptest.NewRecorder()
+
+	platform.InvokeHandleProjectByIDForTest(api, rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}

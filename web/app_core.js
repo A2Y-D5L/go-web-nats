@@ -267,6 +267,11 @@ const state = {
     error: "",
     data: null,
   },
+  overview: {
+    loading: false,
+    error: "",
+    data: null,
+  },
   operation: {
     activeOpID: "",
     payload: null,
@@ -817,7 +822,156 @@ function workerLabel(name) {
   return workerLabelByName[String(name || "").trim()] || String(name || "step");
 }
 
+function currentOverview() {
+  return state.overview.data || null;
+}
+
+function deriveOverviewNextAction(environments) {
+  const envs = Array.isArray(environments) ? environments : [];
+  if (!envs.length) {
+    return {
+      kind: "none",
+      label: "No suggested action",
+      detail: "No environments are configured yet.",
+      environment: "",
+      from_env: "",
+      to_env: "",
+    };
+  }
+
+  const hasAnyImage = envs.some((env) => String(env?.running_image || "").trim());
+  if (!hasAnyImage) {
+    return {
+      kind: "build",
+      label: "Run a source build",
+      detail: "Build output is required before environment delivery can proceed.",
+      environment: "",
+      from_env: "",
+      to_env: "",
+    };
+  }
+
+  const dev = envs.find((env) => String(env?.name || "").trim().toLowerCase() === "dev");
+  if (!dev || String(dev?.delivery_state || "pending") !== "live") {
+    return {
+      kind: "deploy_dev",
+      label: "Deliver to dev",
+      detail: "Ship the latest built image to dev first.",
+      environment: "dev",
+      from_env: "",
+      to_env: "",
+    };
+  }
+
+  for (let idx = 1; idx < envs.length; idx += 1) {
+    const target = envs[idx];
+    if (String(target?.delivery_state || "pending") === "live") {
+      continue;
+    }
+
+    const source = envs[idx - 1];
+    const sourceName = String(source?.name || "").trim().toLowerCase();
+    const targetName = String(target?.name || "").trim().toLowerCase();
+    if (String(source?.delivery_state || "pending") !== "live") {
+      return {
+        kind: "none",
+        label: "Wait for upstream delivery",
+        detail: `Deliver ${sourceName || "source"} before moving to ${targetName || "target"}.`,
+        environment: "",
+        from_env: "",
+        to_env: "",
+      };
+    }
+
+    if (isProductionEnvironmentName(targetName)) {
+      return {
+        kind: "release",
+        label: "Release to production",
+        detail: `Promote verified image from ${sourceName || "source"} to ${targetName || "production"}.`,
+        environment: "",
+        from_env: sourceName,
+        to_env: targetName,
+      };
+    }
+
+    return {
+      kind: "promote",
+      label: `Promote to ${targetName || "target"}`,
+      detail: `Move tested image from ${sourceName || "source"} to ${targetName || "target"}.`,
+      environment: "",
+      from_env: sourceName,
+      to_env: targetName,
+    };
+  }
+
+  return {
+    kind: "none",
+    label: "Journey is up to date",
+    detail: "All configured environments have delivery evidence.",
+    environment: "",
+    from_env: "",
+    to_env: "",
+  };
+}
+
+function overviewMilestoneForEnvironment(environment) {
+  const name = String(environment?.name || "").trim().toLowerCase();
+  const deliveryState = String(environment?.delivery_state || "pending");
+  const health = String(environment?.health_status || "unknown");
+  const deliveryType = String(environment?.delivery_type || "none");
+  const runningImage = String(environment?.running_image || "").trim();
+  const lastDeliveryAt = String(environment?.last_delivery_at || "").trim();
+
+  let status = "pending";
+  let detail = "Environment delivery is pending.";
+
+  if (health === "failing") {
+    status = "failed";
+    detail = "Environment health is failing.";
+  } else if (deliveryState === "live") {
+    status = "complete";
+    detail = "Environment has live delivery evidence.";
+  } else if (health === "degraded") {
+    status = "in_progress";
+    detail = "Environment delivery is still reconciling.";
+  }
+
+  if (deliveryType && deliveryType !== "none") {
+    detail = `${detail} Last delivery type ${deliveryType}.`;
+  }
+  if (runningImage) {
+    detail = `${detail} Running image ${runningImage}.`;
+  }
+  if (hasRealTimestamp(lastDeliveryAt)) {
+    detail = `${detail} Updated ${toLocalTime(lastDeliveryAt)}.`;
+  }
+
+  return {
+    id: `env-${name || "unknown"}`,
+    title: `${(name || "env").toUpperCase()} live`,
+    status,
+    detail,
+  };
+}
+
+function overviewToJourneyData(overview) {
+  if (!overview || typeof overview !== "object") {
+    return null;
+  }
+  const environments = Array.isArray(overview.environments) ? overview.environments : [];
+  return {
+    summary: String(overview.summary || "Journey status is available."),
+    milestones: environments.map((environment) => overviewMilestoneForEnvironment(environment)),
+    next_action: deriveOverviewNextAction(environments),
+    environments,
+  };
+}
+
 function currentJourney() {
+  const overviewJourney = overviewToJourneyData(currentOverview());
+  if (overviewJourney) {
+    return overviewJourney;
+  }
   return state.journey.data || null;
 }
 

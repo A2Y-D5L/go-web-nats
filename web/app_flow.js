@@ -236,6 +236,7 @@ function clearSelection() {
   stopOperationMonitor({ clearPayload: true });
   resetOperationHistory();
   resetArtifacts();
+  resetOverview();
   resetJourney();
   renderAll();
 }
@@ -260,6 +261,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     stopOperationMonitor({ clearPayload: true });
     resetOperationHistory();
     resetArtifacts();
+    resetOverview();
     resetJourney();
   } else if (!preserveSelection) {
     state.selectedProjectID = "";
@@ -267,6 +269,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
     stopOperationMonitor({ clearPayload: true });
     resetOperationHistory();
     resetArtifacts();
+    resetOverview();
     resetJourney();
   }
 
@@ -278,6 +281,7 @@ async function refreshProjects({ silent = false, preserveSelection = true } = {}
   } else if (!selected) {
     stopOperationMonitor({ clearPayload: true });
     resetOperationHistory();
+    resetOverview();
     resetJourney();
   }
 
@@ -602,6 +606,7 @@ function selectProject(projectID) {
   state.ui.workspaceOpen = true;
   resetOperationHistory();
   resetArtifacts();
+  resetOverview();
   resetJourney();
 
   const selected = getSelectedProject();
