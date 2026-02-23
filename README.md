@@ -22,6 +22,7 @@ Quick task scoping commands:
 - `make task-files TASK=workers.bootstrap`
 - `make task-tests TASK=workers.runtime`
 - `make task-audit TASK=api.webhooks`
+- `make task-show TASK=docs.proposal-lifecycle`
 
 ## Core Platform Capabilities
 

@@ -10,6 +10,67 @@ Task lookup helpers:
 - `make task-tests TASK=<task-id>`
 - `make task-audit TASK=<task-id>`
 
+## Proposal -> Accepted -> Sprint Workflow
+
+Use this for planning/refinement cycles.
+
+### 1) Review proposals
+
+1. Select `TASK=docs.proposal-lifecycle`.
+2. Read all relevant proposal files in `.todos/proposals/` fully before writing output.
+3. Capture overlap:
+   - duplicate goals
+   - conflicting scope
+   - shared dependencies
+
+### 2) Synthesize accepted proposals
+
+1. Write accepted docs to `.todos/proposals/accepted/`.
+2. Prefer the smallest number of accepted docs that still preserves clear ownership.
+3. Each accepted doc should include:
+   - decision summary
+   - scope in/out
+   - delivery milestones
+   - API/domain impact
+   - acceptance criteria
+   - risks/mitigations
+
+### 3) Refine into sprint tasks
+
+1. Create/update `.todos/current-sprint/TODO.md` as the ordered execution index.
+2. Create sprint task files (`TODO_Sxx_*.md`) with explicit dependency edges.
+3. Every sprint task must include:
+   - codebase reality check
+   - why this matters
+   - scope in/scope out
+   - API contract changes (if any)
+   - implementation instructions with concrete files/functions
+   - explicit tests
+   - validation commands
+   - definition of done
+
+### 4) Quality gate for AI implementation
+
+Before finalizing sprint tasks, verify they are implementable against current code:
+
+1. route wiring patterns (`api_types.go`, subresource dispatch in `api_projects.go`)
+2. existing data models/contracts (`model.go`, `messages.go`)
+3. existing worker paths (`workers_action_*.go`, `ops_bookkeeping.go`)
+4. existing frontend module boundaries (`web/app_*.js`)
+5. existing tests that should be extended rather than replaced
+
+### 5) Validate docs/context changes
+
+1. `make task-audit TASK=docs.proposal-lifecycle`
+2. `make agent-check`
+3. `make check`
+
+### 6) Commit hygiene for planning artifacts
+
+1. Treat `.todos/` as local planning context only.
+2. Do not commit `.todos/` files.
+3. Do not reference `.todos/` paths or `.todos` artifacts in commit messages.
+
 ## Add/Change API Endpoint
 
 1. Update route wiring in `api_types.go` if needed.

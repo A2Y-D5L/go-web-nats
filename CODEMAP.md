@@ -24,6 +24,11 @@ Primary agent contract: `AGENTS.md`
 
 ## File Responsibilities
 
+- `.todos/backlog/`: long-horizon backlog tasks and priority framing.
+- `.todos/proposals/`: draft UX/product/engineering proposals awaiting acceptance, synthesis, and refinement.
+- `.todos/proposals/accepted/`: approved proposal specs ready for execution refinement.
+- `.todos/current-sprint/`: execution-ready sprint task breakdown derived from accepted proposals.
+  - policy: `.todos/` content is local planning context only; do not commit these files and do not reference them in commit messages.
 - `main.go`: platform runtime bootstrap (`Run`) and lifecycle wiring.
 - `logging.go`: structured/color logger and source/level formatting.
 - `cmd/server/main.go`: executable entrypoint.
@@ -99,6 +104,7 @@ Primary agent contract: `AGENTS.md`
 - Change frontend UX/UI behavior: start in `web/index.html`, `web/styles.css`, and the `web/app_*.js` module matching the concern.
 - Change defaults/constants: start in `config_runtime.go`, `config_subjects.go`, `config_domain.go`, `config_filesystem.go`.
 - Change agent docs/context: start in `AGENTS.md`, `CODEMAP.md`, `TASKMAP.yaml`, `docs/AGENT_PLAYBOOK.md`.
+- Run proposal lifecycle work (review -> accepted -> sprint tasks): start in `AGENTS.md`, `docs/AGENT_PLAYBOOK.md`, `.todos/proposals/`, `.todos/proposals/accepted/`, `.todos/current-sprint/`.
 
 ## Agent Rules of Thumb
 

@@ -21,6 +21,35 @@ Operational runbook for coding agents working in this repository.
 4. Edit only files listed for that task unless a boundary change is required.
 5. Run `make check` before finishing.
 
+## Proposal Lifecycle Workflow (Repeatable)
+
+Use this workflow for planning/refinement work under `.todos/`.
+
+1. Select task id `docs.proposal-lifecycle` (or `docs.context` when minor).
+2. Discovery:
+   - list proposal files in `.todos/proposals/`
+   - read each proposal fully before drafting any synthesis
+3. Synthesis:
+   - create accepted proposal docs in `.todos/proposals/accepted/`
+   - merge overlap into the smallest coherent set of accepted docs
+   - include scope, out-of-scope, dependencies, milestones, acceptance criteria, risks
+4. Refinement:
+   - translate accepted docs into actionable sprint tasks in `.todos/current-sprint/`
+   - maintain an execution index in `.todos/current-sprint/TODO.md`
+   - each sprint task must include:
+     - codebase reality check
+     - scope in/scope out
+     - API contract deltas (if any)
+     - file/function-level implementation instructions
+     - explicit tests and validation commands
+     - definition of done
+5. Accuracy gate:
+   - verify each task against current code seams (routes, models, workers, frontend modules)
+   - avoid requiring capabilities that do not exist yet unless task explicitly introduces them
+6. Validate:
+   - run `make agent-check`
+   - run `make check`
+
 ## Hard Constraints
 
 - Do not relax lint policy in `.golangci.yml`.
@@ -28,6 +57,9 @@ Operational runbook for coding agents working in this repository.
 - Do not add broad `//nolint` directives.
 - Do not introduce destructive behavior in local repos/artifacts by default.
 - Keep compatibility with schema defaults/validation in `model.go`.
+- Treat `.todos/` as local planning workspace only:
+  - never commit files under `.todos/`
+  - never mention `.todos/` paths or `.todos` artifacts in commit messages
 
 ## System Invariants
 
@@ -86,6 +118,7 @@ Operational runbook for coding agents working in this repository.
 ## Context Sync Rule
 
 - When moving/renaming/splitting files, update `CODEMAP.md`, `TASKMAP.yaml`, and `docs/AGENT_PLAYBOOK.md` in the same change.
+- When refining proposal/acceptance/sprint workflow conventions, update `AGENTS.md`, `CODEMAP.md`, `TASKMAP.yaml`, `docs/AGENT_PLAYBOOK.md`, and `README.md` together.
 - Run `make agent-check` immediately after doc/context updates, then run `make check`.
 
 ## Testing Expectations

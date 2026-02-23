@@ -130,6 +130,20 @@ tasks:
       - Makefile
       - scripts/taskmap.sh
     tests: []
+  - id: docs.proposal-lifecycle
+    # `.todos/` paths are local planning context only:
+    # never commit `.todos/` files and never reference them in commit messages.
+    files:
+      - AGENTS.md
+      - CODEMAP.md
+      - TASKMAP.yaml
+      - docs/AGENT_PLAYBOOK.md
+      - README.md
+      - .todos/backlog
+      - .todos/proposals
+      - .todos/proposals/accepted
+      - .todos/current-sprint
+    tests: []
   - id: startup
     files:
       - main.go
