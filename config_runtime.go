@@ -65,9 +65,27 @@ const (
 	workerDeliveryStreamMaxAge   = 24 * time.Hour
 	workerDeliveryStreamMaxMsgs  = int64(20000)
 	workerDeliveryStreamMaxBytes = int64(64 * 1024 * 1024)
+
+	finalResultConsumerAckWait      = 15 * time.Second
+	finalResultConsumerFetchWait    = 2 * time.Second
+	finalResultConsumerMaxDeliver   = 5
+	finalResultConsumerReplayWindow = 30 * time.Minute
+
+	finalResultWaiterDeliveryTTL      = 2 * time.Hour
+	finalResultWaiterDeliveryCacheMax = 4096
 )
 
 func workerDeliveryRetryBackoff() []time.Duration {
+	return []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+		5 * time.Second,
+		10 * time.Second,
+		20 * time.Second,
+	}
+}
+
+func finalResultConsumerRetryBackoff() []time.Duration {
 	return []time.Duration{
 		1 * time.Second,
 		2 * time.Second,

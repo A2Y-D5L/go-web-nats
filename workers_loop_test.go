@@ -434,51 +434,22 @@ func TestWorkers_FinalWaiterReceivesJetStreamPublishedFinalResult(t *testing.T) 
 	defer fixture.Close()
 
 	waiters := newWaiterHub()
-	subs, err := subscribeFinalResults(fixture.nc, waiters)
+	stop, err := subscribeFinalResults(
+		context.Background(),
+		fixture.js,
+		waiters,
+		appLoggerForProcess().Source("workers-test"),
+	)
 	if err != nil {
 		t.Fatalf("subscribe final results: %v", err)
 	}
-	defer func() {
-		for _, sub := range subs {
-			_ = sub.Unsubscribe()
-		}
-	}()
+	defer stop()
 
 	opID := "op-final-waiter-1"
 	ch := waiters.register(opID)
 	defer waiters.unregister(opID)
 
-	var spec ProjectSpec
-	spec.APIVersion = projectAPIVersion
-	spec.Kind = projectKind
-	spec.Name = "waiter-check"
-	spec.Runtime = "go_1.26"
-	spec.Environments = map[string]EnvConfig{
-		"dev": {Vars: map[string]string{"LOG_LEVEL": "info"}},
-	}
-	spec.NetworkPolicies = NetworkPolicies{
-		Ingress: networkPolicyInternal,
-		Egress:  networkPolicyInternal,
-	}
-	msg := ProjectOpMsg{
-		OpID:      opID,
-		Kind:      OpDeploy,
-		ProjectID: "project-final-waiter-1",
-		Spec:      normalizeProjectSpec(spec),
-		DeployEnv: "dev",
-		FromEnv:   "",
-		ToEnv:     "",
-		Delivery: DeliveryLifecycle{
-			Stage:       DeliveryStageDeploy,
-			Environment: "dev",
-			FromEnv:     "",
-			ToEnv:       "",
-		},
-		Err: "",
-		At:  time.Now().UTC(),
-	}
-	res := finalizeWorkerResult(msg, "deployer", newWorkerResultMsg("deployment complete"))
-	res.Artifacts = []string{"deploy/dev/rendered.yaml"}
+	res := finalWaiterResult(opID)
 
 	publishErr := publishWorkerResult(context.Background(), fixture.js, subjectDeploymentDone, res)
 	if publishErr != nil {
@@ -499,4 +470,177 @@ func TestWorkers_FinalWaiterReceivesJetStreamPublishedFinalResult(t *testing.T) 
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for final waiter delivery")
 	}
+}
+
+func TestWorkers_FinalWaiterRecoversAfterConsumerRestart(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t)
+	defer fixture.Close()
+
+	waiters := newWaiterHub()
+	stop, err := subscribeFinalResults(
+		context.Background(),
+		fixture.js,
+		waiters,
+		appLoggerForProcess().Source("workers-test"),
+	)
+	if err != nil {
+		t.Fatalf("subscribe final results: %v", err)
+	}
+
+	opID := "op-final-restart-1"
+	ch := waiters.register(opID)
+	defer waiters.unregister(opID)
+
+	stop()
+
+	res := finalWaiterResult(opID)
+	publishErr := publishWorkerResult(context.Background(), fixture.js, subjectDeploymentDone, res)
+	if publishErr != nil {
+		t.Fatalf("publish final result while consumer stopped: %v", publishErr)
+	}
+
+	stopAfterRestart, restartErr := subscribeFinalResults(
+		context.Background(),
+		fixture.js,
+		waiters,
+		appLoggerForProcess().Source("workers-test"),
+	)
+	if restartErr != nil {
+		t.Fatalf("restart subscribe final results: %v", restartErr)
+	}
+	defer stopAfterRestart()
+
+	select {
+	case got := <-ch:
+		if got.OpID != opID {
+			t.Fatalf("expected delivered op id %q, got %q", opID, got.OpID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for waiter delivery after consumer restart")
+	}
+}
+
+func TestWorkers_FinalWaiterSuppressesDuplicateReplayByOpID(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t)
+	defer fixture.Close()
+
+	waiters := newWaiterHub()
+	stop, err := subscribeFinalResults(
+		context.Background(),
+		fixture.js,
+		waiters,
+		appLoggerForProcess().Source("workers-test"),
+	)
+	if err != nil {
+		t.Fatalf("subscribe final results: %v", err)
+	}
+	defer stop()
+
+	opID := "op-final-duplicate-1"
+	first := waiters.register(opID)
+	defer waiters.unregister(opID)
+
+	res := finalWaiterResult(opID)
+	publishErr := publishWorkerResult(context.Background(), fixture.js, subjectDeploymentDone, res)
+	if publishErr != nil {
+		t.Fatalf("publish first final result: %v", publishErr)
+	}
+
+	select {
+	case <-first:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first waiter delivery")
+	}
+
+	dupWaiter := waiters.register(opID)
+	defer waiters.unregister(opID)
+
+	body, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal duplicate payload: %v", err)
+	}
+	_, publishRawErr := fixture.js.Publish(context.Background(), subjectDeploymentDone, body)
+	if publishRawErr != nil {
+		t.Fatalf("publish duplicate payload: %v", publishRawErr)
+	}
+
+	select {
+	case got := <-dupWaiter:
+		t.Fatalf("expected duplicate replay suppression, got op id %q", got.OpID)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestWorkers_FinalWaiterNoRegistrationPathDoesNotBlockLaterDelivery(t *testing.T) {
+	fixture := newWorkerDeliveryFixture(t)
+	defer fixture.Close()
+
+	waiters := newWaiterHub()
+	stop, err := subscribeFinalResults(
+		context.Background(),
+		fixture.js,
+		waiters,
+		appLoggerForProcess().Source("workers-test"),
+	)
+	if err != nil {
+		t.Fatalf("subscribe final results: %v", err)
+	}
+	defer stop()
+
+	noWaiterOpID := "op-final-no-waiter-1"
+	publishErr := publishWorkerResult(
+		context.Background(),
+		fixture.js,
+		subjectDeploymentDone,
+		finalWaiterResult(noWaiterOpID),
+	)
+	if publishErr != nil {
+		t.Fatalf("publish final result without waiter: %v", publishErr)
+	}
+
+	waitedOpID := "op-final-no-waiter-2"
+	ch := waiters.register(waitedOpID)
+	defer waiters.unregister(waitedOpID)
+
+	publishSecondErr := publishWorkerResult(
+		context.Background(),
+		fixture.js,
+		subjectDeploymentDone,
+		finalWaiterResult(waitedOpID),
+	)
+	if publishSecondErr != nil {
+		t.Fatalf("publish final result with waiter: %v", publishSecondErr)
+	}
+
+	select {
+	case got := <-ch:
+		if got.OpID != waitedOpID {
+			t.Fatalf("expected delivered op id %q, got %q", waitedOpID, got.OpID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for waiter delivery after no-waiter path")
+	}
+}
+
+func finalWaiterResult(opID string) WorkerResultMsg {
+	msg := ProjectOpMsg{
+		OpID:      opID,
+		Kind:      OpDeploy,
+		ProjectID: "project-" + opID,
+		Spec:      workerRuntimeSpec("waiter-check"),
+		DeployEnv: "dev",
+		FromEnv:   "",
+		ToEnv:     "",
+		Delivery: DeliveryLifecycle{
+			Stage:       DeliveryStageDeploy,
+			Environment: "dev",
+			FromEnv:     "",
+			ToEnv:       "",
+		},
+		Err: "",
+		At:  time.Now().UTC(),
+	}
+	res := finalizeWorkerResult(msg, "deployer", newWorkerResultMsg("deployment complete"))
+	res.Artifacts = []string{"deploy/dev/rendered.yaml"}
+	return res
 }

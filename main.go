@@ -63,17 +63,11 @@ func Run() {
 	}
 
 	waiters := newWaiterHub()
-	finalSubs, err := subscribeFinalResults(nc, waiters)
+	stopFinalResults, err := subscribeFinalResults(ctx, js, waiters, mainLog)
 	if err != nil {
 		mainLog.Fatalf("subscribe final: %v", err)
 	}
-	defer func() {
-		for _, finalSub := range finalSubs {
-			if uerr := finalSub.Unsubscribe(); uerr != nil {
-				mainLog.Warnf("final subscription unsubscribe error: %v", uerr)
-			}
-		}
-	}()
+	defer stopFinalResults()
 
 	flushErr := nc.Flush()
 	if flushErr != nil {
