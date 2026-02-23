@@ -42,9 +42,13 @@ func (a *API) createProjectFromSpec(
 
 	op, err := a.enqueueOp(ctx, OpCreate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
+		rollbackErr := a.store.DeleteProject(context.WithoutCancel(ctx), projectID)
+		return Project{}, Operation{}, withCreateRollbackResult(err, projectID, rollbackErr)
+	}
+	project, err := a.store.GetProject(ctx, projectID)
+	if err != nil {
 		return Project{}, Operation{}, err
 	}
-	project, _ := a.store.GetProject(ctx, projectID)
 	return project, op, nil
 }
 
@@ -172,7 +176,7 @@ func (a *API) handleRegistrationDelete(w http.ResponseWriter, r *http.Request, p
 }
 
 func writeRegistrationError(w http.ResponseWriter, err error) {
-	if writeProjectOpConflict(w, err) {
+	if writeAsyncOpError(w, err) {
 		return
 	}
 	switch {

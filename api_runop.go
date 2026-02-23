@@ -40,6 +40,29 @@ type projectOpConflictError struct {
 	ActiveOp      Operation
 }
 
+type opEnqueueError struct {
+	cause             error
+	OpID              string
+	ProjectID         string
+	RequestedKind     OperationKind
+	NextStep          string
+	ProjectRolledBack *bool
+}
+
+func (e *opEnqueueError) Error() string {
+	if e == nil || e.cause == nil {
+		return "failed to enqueue operation"
+	}
+	return e.cause.Error()
+}
+
+func (e *opEnqueueError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 func (e projectOpConflictError) Error() string {
 	activeID := strings.TrimSpace(e.ActiveOp.ID)
 	if activeID == "" {
@@ -117,21 +140,39 @@ func (a *API) enqueueOp(
 	}
 	apiLog.Infof("queued op=%s kind=%s project=%s", opID, kind, projectID)
 
-	a.setQueuedProjectStatus(ctx, opID, kind, projectID, spec, now)
-
-	emitOpBootstrap(a.opEvents, op, "operation accepted and queued")
-	emitOpStatus(a.opEvents, op, "queued")
-
 	opMsg := newProjectOpMsg(opID, kind, projectID, spec, opts, now)
 	body, _ := json.Marshal(opMsg)
 	startSubject := startSubjectForOperation(kind)
 
 	finalizeCtx := context.WithoutCancel(ctx)
 	if err := a.nc.Publish(startSubject, body); err != nil {
-		_ = finalizeOp(finalizeCtx, a.store, opID, projectID, kind, "error", err.Error())
+		publishErr := fmt.Errorf("publish op: %w", err)
+		if finalizeErr := finalizeOp(
+			finalizeCtx,
+			a.store,
+			opID,
+			projectID,
+			kind,
+			opStatusError,
+			err.Error(),
+		); finalizeErr != nil {
+			publishErr = errors.Join(publishErr, fmt.Errorf("finalize op: %w", finalizeErr))
+		}
 		apiLog.Errorf("publish failed op=%s kind=%s project=%s: %v", opID, kind, projectID, err)
-		return Operation{}, fmt.Errorf("publish op: %w", err)
+		return Operation{}, &opEnqueueError{
+			cause:             publishErr,
+			OpID:              opID,
+			ProjectID:         projectID,
+			RequestedKind:     kind,
+			NextStep:          enqueueRetryNextStep(opID, projectID),
+			ProjectRolledBack: nil,
+		}
 	}
+	a.setQueuedProjectStatus(ctx, opID, kind, projectID, spec, now)
+
+	emitOpBootstrap(a.opEvents, op, "operation accepted and queued")
+	emitOpStatus(a.opEvents, op, "queued")
+
 	apiLog.Debugf("published op=%s subject=%s", opID, startSubject)
 	return op, nil
 }
@@ -221,6 +262,90 @@ func writeProjectOpConflict(w http.ResponseWriter, err error) bool {
 		"next_step": "wait for the active operation to reach done or error, then retry",
 	})
 	return true
+}
+
+func writeOpEnqueueError(w http.ResponseWriter, err error) bool {
+	var enqueueErr *opEnqueueError
+	if !errors.As(err, &enqueueErr) {
+		return false
+	}
+	payload := map[string]any{
+		"accepted":       false,
+		"reason":         enqueueErr.Error(),
+		"requested_kind": enqueueErr.RequestedKind,
+		"next_step":      strings.TrimSpace(enqueueErr.NextStep),
+	}
+	projectID := strings.TrimSpace(enqueueErr.ProjectID)
+	if projectID != "" {
+		payload["project_id"] = projectID
+	}
+	opID := strings.TrimSpace(enqueueErr.OpID)
+	if opID != "" {
+		payload["op_id"] = opID
+	}
+	if enqueueErr.ProjectRolledBack != nil {
+		payload["project_rolled_back"] = *enqueueErr.ProjectRolledBack
+	}
+	if payload["next_step"] == "" {
+		payload["next_step"] = enqueueRetryNextStep(opID, projectID)
+	}
+	writeJSON(w, http.StatusInternalServerError, payload)
+	return true
+}
+
+func writeAsyncOpError(w http.ResponseWriter, err error) bool {
+	if writeProjectOpConflict(w, err) {
+		return true
+	}
+	return writeOpEnqueueError(w, err)
+}
+
+func enqueueRetryNextStep(opID string, projectID string) string {
+	opID = strings.TrimSpace(opID)
+	projectID = strings.TrimSpace(projectID)
+	switch {
+	case opID != "":
+		return fmt.Sprintf("inspect /api/ops/%s for failure details, then retry", opID)
+	case projectID != "":
+		return "retry request after confirming project state"
+	default:
+		return "retry request"
+	}
+}
+
+func withCreateRollbackResult(err error, projectID string, rollbackErr error) error {
+	projectID = strings.TrimSpace(projectID)
+	rolledBack := rollbackErr == nil
+	nextStep := "retry create request"
+	if !rolledBack {
+		nextStep = "request may have retained project state; inspect metadata and retry"
+	}
+
+	var enqueueErr *opEnqueueError
+	if errors.As(err, &enqueueErr) {
+		enriched := *enqueueErr
+		enriched.ProjectID = projectID
+		enriched.RequestedKind = OpCreate
+		enriched.NextStep = nextStep
+		enriched.ProjectRolledBack = &rolledBack
+		if rollbackErr != nil {
+			enriched.cause = errors.Join(enriched.cause, fmt.Errorf("rollback project: %w", rollbackErr))
+		}
+		return &enriched
+	}
+
+	cause := err
+	if rollbackErr != nil {
+		cause = errors.Join(cause, fmt.Errorf("rollback project: %w", rollbackErr))
+	}
+	return &opEnqueueError{
+		cause:             cause,
+		OpID:              "",
+		ProjectID:         projectID,
+		RequestedKind:     OpCreate,
+		NextStep:          nextStep,
+		ProjectRolledBack: &rolledBack,
+	}
 }
 
 func (a *API) setQueuedProjectStatus(

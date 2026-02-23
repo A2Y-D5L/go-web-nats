@@ -78,6 +78,28 @@ Conflict (`create`/`update`/`delete`/any project op trigger while the same proje
 }
 ```
 
+Create enqueue/publish failure (recoverable metadata):
+
+- Status: `500 Internal Server Error`
+
+```json
+{
+  "accepted": false,
+  "reason": "publish op: ...",
+  "project_id": "project-id",
+  "requested_kind": "create",
+  "op_id": "op-id",
+  "project_rolled_back": true,
+  "next_step": "retry create request"
+}
+```
+
+Notes:
+
+- `op_id` is included when operation persistence succeeded before publish failed.
+- `project_rolled_back=true` means no durable new project record remains after the failure.
+- Clients should use `next_step` to drive retry/recovery UX.
+
 ## Source Webhooks
 
 Endpoint:
@@ -342,6 +364,7 @@ Common status codes:
 - Accepted (`POST`/`PUT`/`DELETE`): `202 Accepted`
 - Validation errors: `400 Bad Request`
 - Not found (by id): `404 Not Found`
+- Enqueue/publish failure: `500 Internal Server Error` with structured recovery metadata (`op_id`, `project_id`, `next_step`, optional `project_rolled_back` on create)
 
 ### Project Journey
 

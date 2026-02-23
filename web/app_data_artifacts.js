@@ -119,14 +119,36 @@ async function requestAPI(method, url, body) {
     const err = new Error(`${method} ${url} -> ${response.status}: ${text}`);
     err.status = response.status;
     err.payload = payload;
-    err.userMessage =
-      typeof payload === "string"
-        ? payload
-        : String(payload?.reason || payload?.message || text);
+    err.userMessage = requestErrorUserMessage(payload, text);
     throw err;
   }
 
   return payload;
+}
+
+function requestErrorUserMessage(payload, fallbackText) {
+  if (typeof payload === "string") {
+    return payload;
+  }
+
+  const reason = String(payload?.reason || payload?.message || fallbackText || "Request failed").trim();
+  const nextStep = String(payload?.next_step || "").trim();
+  const opID = String(payload?.op_id || "").trim();
+  const projectID = String(payload?.project_id || "").trim();
+
+  const metadata = [];
+  if (opID) {
+    metadata.push(`op ${opID.slice(0, 8)}`);
+  }
+  if (projectID) {
+    metadata.push(`project ${projectID.slice(0, 8)}`);
+  }
+
+  const withMetadata = metadata.length > 0 ? `${reason} (${metadata.join(", ")})` : reason;
+  if (!nextStep) {
+    return withMetadata;
+  }
+  return `${withMetadata}. Next: ${nextStep}.`;
 }
 
 async function loadSystemStatus({ silent = false } = {}) {

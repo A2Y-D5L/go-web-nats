@@ -113,6 +113,23 @@ func (f *asyncAPIFixture) Close() {
 	f.nsCancel()
 }
 
+func makeClosedPublishConn(t *testing.T, fixture *asyncAPIFixture, name string) *nats.Conn {
+	t.Helper()
+	if fixture == nil || fixture.nc == nil {
+		t.Fatal("fixture nats connection is unavailable")
+	}
+	url := strings.TrimSpace(fixture.nc.ConnectedUrl())
+	if url == "" {
+		t.Fatal("fixture nats connected url is empty")
+	}
+	nc, err := nats.Connect(url, nats.Name(name))
+	if err != nil {
+		t.Fatalf("connect closed publish fixture: %v", err)
+	}
+	nc.Close()
+	return nc
+}
+
 func testProjectSpec(name string) ProjectSpec {
 	return normalizeProjectSpec(ProjectSpec{
 		APIVersion: projectAPIVersion,
@@ -250,6 +267,195 @@ func TestAPI_RegistrationCreateReturnsAcceptedAndQueuedOp(t *testing.T) {
 	}
 	if stored.Status != statusMessageQueued {
 		t.Fatalf("expected stored op status %q, got %q", statusMessageQueued, stored.Status)
+	}
+}
+
+func TestAPI_RegistrationCreatePublishFailureReturnsRecoveryMetadataAndRollsBackProject(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, opEventsHeartbeatInterval)
+	defer fixture.Close()
+
+	fixture.api.nc = makeClosedPublishConn(t, fixture, "api-async-test-publish-fail-registration")
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	body, err := json.Marshal(map[string]any{
+		"action": "create",
+		"spec":   testProjectSpec("create-publish-fail-registration"),
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/events/registration", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request create registration event: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 500, got %d body=%q", resp.StatusCode, string(payload))
+	}
+
+	var out struct {
+		Accepted          bool          `json:"accepted"`
+		Reason            string        `json:"reason"`
+		ProjectID         string        `json:"project_id"`
+		RequestedKind     OperationKind `json:"requested_kind"`
+		OpID              string        `json:"op_id"`
+		ProjectRolledBack bool          `json:"project_rolled_back"`
+		NextStep          string        `json:"next_step"`
+	}
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&out); decodeErr != nil {
+		t.Fatalf("decode response: %v", decodeErr)
+	}
+	if out.Accepted {
+		t.Fatal("expected accepted=false")
+	}
+	if strings.TrimSpace(out.ProjectID) == "" {
+		t.Fatal("expected project_id in failure response")
+	}
+	if strings.TrimSpace(out.OpID) == "" {
+		t.Fatal("expected op_id in failure response")
+	}
+	if out.RequestedKind != OpCreate {
+		t.Fatalf("expected requested_kind=%q, got %q", OpCreate, out.RequestedKind)
+	}
+	if strings.TrimSpace(out.Reason) == "" {
+		t.Fatal("expected reason in failure response")
+	}
+	if strings.TrimSpace(out.NextStep) == "" {
+		t.Fatal("expected next_step in failure response")
+	}
+	if !out.ProjectRolledBack {
+		t.Fatal("expected project_rolled_back=true after create enqueue failure")
+	}
+
+	if _, getErr := fixture.api.store.GetProject(context.Background(), out.ProjectID); !errors.Is(getErr, jetstream.ErrKeyNotFound) {
+		t.Fatalf("expected rolled-back project to be absent, got err=%v", getErr)
+	}
+	op, getErr := fixture.api.store.GetOp(context.Background(), out.OpID)
+	if getErr != nil {
+		t.Fatalf("read failed op: %v", getErr)
+	}
+	if op.Status != opStatusError {
+		t.Fatalf("expected failed op status %q, got %q", opStatusError, op.Status)
+	}
+}
+
+func TestAPI_ProjectsCreatePublishFailureReturnsRecoveryMetadataAndRollsBackProject(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, opEventsHeartbeatInterval)
+	defer fixture.Close()
+
+	fixture.api.nc = makeClosedPublishConn(t, fixture, "api-async-test-publish-fail-projects")
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	body, err := json.Marshal(testProjectSpec("create-publish-fail-projects"))
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/projects", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request project create: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 500, got %d body=%q", resp.StatusCode, string(payload))
+	}
+
+	var out struct {
+		Accepted          bool          `json:"accepted"`
+		ProjectID         string        `json:"project_id"`
+		RequestedKind     OperationKind `json:"requested_kind"`
+		OpID              string        `json:"op_id"`
+		ProjectRolledBack bool          `json:"project_rolled_back"`
+		NextStep          string        `json:"next_step"`
+	}
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&out); decodeErr != nil {
+		t.Fatalf("decode response: %v", decodeErr)
+	}
+	if out.Accepted {
+		t.Fatal("expected accepted=false")
+	}
+	if out.RequestedKind != OpCreate {
+		t.Fatalf("expected requested_kind=%q, got %q", OpCreate, out.RequestedKind)
+	}
+	if strings.TrimSpace(out.ProjectID) == "" || strings.TrimSpace(out.OpID) == "" {
+		t.Fatalf("expected project_id and op_id in response, got project=%q op=%q", out.ProjectID, out.OpID)
+	}
+	if strings.TrimSpace(out.NextStep) == "" {
+		t.Fatal("expected next_step in failure response")
+	}
+	if !out.ProjectRolledBack {
+		t.Fatal("expected project_rolled_back=true after create enqueue failure")
+	}
+	if _, getErr := fixture.api.store.GetProject(context.Background(), out.ProjectID); !errors.Is(getErr, jetstream.ErrKeyNotFound) {
+		t.Fatalf("expected rolled-back project to be absent, got err=%v", getErr)
+	}
+}
+
+func TestAPI_EnqueuePublishFailureDoesNotEmitQueuedSignals(t *testing.T) {
+	fixture := newAsyncAPIFixture(t, opEventsHeartbeatInterval)
+	defer fixture.Close()
+
+	projectID := "project-enqueue-publish-fail-no-queued-events"
+	spec := testProjectSpec("enqueue-publish-fail-no-queued-events")
+	putProjectFixture(t, fixture, projectID, spec, "", "")
+	fixture.api.nc = makeClosedPublishConn(t, fixture, "api-async-test-publish-fail-events")
+
+	_, err := fixture.api.enqueueOp(context.Background(), OpUpdate, projectID, spec, emptyOpRunOptions())
+	if err == nil {
+		t.Fatal("expected enqueue publish failure")
+	}
+
+	var enqueueErr *opEnqueueError
+	if !errors.As(err, &enqueueErr) {
+		t.Fatalf("expected *opEnqueueError, got %T", err)
+	}
+	if strings.TrimSpace(enqueueErr.OpID) == "" {
+		t.Fatal("expected op id in enqueue error")
+	}
+	if enqueueErr.RequestedKind != OpUpdate {
+		t.Fatalf("expected requested kind %q, got %q", OpUpdate, enqueueErr.RequestedKind)
+	}
+
+	replay, _, needsBootstrap, unsubscribe := fixture.api.opEvents.subscribe(enqueueErr.OpID, "0")
+	defer unsubscribe()
+	if needsBootstrap {
+		t.Fatal("expected replay without bootstrap for last_event_id=0")
+	}
+	if len(replay) == 0 {
+		t.Fatal("expected replay records for failed enqueue op")
+	}
+
+	foundBootstrap := false
+	foundQueuedStatus := false
+	foundErrorSignal := false
+	for _, record := range replay {
+		if record.Name == opEventBootstrap {
+			foundBootstrap = true
+		}
+		if record.Name == opEventStatus && record.Payload.Status == statusMessageQueued {
+			foundQueuedStatus = true
+		}
+		if (record.Name == opEventStatus && record.Payload.Status == opStatusError) || record.Name == opEventFailed {
+			foundErrorSignal = true
+		}
+	}
+	if foundBootstrap {
+		t.Fatal("did not expect op.bootstrap on publish failure")
+	}
+	if foundQueuedStatus {
+		t.Fatal("did not expect queued op.status before publish success")
+	}
+	if !foundErrorSignal {
+		t.Fatal("expected error terminal signal for failed enqueue")
 	}
 }
 

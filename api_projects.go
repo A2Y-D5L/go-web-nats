@@ -38,39 +38,17 @@ func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		projectID := newID()
-		now := time.Now().UTC()
-
-		p := Project{
-			ID:        projectID,
-			CreatedAt: now,
-			UpdatedAt: now,
-			Spec:      spec,
-			Status: ProjectStatus{
-				Phase:      "Reconciling",
-				UpdatedAt:  now,
-				LastOpID:   "",
-				LastOpKind: "",
-				Message:    statusMessageQueued,
-			},
-		}
-		putErr := a.store.PutProject(r.Context(), p)
-		if putErr != nil {
-			http.Error(w, "failed to persist project", http.StatusInternalServerError)
-			return
-		}
-
-		op, err := a.enqueueOp(r.Context(), OpCreate, projectID, spec, emptyOpRunOptions())
+		project, op, err := a.createProjectFromSpec(r.Context(), spec)
 		if err != nil {
+			if writeAsyncOpError(w, err) {
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		// Return project + last op for the UI
-		p, _ = a.store.GetProject(r.Context(), projectID)
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"accepted": true,
-			"project":  p,
+			"project":  project,
 			"op":       op,
 		})
 
@@ -157,7 +135,7 @@ func (a *API) handleProjectUpdateByID(w http.ResponseWriter, r *http.Request, pr
 
 	op, err := a.enqueueOp(r.Context(), OpUpdate, projectID, spec, emptyOpRunOptions())
 	if err != nil {
-		if writeProjectOpConflict(w, err) {
+		if writeAsyncOpError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -184,7 +162,7 @@ func (a *API) handleProjectDeleteByID(w http.ResponseWriter, r *http.Request, pr
 		emptyOpRunOptions(),
 	)
 	if err != nil {
-		if writeProjectOpConflict(w, err) {
+		if writeAsyncOpError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)

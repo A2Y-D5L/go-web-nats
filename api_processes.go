@@ -62,7 +62,7 @@ func (a *API) handleDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		deployOpRunOptions(env),
 	)
 	if err != nil {
-		if writeProjectOpConflict(w, err) {
+		if writeAsyncOpError(w, err) {
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -157,7 +157,7 @@ func (e transitionRequestError) Error() string {
 }
 
 func writeTransitionError(w http.ResponseWriter, err error) {
-	if writeProjectOpConflict(w, err) {
+	if writeAsyncOpError(w, err) {
 		return
 	}
 	var reqErr transitionRequestError
