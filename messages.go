@@ -7,32 +7,40 @@ import "time"
 ////////////////////////////////////////////////////////////////////////////////
 
 type ProjectOpMsg struct {
-	OpID      string            `json:"op_id"`
-	Kind      OperationKind     `json:"kind"`
-	ProjectID string            `json:"project_id"`
-	Spec      ProjectSpec       `json:"spec"` // create/update only
-	DeployEnv string            `json:"deploy_env,omitempty"`
-	FromEnv   string            `json:"from_env,omitempty"`
-	ToEnv     string            `json:"to_env,omitempty"`
-	Delivery  DeliveryLifecycle `json:"delivery,omitzero"`
-	Err       string            `json:"err,omitempty"`
-	At        time.Time         `json:"at"`
+	OpID              string            `json:"op_id"`
+	Kind              OperationKind     `json:"kind"`
+	ProjectID         string            `json:"project_id"`
+	Spec              ProjectSpec       `json:"spec"` // create/update only
+	DeployEnv         string            `json:"deploy_env,omitempty"`
+	FromEnv           string            `json:"from_env,omitempty"`
+	ToEnv             string            `json:"to_env,omitempty"`
+	RollbackReleaseID string            `json:"rollback_release_id,omitempty"`
+	RollbackEnv       string            `json:"rollback_env,omitempty"`
+	RollbackScope     RollbackScope     `json:"rollback_scope,omitempty"`
+	RollbackOverride  bool              `json:"rollback_override,omitempty"`
+	Delivery          DeliveryLifecycle `json:"delivery,omitzero"`
+	Err               string            `json:"err,omitempty"`
+	At                time.Time         `json:"at"`
 }
 
 type WorkerResultMsg struct {
-	OpID      string            `json:"op_id"`
-	Kind      OperationKind     `json:"kind"`
-	ProjectID string            `json:"project_id"`
-	Spec      ProjectSpec       `json:"spec"`
-	DeployEnv string            `json:"deploy_env,omitempty"`
-	FromEnv   string            `json:"from_env,omitempty"`
-	ToEnv     string            `json:"to_env,omitempty"`
-	Delivery  DeliveryLifecycle `json:"delivery,omitzero"`
-	Worker    string            `json:"worker"`
-	Message   string            `json:"message,omitempty"`
-	Err       string            `json:"err,omitempty"`
-	Artifacts []string          `json:"artifacts,omitempty"` // relative paths
-	At        time.Time         `json:"at"`
+	OpID              string            `json:"op_id"`
+	Kind              OperationKind     `json:"kind"`
+	ProjectID         string            `json:"project_id"`
+	Spec              ProjectSpec       `json:"spec"`
+	DeployEnv         string            `json:"deploy_env,omitempty"`
+	FromEnv           string            `json:"from_env,omitempty"`
+	ToEnv             string            `json:"to_env,omitempty"`
+	RollbackReleaseID string            `json:"rollback_release_id,omitempty"`
+	RollbackEnv       string            `json:"rollback_env,omitempty"`
+	RollbackScope     RollbackScope     `json:"rollback_scope,omitempty"`
+	RollbackOverride  bool              `json:"rollback_override,omitempty"`
+	Delivery          DeliveryLifecycle `json:"delivery,omitzero"`
+	Worker            string            `json:"worker"`
+	Message           string            `json:"message,omitempty"`
+	Err               string            `json:"err,omitempty"`
+	Artifacts         []string          `json:"artifacts,omitempty"` // relative paths
+	At                time.Time         `json:"at"`
 }
 
 type WorkerPoisonMsg struct {
@@ -64,13 +72,17 @@ func zeroProjectSpec() ProjectSpec {
 
 func newWorkerResultMsg(message string) WorkerResultMsg {
 	return WorkerResultMsg{
-		OpID:      "",
-		Kind:      "",
-		ProjectID: "",
-		Spec:      zeroProjectSpec(),
-		DeployEnv: "",
-		FromEnv:   "",
-		ToEnv:     "",
+		OpID:              "",
+		Kind:              "",
+		ProjectID:         "",
+		Spec:              zeroProjectSpec(),
+		DeployEnv:         "",
+		FromEnv:           "",
+		ToEnv:             "",
+		RollbackReleaseID: "",
+		RollbackEnv:       "",
+		RollbackScope:     "",
+		RollbackOverride:  false,
 		Delivery: DeliveryLifecycle{
 			Stage:       "",
 			Environment: "",

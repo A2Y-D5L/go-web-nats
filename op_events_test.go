@@ -240,6 +240,9 @@ func TestOpTotalStepsForPromotionAndRelease(t *testing.T) {
 	if got := opTotalSteps(OpRelease); got != opTotalStepsTransition {
 		t.Fatalf("expected release total steps %d, got %d", opTotalStepsTransition, got)
 	}
+	if got := opTotalSteps(OpRollback); got != opTotalStepsTransition {
+		t.Fatalf("expected rollback total steps %d, got %d", opTotalStepsTransition, got)
+	}
 }
 
 func TestOpProgressPercentForPromotionStages(t *testing.T) {

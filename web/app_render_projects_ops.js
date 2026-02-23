@@ -488,6 +488,7 @@ function renderReleaseTimelinePanel() {
   const statusEl = dom.text.releaseTimelineStatus;
   const rollbackEl = dom.text.rollbackTargetSummary;
   const refreshBtn = dom.buttons.refreshReleaseTimeline;
+  const rollbackReviewBtn = dom.buttons.openRollbackModal;
   const envSelect = dom.inputs.releaseTimelineEnvironment;
 
   container.replaceChildren();
@@ -497,6 +498,7 @@ function renderReleaseTimelinePanel() {
     envSelect.replaceChildren();
     envSelect.disabled = true;
     refreshBtn.disabled = true;
+    rollbackReviewBtn.disabled = true;
     rollbackEl.textContent = "Rollback target not selected. Choose a release entry to prepare rollback context.";
     setPanelInlineStatus(statusEl, "Select an app to inspect release timeline history.", "info");
     renderEmptyState(container, "Release records appear after environment deliveries complete.");
@@ -514,9 +516,15 @@ function renderReleaseTimelinePanel() {
     rollbackEl.textContent = `Rollback target prepared: ${String(selectedRecord.id || "").slice(0, 8)} in ${
       selectedRecord.environment || "environment"
     } (${selectedRecord.image || "unknown image"}).`;
+    state.rollback.environment = String(selectedRecord.environment || "").trim().toLowerCase();
+    state.rollback.releaseID = String(selectedRecord.id || "").trim();
   } else {
     rollbackEl.textContent = "Rollback target not selected. Choose a release entry to prepare rollback context.";
+    state.rollback.environment = "";
+    state.rollback.releaseID = "";
   }
+  rollbackReviewBtn.disabled =
+    !selectedRecord || state.releaseTimeline.loading || state.releaseTimeline.loadingMore || projectHasRunningOperation();
 
   if (state.releaseTimeline.loading && !state.releaseTimeline.items.length) {
     setPanelInlineStatus(statusEl, `Loading ${environment || "selected"} release timeline...`, "info");
@@ -590,9 +598,12 @@ function renderReleaseTimelinePanel() {
       state.releaseTimeline.environment = String(record.environment || state.releaseTimeline.environment || "")
         .trim()
         .toLowerCase();
+      resetRollbackReviewState();
+      state.rollback.environment = state.releaseTimeline.environment;
+      state.rollback.releaseID = state.releaseTimeline.selectedReleaseID;
       renderReleaseTimelinePanel();
       setStatus(
-        `Rollback target prepared from release ${String(record.id || "").slice(0, 8)}. Execution is deferred to rollback workflow.`,
+        `Rollback target prepared from release ${String(record.id || "").slice(0, 8)}. Review rollback to run preflight.`,
         "info",
         { toast: true }
       );

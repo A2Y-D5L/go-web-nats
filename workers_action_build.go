@@ -48,9 +48,9 @@ func imageBuilderWorkerActionWithMode(
 		outcome, err = runImageBuilderBuildWithMode(ctx, artifacts, msg, spec, imageTag, modeResolution)
 	case OpDelete:
 		outcome, err = runImageBuilderDelete(artifacts, msg.ProjectID, msg.OpID)
-	case OpDeploy, OpPromote, OpRelease:
+	case OpDeploy, OpPromote, OpRelease, OpRollback:
 		outcome = repoBootstrapOutcome{
-			message:   "image build skipped for deployment/promotion/release operation",
+			message:   "image build skipped for deployment/promotion/release/rollback operation",
 			artifacts: nil,
 		}
 	default:

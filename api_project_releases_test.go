@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -192,6 +194,145 @@ func TestAPI_ProjectReleaseDetailReturnsNotFoundAndSuccess(t *testing.T) {
 	}
 	if body.Environment != "prod" {
 		t.Fatalf("expected environment prod, got %q", body.Environment)
+	}
+}
+
+func TestAPI_ProjectReleaseCompareReturnsDeterministicSummary(t *testing.T) {
+	fixture := newProjectReleaseAPIFixture(t)
+	defer fixture.Close()
+
+	writeCompareReleaseArtifacts := func(path string, body string) {
+		t.Helper()
+		if _, err := fixture.api.artifacts.WriteFile(fixture.projectID, path, []byte(body)); err != nil {
+			t.Fatalf("write compare fixture artifact %q: %v", path, err)
+		}
+	}
+
+	fromRendered := strings.Join([]string{
+		"apiVersion: apps/v1",
+		"kind: Deployment",
+		"metadata:",
+		"  name: app",
+		"  creationTimestamp: 2026-02-20T00:00:00Z",
+		"spec:",
+		"  template:",
+		"    spec:",
+		"      containers:",
+		"        - name: app",
+		"          image: example.local/compare:1111",
+		"          env:",
+		"            - name: LOG_LEVEL",
+		"              value: info",
+		"---",
+		"apiVersion: v1",
+		"kind: Service",
+		"metadata:",
+		"  name: app",
+		"spec:",
+		"  selector:",
+		"    app: app",
+		"",
+	}, "\n")
+	toRendered := strings.ReplaceAll(fromRendered, "2026-02-20T00:00:00Z", "2026-02-21T00:00:00Z")
+	fromConfig := fromRendered
+	toConfig := strings.ReplaceAll(
+		strings.ReplaceAll(fromRendered, "compare:1111", "compare:2222"),
+		"value: info",
+		"value: warn",
+	)
+
+	writeCompareReleaseArtifacts("promotions/dev-to-staging/rendered.yaml", fromRendered)
+	writeCompareReleaseArtifacts("promotions/dev-to-staging/deployment.yaml", fromConfig)
+	writeCompareReleaseArtifacts("releases/staging-to-prod/rendered.yaml", toRendered)
+	writeCompareReleaseArtifacts("releases/staging-to-prod/deployment.yaml", toConfig)
+
+	fromRelease, err := fixture.api.store.PutRelease(context.Background(), ReleaseRecord{
+		ID:                    "",
+		ProjectID:             fixture.projectID,
+		Environment:           "staging",
+		OpID:                  "op-release-compare-from",
+		OpKind:                OpPromote,
+		DeliveryStage:         DeliveryStagePromote,
+		FromEnv:               "dev",
+		ToEnv:                 "staging",
+		Image:                 "example.local/compare:1111",
+		RenderedPath:          "promotions/dev-to-staging/rendered.yaml",
+		ConfigPath:            "promotions/dev-to-staging/deployment.yaml",
+		RollbackSafe:          rollbackSafeDefaultPtr(),
+		RollbackSourceRelease: "",
+		RollbackScope:         "",
+		CreatedAt:             time.Now().UTC().Add(-2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("put compare from release: %v", err)
+	}
+	toRelease, err := fixture.api.store.PutRelease(context.Background(), ReleaseRecord{
+		ID:                    "",
+		ProjectID:             fixture.projectID,
+		Environment:           "staging",
+		OpID:                  "op-release-compare-to",
+		OpKind:                OpRelease,
+		DeliveryStage:         DeliveryStageRelease,
+		FromEnv:               "staging",
+		ToEnv:                 "prod",
+		Image:                 "example.local/compare:2222",
+		RenderedPath:          "releases/staging-to-prod/rendered.yaml",
+		ConfigPath:            "releases/staging-to-prod/deployment.yaml",
+		RollbackSafe:          rollbackSafeDefaultPtr(),
+		RollbackSourceRelease: "",
+		RollbackScope:         "",
+		CreatedAt:             time.Now().UTC().Add(-1 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("put compare to release: %v", err)
+	}
+
+	srv := httptest.NewServer(fixture.api.routes())
+	defer srv.Close()
+
+	requestCompare := func() ReleaseCompareResponse {
+		t.Helper()
+		url := fmt.Sprintf(
+			"%s/api/projects/%s/releases/compare?from=%s&to=%s",
+			srv.URL,
+			fixture.projectID,
+			fromRelease.ID,
+			toRelease.ID,
+		)
+		resp, requestErr := srv.Client().Get(url)
+		if requestErr != nil {
+			t.Fatalf("request release compare: %v", requestErr)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 200 for compare, got %d body=%q", resp.StatusCode, string(body))
+		}
+		var payload ReleaseCompareResponse
+		if decodeErr := json.NewDecoder(resp.Body).Decode(&payload); decodeErr != nil {
+			t.Fatalf("decode compare response: %v", decodeErr)
+		}
+		return payload
+	}
+
+	first := requestCompare()
+	second := requestCompare()
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("expected deterministic compare response, got\nfirst=%#v\nsecond=%#v", first, second)
+	}
+	if !first.ImageDelta.Changed {
+		t.Fatalf("expected image delta to be changed, got %#v", first.ImageDelta)
+	}
+	if !first.ConfigDelta.Changed ||
+		len(first.ConfigDelta.Updated) != 1 ||
+		first.ConfigDelta.Updated[0] != "LOG_LEVEL" {
+		t.Fatalf("expected config delta LOG_LEVEL update, got %#v", first.ConfigDelta)
+	}
+	if first.RenderedDelta.Changed {
+		t.Fatalf("expected rendered delta unchanged after noise filtering, got %#v", first.RenderedDelta)
+	}
+	if !strings.Contains(first.Summary, "Image changed: true") {
+		t.Fatalf("unexpected compare summary: %q", first.Summary)
 	}
 }
 

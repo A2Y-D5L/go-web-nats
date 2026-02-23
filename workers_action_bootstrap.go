@@ -49,9 +49,9 @@ func repoBootstrapWorkerAction(
 			message:   "repo bootstrap skipped for ci operation",
 			artifacts: nil,
 		}
-	case OpDeploy, OpPromote, OpRelease:
+	case OpDeploy, OpPromote, OpRelease, OpRollback:
 		outcome = repoBootstrapOutcome{
-			message:   "repo bootstrap skipped for deployment/promotion/release operation",
+			message:   "repo bootstrap skipped for deployment/promotion/release/rollback operation",
 			artifacts: nil,
 		}
 	default:

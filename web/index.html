@@ -287,6 +287,7 @@
                       <select id="releaseTimelineEnvironment"></select>
                     </label>
                     <button id="refreshReleaseTimelineBtn" type="button" class="btn btn-subtle">Refresh timeline</button>
+                    <button id="openRollbackModalBtn" type="button" class="btn btn-primary" disabled>Review rollback</button>
                   </div>
                 </div>
                 <div id="rollbackTargetSummary" class="summary-card">
@@ -482,6 +483,45 @@
           <div class="modal-actions field-full">
             <button id="promotionModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
             <button id="promotionConfirmBtn" type="submit" class="btn btn-primary" disabled>Confirm move</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="rollbackModal" class="modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="rollbackModalTitle">
+      <button class="modal-backdrop" data-modal-close="rollback" aria-label="Close rollback dialog"></button>
+      <section class="modal-card modal-card-warning" aria-label="Rollback confirmation dialog">
+        <header class="modal-header">
+          <h2 id="rollbackModalTitle">Review rollback</h2>
+          <button id="rollbackModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
+        </header>
+
+        <div class="promotion-warning">
+          <p class="promotion-warning-title">Preview rollback impact before execution.</p>
+          <p id="rollbackPreviewStatus" class="helper-text"></p>
+          <div id="rollbackSummary" class="promotion-summary"></div>
+          <div id="rollbackCompare" class="promotion-preview-list"></div>
+          <div id="rollbackPreviewGates" class="promotion-preview-list"></div>
+          <div id="rollbackPreviewBlockers" class="promotion-preview-list"></div>
+        </div>
+
+        <form id="rollbackConfirmForm" class="form-grid modal-form">
+          <label class="field" for="rollbackScope">
+            <span>Rollback scope</span>
+            <select id="rollbackScope">
+              <option value="code_only">code_only</option>
+              <option value="code_and_config">code_and_config</option>
+              <option value="full_state">full_state</option>
+            </select>
+          </label>
+          <label class="field" for="rollbackOverride">
+            <span>Unsafe override</span>
+            <input id="rollbackOverride" type="checkbox" />
+          </label>
+          <p id="rollbackConfirmHint" class="helper-text field-full"></p>
+          <div class="modal-actions field-full">
+            <button id="rollbackModalCancelBtn" type="button" class="btn btn-subtle">Cancel</button>
+            <button id="rollbackConfirmBtn" type="submit" class="btn btn-danger" disabled>Execute rollback</button>
           </div>
         </form>
       </section>

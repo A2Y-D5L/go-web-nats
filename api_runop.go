@@ -14,17 +14,25 @@ import (
 )
 
 type opRunOptions struct {
-	deployEnv string
-	fromEnv   string
-	toEnv     string
-	delivery  DeliveryLifecycle
+	deployEnv         string
+	fromEnv           string
+	toEnv             string
+	rollbackReleaseID string
+	rollbackEnv       string
+	rollbackScope     RollbackScope
+	rollbackOverride  bool
+	delivery          DeliveryLifecycle
 }
 
 func emptyOpRunOptions() opRunOptions {
 	return opRunOptions{
-		deployEnv: "",
-		fromEnv:   "",
-		toEnv:     "",
+		deployEnv:         "",
+		fromEnv:           "",
+		toEnv:             "",
+		rollbackReleaseID: "",
+		rollbackEnv:       "",
+		rollbackScope:     "",
+		rollbackOverride:  false,
 		delivery: DeliveryLifecycle{
 			Stage:       "",
 			Environment: "",
@@ -78,9 +86,13 @@ func (e projectOpConflictError) Error() string {
 
 func deployOpRunOptions(env string) opRunOptions {
 	return opRunOptions{
-		deployEnv: env,
-		fromEnv:   "",
-		toEnv:     "",
+		deployEnv:         env,
+		fromEnv:           "",
+		toEnv:             "",
+		rollbackReleaseID: "",
+		rollbackEnv:       "",
+		rollbackScope:     "",
+		rollbackOverride:  false,
 		delivery: DeliveryLifecycle{
 			Stage:       DeliveryStageDeploy,
 			Environment: env,
@@ -92,14 +104,42 @@ func deployOpRunOptions(env string) opRunOptions {
 
 func transitionOpRunOptions(fromEnv, toEnv string, stage DeliveryStage) opRunOptions {
 	return opRunOptions{
-		deployEnv: "",
-		fromEnv:   fromEnv,
-		toEnv:     toEnv,
+		deployEnv:         "",
+		fromEnv:           fromEnv,
+		toEnv:             toEnv,
+		rollbackReleaseID: "",
+		rollbackEnv:       "",
+		rollbackScope:     "",
+		rollbackOverride:  false,
 		delivery: DeliveryLifecycle{
 			Stage:       stage,
 			Environment: "",
 			FromEnv:     fromEnv,
 			ToEnv:       toEnv,
+		},
+	}
+}
+
+func rollbackOpRunOptions(
+	environment string,
+	releaseID string,
+	scope RollbackScope,
+	override bool,
+) opRunOptions {
+	environment = normalizeEnvironmentName(environment)
+	return opRunOptions{
+		deployEnv:         "",
+		fromEnv:           "",
+		toEnv:             "",
+		rollbackReleaseID: strings.TrimSpace(releaseID),
+		rollbackEnv:       environment,
+		rollbackScope:     scope,
+		rollbackOverride:  override,
+		delivery: DeliveryLifecycle{
+			Stage:       rollbackDeliveryStage(environment),
+			Environment: environment,
+			FromEnv:     environment,
+			ToEnv:       environment,
 		},
 	}
 }
@@ -393,6 +433,8 @@ func queuedProjectMessage(kind OperationKind) string {
 		return "queued promotion"
 	case OpRelease:
 		return "queued release"
+	case OpRollback:
+		return "queued rollback"
 	default:
 		return statusMessageQueued
 	}
@@ -407,16 +449,20 @@ func newProjectOpMsg(
 	now time.Time,
 ) ProjectOpMsg {
 	return ProjectOpMsg{
-		OpID:      opID,
-		Kind:      kind,
-		ProjectID: projectID,
-		Spec:      spec,
-		DeployEnv: opts.deployEnv,
-		FromEnv:   opts.fromEnv,
-		ToEnv:     opts.toEnv,
-		Delivery:  opts.delivery,
-		Err:       "",
-		At:        now,
+		OpID:              opID,
+		Kind:              kind,
+		ProjectID:         projectID,
+		Spec:              spec,
+		DeployEnv:         opts.deployEnv,
+		FromEnv:           opts.fromEnv,
+		ToEnv:             opts.toEnv,
+		RollbackReleaseID: opts.rollbackReleaseID,
+		RollbackEnv:       opts.rollbackEnv,
+		RollbackScope:     opts.rollbackScope,
+		RollbackOverride:  opts.rollbackOverride,
+		Delivery:          opts.delivery,
+		Err:               "",
+		At:                now,
 	}
 }
 
@@ -435,6 +481,8 @@ func startSubjectForOperation(kind OperationKind) string {
 	case OpPromote:
 		return subjectPromotionStart
 	case OpRelease:
+		return subjectPromotionStart
+	case OpRollback:
 		return subjectPromotionStart
 	default:
 		return subjectProjectOpStart

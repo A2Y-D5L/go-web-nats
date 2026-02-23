@@ -19,6 +19,10 @@ func skipWorkerResult(opMsg ProjectOpMsg, workerName string) WorkerResultMsg {
 	res.DeployEnv = opMsg.DeployEnv
 	res.FromEnv = opMsg.FromEnv
 	res.ToEnv = opMsg.ToEnv
+	res.RollbackReleaseID = opMsg.RollbackReleaseID
+	res.RollbackEnv = opMsg.RollbackEnv
+	res.RollbackScope = opMsg.RollbackScope
+	res.RollbackOverride = opMsg.RollbackOverride
 	res.Delivery = opMsg.Delivery
 	res.Worker = workerName
 	res.Err = opMsg.Err
@@ -39,6 +43,10 @@ func finalizeWorkerResult(
 	res.DeployEnv = opMsg.DeployEnv
 	res.FromEnv = opMsg.FromEnv
 	res.ToEnv = opMsg.ToEnv
+	res.RollbackReleaseID = opMsg.RollbackReleaseID
+	res.RollbackEnv = opMsg.RollbackEnv
+	res.RollbackScope = opMsg.RollbackScope
+	res.RollbackOverride = opMsg.RollbackOverride
 	res.Delivery = opMsg.Delivery
 	if res.Err == "" {
 		res.Err = opMsg.Err

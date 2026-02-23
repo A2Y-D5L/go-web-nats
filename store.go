@@ -630,6 +630,9 @@ func normalizeReleaseRecord(in ReleaseRecord) ReleaseRecord {
 	release.ToEnv = normalizeEnvironmentName(release.ToEnv)
 	release.Image = strings.TrimSpace(release.Image)
 	release.RenderedPath = strings.Trim(strings.TrimSpace(release.RenderedPath), "/")
+	release.ConfigPath = strings.Trim(strings.TrimSpace(release.ConfigPath), "/")
+	release.RollbackSourceRelease = strings.TrimSpace(release.RollbackSourceRelease)
+	release.RollbackScope = RollbackScope(strings.TrimSpace(string(release.RollbackScope)))
 	if release.Environment == "" && release.ToEnv != "" {
 		release.Environment = release.ToEnv
 	}
@@ -644,6 +647,8 @@ func normalizeReleaseRecord(in ReleaseRecord) ReleaseRecord {
 			release.DeliveryStage = DeliveryStagePromote
 		case OpDeploy, OpCreate, OpUpdate, OpDelete, OpCI:
 			release.DeliveryStage = DeliveryStageDeploy
+		case OpRollback:
+			release.DeliveryStage = rollbackDeliveryStage(release.Environment)
 		default:
 			release.DeliveryStage = DeliveryStageDeploy
 		}

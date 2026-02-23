@@ -35,7 +35,7 @@ type ProjectStatus struct {
 	Phase      string    `json:"phase"`        // Ready | Reconciling | Deleting | Error
 	UpdatedAt  time.Time `json:"updated_at"`   //
 	LastOpID   string    `json:"last_op_id"`   //
-	LastOpKind string    `json:"last_op_kind"` // create|update|delete|ci|deploy|promote|release
+	LastOpKind string    `json:"last_op_kind"` // create|update|delete|ci|deploy|promote|release|rollback
 	Message    string    `json:"message,omitempty"`
 }
 
@@ -50,13 +50,22 @@ type Project struct {
 type OperationKind string
 
 const (
-	OpCreate  OperationKind = "create"
-	OpUpdate  OperationKind = "update"
-	OpDelete  OperationKind = "delete"
-	OpCI      OperationKind = "ci"
-	OpDeploy  OperationKind = "deploy"
-	OpPromote OperationKind = "promote"
-	OpRelease OperationKind = "release"
+	OpCreate   OperationKind = "create"
+	OpUpdate   OperationKind = "update"
+	OpDelete   OperationKind = "delete"
+	OpCI       OperationKind = "ci"
+	OpDeploy   OperationKind = "deploy"
+	OpPromote  OperationKind = "promote"
+	OpRelease  OperationKind = "release"
+	OpRollback OperationKind = "rollback"
+)
+
+type RollbackScope string
+
+const (
+	RollbackScopeCodeOnly      RollbackScope = "code_only"
+	RollbackScopeCodeAndConfig RollbackScope = "code_and_config"
+	RollbackScopeFullState     RollbackScope = "full_state"
 )
 
 type DeliveryStage string
@@ -96,17 +105,21 @@ type Operation struct {
 }
 
 type ReleaseRecord struct {
-	ID            string        `json:"id"`
-	ProjectID     string        `json:"project_id"`
-	Environment   string        `json:"environment"`
-	OpID          string        `json:"op_id"`
-	OpKind        OperationKind `json:"op_kind"`
-	DeliveryStage DeliveryStage `json:"delivery_stage"`
-	FromEnv       string        `json:"from_env,omitempty"`
-	ToEnv         string        `json:"to_env,omitempty"`
-	Image         string        `json:"image,omitempty"`
-	RenderedPath  string        `json:"rendered_path,omitempty"`
-	CreatedAt     time.Time     `json:"created_at"`
+	ID                    string        `json:"id"`
+	ProjectID             string        `json:"project_id"`
+	Environment           string        `json:"environment"`
+	OpID                  string        `json:"op_id"`
+	OpKind                OperationKind `json:"op_kind"`
+	DeliveryStage         DeliveryStage `json:"delivery_stage"`
+	FromEnv               string        `json:"from_env,omitempty"`
+	ToEnv                 string        `json:"to_env,omitempty"`
+	Image                 string        `json:"image,omitempty"`
+	RenderedPath          string        `json:"rendered_path,omitempty"`
+	ConfigPath            string        `json:"config_path,omitempty"`
+	RollbackSafe          *bool         `json:"rollback_safe,omitempty"`
+	RollbackSourceRelease string        `json:"rollback_source_release,omitempty"`
+	RollbackScope         RollbackScope `json:"rollback_scope,omitempty"`
+	CreatedAt             time.Time     `json:"created_at"`
 }
 
 var (

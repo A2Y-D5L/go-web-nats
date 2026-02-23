@@ -1199,6 +1199,12 @@ a {
   color: var(--ink-soft);
 }
 
+#rollbackOverride {
+  width: auto;
+  justify-self: start;
+  margin-top: 0.45rem;
+}
+
 .toast-stack {
   position: fixed;
   right: var(--space-3);

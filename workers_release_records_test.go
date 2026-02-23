@@ -28,13 +28,17 @@ func TestWorkers_DeploySuccessWritesReleaseRecord(t *testing.T) {
 	}
 
 	_, err := deploymentWorkerAction(context.Background(), fixture.store, artifacts, ProjectOpMsg{
-		OpID:      opID,
-		Kind:      OpDeploy,
-		ProjectID: projectID,
-		Spec:      spec,
-		DeployEnv: defaultDeployEnvironment,
-		FromEnv:   "",
-		ToEnv:     "",
+		OpID:              opID,
+		Kind:              OpDeploy,
+		ProjectID:         projectID,
+		Spec:              spec,
+		DeployEnv:         defaultDeployEnvironment,
+		FromEnv:           "",
+		ToEnv:             "",
+		RollbackReleaseID: "",
+		RollbackEnv:       "",
+		RollbackScope:     "",
+		RollbackOverride:  false,
 		Delivery: DeliveryLifecycle{
 			Stage:       DeliveryStageDeploy,
 			Environment: defaultDeployEnvironment,
@@ -116,13 +120,17 @@ func TestWorkers_PromotionAndReleaseSuccessWriteReleaseRecords(t *testing.T) {
 	})
 
 	seedMsg := ProjectOpMsg{
-		OpID:      "op-release-record-seed-dev",
-		Kind:      OpCreate,
-		ProjectID: projectID,
-		Spec:      spec,
-		DeployEnv: defaultDeployEnvironment,
-		FromEnv:   "",
-		ToEnv:     "",
+		OpID:              "op-release-record-seed-dev",
+		Kind:              OpCreate,
+		ProjectID:         projectID,
+		Spec:              spec,
+		DeployEnv:         defaultDeployEnvironment,
+		FromEnv:           "",
+		ToEnv:             "",
+		RollbackReleaseID: "",
+		RollbackEnv:       "",
+		RollbackScope:     "",
+		RollbackOverride:  false,
 		Delivery: DeliveryLifecycle{
 			Stage:       DeliveryStageDeploy,
 			Environment: defaultDeployEnvironment,
@@ -147,13 +155,17 @@ func TestWorkers_PromotionAndReleaseSuccessWriteReleaseRecords(t *testing.T) {
 	const promoteOpID = "op-release-record-promote"
 	putWorkerRuntimeProjectAndOp(t, fixture.store, projectID, promoteOpID, OpPromote, spec)
 	_, err := promotionWorkerAction(context.Background(), fixture.store, artifacts, ProjectOpMsg{
-		OpID:      promoteOpID,
-		Kind:      OpPromote,
-		ProjectID: projectID,
-		Spec:      spec,
-		DeployEnv: "",
-		FromEnv:   "dev",
-		ToEnv:     "staging",
+		OpID:              promoteOpID,
+		Kind:              OpPromote,
+		ProjectID:         projectID,
+		Spec:              spec,
+		DeployEnv:         "",
+		FromEnv:           "dev",
+		ToEnv:             "staging",
+		RollbackReleaseID: "",
+		RollbackEnv:       "",
+		RollbackScope:     "",
+		RollbackOverride:  false,
 		Delivery: DeliveryLifecycle{
 			Stage:       DeliveryStagePromote,
 			Environment: "",
@@ -208,13 +220,17 @@ func TestWorkers_PromotionAndReleaseSuccessWriteReleaseRecords(t *testing.T) {
 	const releaseOpID = "op-release-record-release"
 	putWorkerRuntimeProjectAndOp(t, fixture.store, projectID, releaseOpID, OpRelease, spec)
 	_, err = promotionWorkerAction(context.Background(), fixture.store, artifacts, ProjectOpMsg{
-		OpID:      releaseOpID,
-		Kind:      OpRelease,
-		ProjectID: projectID,
-		Spec:      spec,
-		DeployEnv: "",
-		FromEnv:   "staging",
-		ToEnv:     "prod",
+		OpID:              releaseOpID,
+		Kind:              OpRelease,
+		ProjectID:         projectID,
+		Spec:              spec,
+		DeployEnv:         "",
+		FromEnv:           "staging",
+		ToEnv:             "prod",
+		RollbackReleaseID: "",
+		RollbackEnv:       "",
+		RollbackScope:     "",
+		RollbackOverride:  false,
 		Delivery: DeliveryLifecycle{
 			Stage:       DeliveryStageRelease,
 			Environment: "",

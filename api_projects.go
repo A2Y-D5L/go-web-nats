@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"gopkg.in/yaml.v3"
 )
 
 func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +235,10 @@ func (a *API) handleProjectReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == projectRelPathPartsMin+1 {
+		if strings.EqualFold(strings.TrimSpace(parts[2]), "compare") {
+			a.handleProjectReleaseCompare(w, r, project.ID)
+			return
+		}
 		a.handleProjectReleaseDetail(w, r, projectID, strings.TrimSpace(parts[2]))
 		return
 	}
@@ -302,6 +310,46 @@ func (a *API) handleProjectReleaseDetail(
 	writeJSON(w, http.StatusOK, release)
 }
 
+func (a *API) handleProjectReleaseCompare(w http.ResponseWriter, r *http.Request, projectID string) {
+	fromID := strings.TrimSpace(r.URL.Query().Get("from"))
+	toID := strings.TrimSpace(r.URL.Query().Get("to"))
+	if fromID == "" || toID == "" {
+		http.Error(w, "from and to query parameters are required", http.StatusBadRequest)
+		return
+	}
+
+	fromRelease, err := a.store.GetRelease(r.Context(), fromID)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to read release", http.StatusInternalServerError)
+		return
+	}
+	toRelease, err := a.store.GetRelease(r.Context(), toID)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to read release", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(fromRelease.ProjectID) != strings.TrimSpace(projectID) ||
+		strings.TrimSpace(toRelease.ProjectID) != strings.TrimSpace(projectID) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	response, err := a.buildReleaseCompareResponseFromRecords(r.Context(), projectID, fromRelease, toRelease)
+	if err != nil {
+		http.Error(w, "failed to compare releases", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func parseProjectReleaseLimitParam(raw string) (int, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -312,6 +360,393 @@ func parseProjectReleaseLimitParam(raw string) (int, error) {
 		return 0, errors.New("bad limit")
 	}
 	return normalizeProjectReleaseLimit(parsed), nil
+}
+
+func (a *API) buildReleaseCompareResponseFromRecords(
+	ctx context.Context,
+	projectID string,
+	fromRelease ReleaseRecord,
+	toRelease ReleaseRecord,
+) (ReleaseCompareResponse, error) {
+	projectID = strings.TrimSpace(projectID)
+	fromRelease = normalizeReleaseRecord(fromRelease)
+	toRelease = normalizeReleaseRecord(toRelease)
+
+	imageFrom := strings.TrimSpace(fromRelease.Image)
+	imageTo := strings.TrimSpace(toRelease.Image)
+	imageDelta := ReleaseCompareDelta{
+		Changed: imageFrom != imageTo,
+		From:    imageFrom,
+		To:      imageTo,
+		Added:   nil,
+		Removed: nil,
+		Updated: nil,
+	}
+
+	fromVars, err := a.readReleaseConfigVars(ctx, projectID, fromRelease)
+	if err != nil {
+		return ReleaseCompareResponse{}, err
+	}
+	toVars, err := a.readReleaseConfigVars(ctx, projectID, toRelease)
+	if err != nil {
+		return ReleaseCompareResponse{}, err
+	}
+	addedVars, removedVars, updatedVars := diffStringMap(fromVars, toVars)
+	configDelta := ReleaseCompareDelta{
+		Changed: len(addedVars) > 0 || len(removedVars) > 0 || len(updatedVars) > 0,
+		From:    stableConfigFingerprint(fromVars),
+		To:      stableConfigFingerprint(toVars),
+		Added:   addedVars,
+		Removed: removedVars,
+		Updated: updatedVars,
+	}
+
+	fromRendered, fromRenderedHash, err := a.readCanonicalRenderedSnapshot(ctx, projectID, fromRelease)
+	if err != nil {
+		return ReleaseCompareResponse{}, err
+	}
+	toRendered, toRenderedHash, err := a.readCanonicalRenderedSnapshot(ctx, projectID, toRelease)
+	if err != nil {
+		return ReleaseCompareResponse{}, err
+	}
+	renderedDelta := ReleaseCompareDelta{
+		Changed: fromRendered != toRendered,
+		From:    fromRenderedHash,
+		To:      toRenderedHash,
+		Added:   nil,
+		Removed: nil,
+		Updated: nil,
+	}
+
+	fromCopy := fromRelease
+	toCopy := toRelease
+	return ReleaseCompareResponse{
+		FromID:      strings.TrimSpace(fromRelease.ID),
+		ToID:        strings.TrimSpace(toRelease.ID),
+		FromRelease: &fromCopy,
+		ToRelease:   &toCopy,
+		Summary: fmt.Sprintf(
+			"Image changed: %t. Config vars: +%d -%d ~%d. Rendered manifest changed (noise-filtered): %t.",
+			imageDelta.Changed,
+			len(configDelta.Added),
+			len(configDelta.Removed),
+			len(configDelta.Updated),
+			renderedDelta.Changed,
+		),
+		ImageDelta:    imageDelta,
+		ConfigDelta:   configDelta,
+		RenderedDelta: renderedDelta,
+	}, nil
+}
+
+func (a *API) readReleaseConfigVars(
+	ctx context.Context,
+	projectID string,
+	release ReleaseRecord,
+) (map[string]string, error) {
+	raw, err := a.readReleaseDeploymentSnapshot(ctx, projectID, release)
+	if err != nil || len(raw) == 0 {
+		return map[string]string{}, err
+	}
+	return parseDeploymentEnvVars(raw), nil
+}
+
+func (a *API) readReleaseDeploymentSnapshot(
+	_ context.Context,
+	projectID string,
+	release ReleaseRecord,
+) ([]byte, error) {
+	if a == nil || a.artifacts == nil {
+		return nil, nil
+	}
+	paths := []string{}
+	if path := strings.Trim(strings.TrimSpace(release.ConfigPath), "/"); path != "" {
+		paths = append(paths, path)
+	}
+	if renderedPath := strings.Trim(strings.TrimSpace(release.RenderedPath), "/"); renderedPath != "" {
+		if base, ok := strings.CutSuffix(renderedPath, "/rendered.yaml"); ok {
+			paths = append(paths, base+"/deployment.yaml")
+		}
+		paths = append(paths, renderedPath)
+	}
+	for _, path := range paths {
+		raw, err := a.artifacts.ReadFile(projectID, path)
+		if err == nil {
+			return raw, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to read release artifact %q: %w", path, err)
+		}
+	}
+	return nil, nil
+}
+
+func parseDeploymentEnvVars(raw []byte) map[string]string {
+	vars := map[string]string{}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	for {
+		doc, done := decodeDeploymentManifestDocument(decoder)
+		if done {
+			break
+		}
+		if len(doc) == 0 {
+			continue
+		}
+		collectDeploymentEnvVars(vars, doc)
+	}
+	return vars
+}
+
+func decodeDeploymentManifestDocument(decoder *yaml.Decoder) (map[string]any, bool) {
+	var doc map[string]any
+	err := decoder.Decode(&doc)
+	if errors.Is(err, io.EOF) {
+		return nil, true
+	}
+	if err != nil || len(doc) == 0 {
+		return nil, false
+	}
+	return doc, false
+}
+
+func collectDeploymentEnvVars(vars map[string]string, doc map[string]any) {
+	if !isDeploymentManifestKind(doc) {
+		return
+	}
+	for _, containerRaw := range deploymentContainers(doc) {
+		collectContainerEnvVars(vars, valueAsMap(containerRaw))
+	}
+}
+
+func isDeploymentManifestKind(doc map[string]any) bool {
+	return strings.EqualFold(
+		strings.TrimSpace(valueAsString(doc["kind"])),
+		"Deployment",
+	)
+}
+
+func deploymentContainers(doc map[string]any) []any {
+	spec := valueAsMap(doc["spec"])
+	template := valueAsMap(spec["template"])
+	templateSpec := valueAsMap(valueAsMap(template["spec"]))
+	return valueAsSlice(templateSpec["containers"])
+}
+
+func collectContainerEnvVars(vars map[string]string, container map[string]any) {
+	for _, envRaw := range valueAsSlice(container["env"]) {
+		envEntry := valueAsMap(envRaw)
+		name := strings.TrimSpace(valueAsString(envEntry["name"]))
+		if name == "" {
+			continue
+		}
+		if value, ok := envEntry["value"]; ok {
+			vars[name] = strings.TrimSpace(valueAsString(value))
+			continue
+		}
+		if _, ok := envEntry["valueFrom"]; ok {
+			vars[name] = "<valueFrom>"
+		}
+	}
+}
+
+func valueAsMap(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	default:
+		return map[string]any{}
+	}
+}
+
+func valueAsSlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	default:
+		return nil
+	}
+}
+
+func valueAsString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+func diffStringMap(from map[string]string, to map[string]string) ([]string, []string, []string) {
+	added := []string{}
+	removed := []string{}
+	updated := []string{}
+
+	for key, toValue := range to {
+		fromValue, exists := from[key]
+		if !exists {
+			added = append(added, key)
+			continue
+		}
+		if fromValue != toValue {
+			updated = append(updated, key)
+		}
+	}
+	for key := range from {
+		if _, exists := to[key]; !exists {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	sort.Strings(updated)
+	return added, removed, updated
+}
+
+func stableConfigFingerprint(vars map[string]string) string {
+	if len(vars) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(vars))
+	for key := range vars {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, key+"="+vars[key])
+	}
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+func (a *API) readCanonicalRenderedSnapshot(
+	_ context.Context,
+	projectID string,
+	release ReleaseRecord,
+) (string, string, error) {
+	if a == nil || a.artifacts == nil {
+		return "", "", nil
+	}
+	renderedPath := strings.Trim(strings.TrimSpace(release.RenderedPath), "/")
+	if renderedPath == "" {
+		return "", "", nil
+	}
+	raw, err := a.artifacts.ReadFile(projectID, renderedPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("failed to read rendered snapshot %q: %w", renderedPath, err)
+	}
+	canonical := canonicalManifestForCompare(raw)
+	if canonical == "" {
+		return "", "", nil
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return canonical, hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalManifestForCompare(raw []byte) string {
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	canonicalDocs := []string{}
+	for {
+		var doc any
+		err := decoder.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return canonicalManifestLinesFallback(raw)
+		}
+		if doc == nil {
+			continue
+		}
+		sanitized := sanitizeManifestCompareValue(doc, "")
+		encoded, marshalErr := json.Marshal(sanitized)
+		if marshalErr != nil {
+			return canonicalManifestLinesFallback(raw)
+		}
+		canonicalDocs = append(canonicalDocs, string(encoded))
+	}
+	if len(canonicalDocs) == 0 {
+		return canonicalManifestLinesFallback(raw)
+	}
+	return strings.Join(canonicalDocs, "\n")
+}
+
+func sanitizeManifestCompareValue(value any, parentKey string) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return sanitizeManifestCompareMap(typed, parentKey)
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, sanitizeManifestCompareValue(item, parentKey))
+		}
+		return out
+	default:
+		return typed
+	}
+}
+
+func sanitizeManifestCompareMap(in map[string]any, parentKey string) map[string]any {
+	if len(in) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		trimmedKey := strings.TrimSpace(key)
+		if shouldDropManifestCompareField(parentKey, trimmedKey) {
+			continue
+		}
+		if parentKey == "annotations" && shouldDropManifestCompareAnnotation(trimmedKey) {
+			continue
+		}
+		out[trimmedKey] = sanitizeManifestCompareValue(value, trimmedKey)
+	}
+	return out
+}
+
+func shouldDropManifestCompareField(parentKey string, key string) bool {
+	if parentKey != "metadata" {
+		return false
+	}
+	switch key {
+	case "creationTimestamp", "resourceVersion", "uid", "managedFields", "generation":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldDropManifestCompareAnnotation(key string) bool {
+	switch key {
+	case "kubectl.kubernetes.io/last-applied-configuration", "deployment.kubernetes.io/revision":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalManifestLinesFallback(raw []byte) string {
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	lines := []string{}
+	for scanner.Scan() {
+		trimmed := strings.TrimSpace(scanner.Text())
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "creationTimestamp:") ||
+			strings.HasPrefix(trimmed, "resourceVersion:") ||
+			strings.HasPrefix(trimmed, "uid:") ||
+			strings.HasPrefix(trimmed, "managedFields:") ||
+			strings.Contains(trimmed, "kubectl.kubernetes.io/last-applied-configuration") ||
+			strings.Contains(trimmed, "deployment.kubernetes.io/revision") {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
 }
 
 type projectJourney struct {
@@ -605,6 +1040,12 @@ func isRecentDeliveryForEnvironment(op Operation, env string) bool {
 		return delivered == target
 	case OpPromote, OpRelease:
 		delivered := normalizeEnvironmentName(op.Delivery.ToEnv)
+		return delivered != "" && delivered == target
+	case OpRollback:
+		delivered := normalizeEnvironmentName(op.Delivery.Environment)
+		if delivered == "" {
+			delivered = normalizeEnvironmentName(op.Delivery.ToEnv)
+		}
 		return delivered != "" && delivered == target
 	case OpCreate, OpUpdate, OpDelete, OpCI:
 		return false

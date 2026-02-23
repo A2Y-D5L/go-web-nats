@@ -3,7 +3,7 @@ function openModal(modalName) {
   if (!dom.modals[modalName]) return;
 
   const project = getSelectedProject();
-  if ((modalName === "update" || modalName === "delete" || modalName === "promotion") && !project) {
+  if ((modalName === "update" || modalName === "delete" || modalName === "promotion" || modalName === "rollback") && !project) {
     setStatus("Select an app first.", "warning");
     return;
   }
@@ -17,6 +17,8 @@ function openModal(modalName) {
     dom.text.deleteModalTarget.textContent = `Target app: ${appName}`;
     dom.inputs.deleteConfirm.value = "";
     syncDeleteConfirmationState();
+  } else if (modalName === "rollback") {
+    syncRollbackConfirmationState();
   }
 
   for (const [key, modalEl] of Object.entries(dom.modals)) {
@@ -53,6 +55,230 @@ function normalizedPromotionPreviewEntries(value) {
 
 function promotionPreviewHasBlockers() {
   return normalizedPromotionPreviewEntries(state.promotion.blockers).length > 0;
+}
+
+function normalizedRollbackPreviewEntries(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function rollbackPreviewHasBlockers() {
+  return normalizedRollbackPreviewEntries(state.rollback.blockers).length > 0;
+}
+
+function rollbackSelectedReleaseRecord() {
+  const selectedID = String(state.releaseTimeline.selectedReleaseID || state.rollback.releaseID || "").trim();
+  return (
+    state.releaseTimeline.items.find((item) => String(item?.id || "").trim() === selectedID) ||
+    null
+  );
+}
+
+function renderRollbackPreviewDetails(project, releaseRecord, preview) {
+  const blockers = normalizedRollbackPreviewEntries(preview?.blockers);
+  const gates = normalizedRollbackPreviewEntries(preview?.gates);
+  const compare = preview?.compare || null;
+
+  dom.text.rollbackSummary.replaceChildren(
+    makeElem("p", "", `App ${project.spec?.name || project.id}`),
+    makeElem("p", "", `Environment ${state.rollback.environment || "-"}`),
+    makeElem("p", "", `Release ${String(state.rollback.releaseID || "").slice(0, 8) || "-"}`),
+    makeElem("p", "", `Scope ${state.rollback.scope || "code_only"}`),
+    makeElem("p", "", `Image ${String(releaseRecord?.image || preview?.source_release?.image || "unknown")}`),
+    makeElem(
+      "p",
+      "",
+      `Safety override ${state.rollback.override ? "enabled" : "disabled"}`
+    )
+  );
+
+  dom.containers.rollbackCompare.replaceChildren();
+  dom.containers.rollbackPreviewGates.replaceChildren();
+  dom.containers.rollbackPreviewBlockers.replaceChildren();
+
+  if (compare) {
+    dom.containers.rollbackCompare.appendChild(makeElem("p", "promotion-preview-title", "Release compare"));
+    const compareList = makeElem("ul", "promotion-preview-items");
+    compareList.appendChild(
+      makeElem("li", "promotion-preview-item", String(compare.summary || "Compare summary unavailable."))
+    );
+    compareList.appendChild(
+      makeElem(
+        "li",
+        "promotion-preview-item",
+        `Image changed ${compare.image_delta?.changed ? "yes" : "no"} (${compare.image_delta?.from || "-"} -> ${
+          compare.image_delta?.to || "-"
+        })`
+      )
+    );
+    compareList.appendChild(
+      makeElem(
+        "li",
+        "promotion-preview-item",
+        `Config vars changed ${compare.config_delta?.changed ? "yes" : "no"} (+${
+          (compare.config_delta?.added || []).length
+        } -${(compare.config_delta?.removed || []).length} ~${(compare.config_delta?.updated || []).length})`
+      )
+    );
+    compareList.appendChild(
+      makeElem(
+        "li",
+        "promotion-preview-item",
+        `Rendered manifest changed ${compare.rendered_delta?.changed ? "yes" : "no"}`
+      )
+    );
+    dom.containers.rollbackCompare.appendChild(compareList);
+  }
+
+  if (gates.length) {
+    dom.containers.rollbackPreviewGates.appendChild(makeElem("p", "promotion-preview-title", "Preflight gates"));
+    const gateList = makeElem("ul", "promotion-preview-items");
+    for (const gate of gates) {
+      const status = String(gate?.status || "warning").trim().toLowerCase();
+      const row = makeElem("li", `promotion-preview-item promotion-preview-item--${status}`);
+      const title = String(gate?.title || gate?.code || "Gate").trim();
+      row.append(makeElem("span", "promotion-preview-label", `${title} (${status})`));
+      if (gate?.detail) {
+        row.append(makeElem("span", "promotion-preview-meta", String(gate.detail)));
+      }
+      gateList.appendChild(row);
+    }
+    dom.containers.rollbackPreviewGates.appendChild(gateList);
+  }
+
+  if (blockers.length) {
+    dom.containers.rollbackPreviewBlockers.appendChild(makeElem("p", "promotion-preview-title", "Blockers"));
+    const blockerList = makeElem("ul", "promotion-preview-items");
+    for (const blocker of blockers) {
+      const row = makeElem("li", "promotion-preview-item promotion-preview-item--blocked");
+      row.append(makeElem("span", "promotion-preview-label", String(blocker?.message || blocker?.code || "Blocked")));
+      if (blocker?.why) {
+        row.append(makeElem("span", "promotion-preview-meta", String(blocker.why)));
+      }
+      if (blocker?.next_action) {
+        row.append(makeElem("span", "promotion-preview-meta", `Next: ${String(blocker.next_action)}`));
+      }
+      blockerList.appendChild(row);
+    }
+    dom.containers.rollbackPreviewBlockers.appendChild(blockerList);
+  }
+}
+
+function syncRollbackConfirmationState() {
+  const selected = rollbackSelectedReleaseRecord();
+  const hasSelection = Boolean(selected && state.rollback.environment && state.rollback.releaseID);
+  const blocked = rollbackPreviewHasBlockers();
+  const ready = Boolean(state.rollback.preview && !state.rollback.previewLoading && !blocked);
+
+  dom.inputs.rollbackScope.value = state.rollback.scope || "code_only";
+  dom.inputs.rollbackOverride.checked = Boolean(state.rollback.override);
+  dom.buttons.rollbackConfirm.disabled = !ready;
+  dom.buttons.rollbackConfirm.textContent = state.rollback.previewLoading ? "Running preflight..." : "Execute rollback";
+
+  if (!hasSelection) {
+    dom.text.rollbackPreviewStatus.textContent = "Choose a release target before running rollback preview.";
+    dom.text.rollbackConfirmHint.textContent = "Select a release from timeline, then review rollback.";
+    return;
+  }
+
+  if (state.rollback.previewLoading) {
+    dom.text.rollbackPreviewStatus.textContent = "Rollback preflight is running...";
+    dom.text.rollbackConfirmHint.textContent = "Wait for preflight checks to complete.";
+    return;
+  }
+
+  if (!state.rollback.preview) {
+    dom.text.rollbackPreviewStatus.textContent = "Rollback preview unavailable. Run preflight first.";
+    dom.text.rollbackConfirmHint.textContent = "Use current scope to run rollback preflight before execute.";
+    return;
+  }
+
+  if (blocked) {
+    dom.text.rollbackPreviewStatus.textContent = "Rollback preflight is blocked. Resolve blockers or set override if allowed.";
+    dom.text.rollbackConfirmHint.textContent = "Execution is disabled while blockers are present.";
+    return;
+  }
+
+  dom.text.rollbackPreviewStatus.textContent = "Rollback preflight passed. Execute when ready.";
+  dom.text.rollbackConfirmHint.textContent = "Execution will enqueue a rollback operation with this scope.";
+}
+
+async function loadRollbackPreview({ silent = false } = {}) {
+  const project = getSelectedProject();
+  const selected = rollbackSelectedReleaseRecord();
+  if (!project || !selected) {
+    if (!silent) {
+      setStatus("Select a rollback target release first.", "warning", { toast: true });
+    }
+    return false;
+  }
+
+  state.rollback.environment = String(selected.environment || state.releaseTimeline.environment || "").trim().toLowerCase();
+  state.rollback.releaseID = String(selected.id || "").trim();
+  state.rollback.previewLoading = true;
+  state.rollback.previewError = "";
+  state.rollback.preview = null;
+  state.rollback.blockers = [];
+  syncRollbackConfirmationState();
+
+  if (!silent) {
+    setStatus(
+      `Running rollback preview for ${state.rollback.environment || "environment"} using release ${state.rollback.releaseID.slice(0, 8)}...`,
+      "info"
+    );
+  }
+
+  try {
+    const preview = await requestAPI("POST", "/api/events/rollback/preview", {
+      project_id: project.id,
+      environment: state.rollback.environment,
+      release_id: state.rollback.releaseID,
+      scope: state.rollback.scope,
+      override: Boolean(state.rollback.override),
+    });
+    state.rollback.preview = preview && typeof preview === "object" ? preview : {};
+    state.rollback.blockers = normalizedRollbackPreviewEntries(state.rollback.preview?.blockers);
+    renderRollbackPreviewDetails(project, selected, state.rollback.preview);
+    syncRollbackConfirmationState();
+    return true;
+  } catch (error) {
+    state.rollback.previewError = error.message;
+    state.rollback.preview = null;
+    state.rollback.blockers = [];
+    syncRollbackConfirmationState();
+    if (!silent) {
+      setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
+    }
+    return false;
+  } finally {
+    state.rollback.previewLoading = false;
+    syncRollbackConfirmationState();
+  }
+}
+
+async function openRollbackConfirmation() {
+  const project = getSelectedProject();
+  if (!project) {
+    setStatus("Select an app first.", "warning");
+    return;
+  }
+  const selected = rollbackSelectedReleaseRecord();
+  if (!selected) {
+    setStatus("Select a rollback target release from the timeline first.", "warning", { toast: true });
+    return;
+  }
+
+  openModal("rollback");
+  renderRollbackPreviewDetails(project, selected, null);
+  syncRollbackConfirmationState();
+  const ok = await loadRollbackPreview({ silent: false });
+  if (!ok) {
+    return;
+  }
+  if (rollbackPreviewHasBlockers()) {
+    setStatus("Rollback preview found blockers. Resolve blockers before execution.", "warning", { toast: true });
+    return;
+  }
+  setStatus("Rollback preview is ready. Execute when ready.", "success");
 }
 
 function renderPromotionPreviewDetails(project, validation, preview) {
@@ -972,6 +1198,69 @@ async function handlePromotionConfirmSubmit(event) {
       toast: true,
     });
   } catch (error) {
+    setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
+  }
+}
+
+async function handleRollbackConfirmSubmit(event) {
+  event.preventDefault();
+
+  const project = getSelectedProject();
+  const selected = rollbackSelectedReleaseRecord();
+  if (!project || !selected) {
+    setStatus("Select a rollback target release first.", "warning", { toast: true });
+    return;
+  }
+  if (state.rollback.previewLoading) {
+    setStatus("Rollback preview is still running. Wait for it to complete.", "warning");
+    return;
+  }
+  if (!state.rollback.preview) {
+    setStatus("Rollback preview is unavailable. Run preflight before execution.", "warning", { toast: true });
+    return;
+  }
+  if (rollbackPreviewHasBlockers()) {
+    setStatus("Rollback preview has blockers. Resolve blockers before execution.", "warning", { toast: true });
+    syncRollbackConfirmationState();
+    return;
+  }
+
+  setStatus(
+    `Starting rollback for ${state.rollback.environment} with scope ${state.rollback.scope}...`,
+    "warning"
+  );
+
+  try {
+    const response = await requestAPI("POST", "/api/events/rollback", {
+      project_id: project.id,
+      environment: state.rollback.environment,
+      release_id: state.rollback.releaseID,
+      scope: state.rollback.scope,
+      override: Boolean(state.rollback.override),
+    });
+
+    if (response.op?.id) {
+      primeAcceptedOperation(response.op);
+      await startOperationMonitor(response.op.id, { announce: true });
+    }
+
+    closeModal("rollback");
+    await refreshProjects({ silent: true, preserveSelection: true });
+    setStatus(
+      `Rollback for ${state.rollback.environment} accepted. Live activity is now tracking progress.`,
+      "success",
+      { toast: true }
+    );
+  } catch (error) {
+    if (error?.status === 400) {
+      const payload = error?.payload;
+      if (payload && typeof payload === "object") {
+        state.rollback.preview = payload;
+        state.rollback.blockers = normalizedRollbackPreviewEntries(payload?.blockers);
+        renderRollbackPreviewDetails(project, selected, payload);
+        syncRollbackConfirmationState();
+      }
+    }
     setStatus(statusMessageFromError(error), statusToneFromError(error), { toast: true });
   }
 }

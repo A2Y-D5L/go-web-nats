@@ -109,6 +109,24 @@ function resetReleaseTimeline() {
   state.releaseTimeline.environment = "";
   state.releaseTimeline.selectedReleaseID = "";
   dom.inputs.releaseTimelineEnvironment.replaceChildren();
+  resetRollbackReviewState();
+}
+
+function resetRollbackReviewState() {
+  state.rollback.environment = "";
+  state.rollback.releaseID = "";
+  state.rollback.scope = "code_only";
+  state.rollback.override = false;
+  state.rollback.preview = null;
+  state.rollback.previewLoading = false;
+  state.rollback.previewError = "";
+  state.rollback.blockers = [];
+  if (dom.inputs.rollbackScope) {
+    dom.inputs.rollbackScope.value = state.rollback.scope;
+  }
+  if (dom.inputs.rollbackOverride) {
+    dom.inputs.rollbackOverride.checked = false;
+  }
 }
 
 async function loadOverview({ silent = false } = {}) {

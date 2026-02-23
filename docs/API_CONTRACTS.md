@@ -72,7 +72,7 @@ Conflict (`create`/`update`/`delete`/any project op trigger while the same proje
   "accepted": false,
   "reason": "project already has an active operation (...)",
   "project_id": "project-id",
-  "requested_kind": "create | update | delete | ci | deploy | promote | release",
+  "requested_kind": "create | update | delete | ci | deploy | promote | release | rollback",
   "active_op": { "id": "op-id", "kind": "deploy", "status": "running" },
   "next_step": "wait for the active operation to reach done or error, then retry"
 }
@@ -372,6 +372,125 @@ Conflict response (project has a queued/running operation):
 - Status: `409 Conflict`
 - Body uses the same shape as the conflict response above.
 
+## Rollback Events
+
+### Rollback Preview
+
+Endpoint:
+
+- `POST /api/events/rollback/preview`
+
+Request body:
+
+```json
+{
+  "project_id": "project-id",
+  "environment": "staging",
+  "release_id": "release-id",
+  "scope": "code_only | code_and_config | full_state",
+  "override": false
+}
+```
+
+Purpose:
+
+- Returns preflight rollback gates/blockers and optional compare details.
+
+Response fields:
+
+- `project_id`
+- `environment`
+- `release_id`
+- `scope`
+- `override`
+- `ready`
+- `source_release` (when selected release resolves)
+- `current_release` (when target environment has a current release)
+- `compare` (when both source + current release are available)
+- `gates[]` with `status`: `passed | blocked`
+- `blockers[]` with:
+  - `code`
+  - `message`
+  - `why`
+  - `next_action`
+
+Current blocker codes:
+
+- `active_operation`
+- `rollback_scope_invalid`
+- `rollback_environment_unavailable`
+- `release_unavailable`
+- `rollback_release_missing_image`
+- `rollback_scope_config_missing`
+- `rollback_scope_rendered_missing`
+- `rollback_not_safe`
+
+Success response:
+
+- Status: `200 OK`
+
+```json
+{
+  "project_id": "project-id",
+  "environment": "staging",
+  "release_id": "release-id",
+  "scope": "code_only",
+  "override": false,
+  "ready": true,
+  "source_release": {},
+  "current_release": {},
+  "compare": {},
+  "gates": [],
+  "blockers": []
+}
+```
+
+### Rollback Execute
+
+Endpoint:
+
+- `POST /api/events/rollback`
+
+Request body:
+
+```json
+{
+  "project_id": "project-id",
+  "environment": "staging",
+  "release_id": "release-id",
+  "scope": "code_only | code_and_config | full_state",
+  "override": false
+}
+```
+
+Rules:
+
+- Uses the same request contract as rollback preview.
+- Server re-runs preview checks before enqueueing rollback.
+- When preview is not ready, request is rejected with preview payload.
+
+Success response:
+
+- Status: `202 Accepted`
+
+```json
+{
+  "accepted": true,
+  "project": {},
+  "op": {}
+}
+```
+
+Blocked response (preflight failed):
+
+- Status: `400 Bad Request`
+- Body matches rollback preview response shape.
+
+Conflict response (project has a queued/running operation):
+
+- Status: `409 Conflict`
+- Body uses the same shape as the conflict response above.
+
 ## System Status
 
 Endpoint:
@@ -442,6 +561,7 @@ Endpoints:
 - `GET /api/projects/{id}/ops`
 - `GET /api/projects/{id}/releases`
 - `GET /api/projects/{id}/releases/{release_id}`
+- `GET /api/projects/{id}/releases/compare?from=<release_id>&to=<release_id>`
 
 `POST` and `PUT` accept `ProjectSpec` directly as request JSON.
 
@@ -576,7 +696,7 @@ Response:
   "items": [
     {
       "id": "op-id",
-      "kind": "create | update | delete | ci | deploy | promote | release",
+      "kind": "create | update | delete | ci | deploy | promote | release | rollback",
       "status": "queued | running | done | error",
       "requested": "2026-02-22T12:30:00Z",
       "finished": "2026-02-22T12:31:00Z",
@@ -596,6 +716,7 @@ Endpoints:
 
 - `GET /api/projects/{id}/releases`
 - `GET /api/projects/{id}/releases/{release_id}`
+- `GET /api/projects/{id}/releases/compare?from=<release_id>&to=<release_id>`
 
 Query params for list:
 
@@ -617,12 +738,16 @@ List response:
       "project_id": "project-id",
       "environment": "staging",
       "op_id": "op-id",
-      "op_kind": "deploy | promote | release",
+      "op_kind": "deploy | promote | release | rollback",
       "delivery_stage": "deploy | promote | release",
       "from_env": "dev",
       "to_env": "staging",
       "image": "example.local/my-app:abc123",
       "rendered_path": "promotions/dev-to-staging/rendered.yaml",
+      "config_path": "promotions/dev-to-staging/deployment.yaml",
+      "rollback_safe": true,
+      "rollback_source_release": "",
+      "rollback_scope": "",
       "created_at": "2026-02-23T12:34:56Z"
     }
   ],
@@ -633,6 +758,51 @@ List response:
 Detail response:
 
 - Returns the same release record shape as one list item.
+
+Compare response endpoint:
+
+- `GET /api/projects/{id}/releases/compare?from=<release_id>&to=<release_id>`
+
+Compare query rules:
+
+- `from` and `to` are required release ids.
+- Both release records must belong to the same project id in path.
+
+Compare response:
+
+```json
+{
+  "from_id": "release-from-id",
+  "to_id": "release-to-id",
+  "from_release": {},
+  "to_release": {},
+  "summary": "Image changed: true. Config vars: +1 -0 ~2. Rendered manifest changed (noise-filtered): false.",
+  "image_delta": {
+    "changed": true,
+    "from": "example.local/my-app:1111",
+    "to": "example.local/my-app:2222",
+    "added": [],
+    "removed": [],
+    "updated": []
+  },
+  "config_delta": {
+    "changed": true,
+    "from": "sha256-fingerprint",
+    "to": "sha256-fingerprint",
+    "added": ["FEATURE_FLAG"],
+    "removed": [],
+    "updated": ["LOG_LEVEL"]
+  },
+  "rendered_delta": {
+    "changed": false,
+    "from": "sha256-fingerprint",
+    "to": "sha256-fingerprint",
+    "added": [],
+    "removed": [],
+    "updated": []
+  }
+}
+```
 
 Common status codes:
 
@@ -652,7 +822,7 @@ Response is an `Operation` object with step-level worker details. Process operat
 
 ```json
 {
-  "kind": "deploy | promote | release",
+  "kind": "deploy | promote | release | rollback",
   "delivery": {
     "stage": "deploy | promote | release",
     "environment": "dev",
@@ -729,7 +899,7 @@ Payload enrichment fields (when available):
   - `to_env`
 - `hint`
 
-Promotion/release staged worker order:
+Promotion/release/rollback staged worker order:
 
 - `promoter.plan`
 - `promoter.render`

@@ -486,7 +486,7 @@ func opTotalSteps(kind OperationKind) int {
 		return opTotalStepsCIChain
 	case OpDeploy:
 		return opTotalStepsSingle
-	case OpPromote, OpRelease:
+	case OpPromote, OpRelease, OpRollback:
 		return opTotalStepsTransition
 	default:
 		return 0

@@ -55,7 +55,7 @@ func manifestRendererWorkerAction(
 		)
 	case OpDelete:
 		outcome, err = runManifestRendererDelete(ctx, store, artifacts, msg)
-	case OpDeploy, OpPromote, OpRelease:
+	case OpDeploy, OpPromote, OpRelease, OpRollback:
 		err = fmt.Errorf("manifest renderer does not handle %s operations", msg.Kind)
 	default:
 		err = fmt.Errorf("unknown op kind: %s", msg.Kind)
@@ -235,17 +235,21 @@ func persistDeployReleaseRecord(
 		ctx,
 		store,
 		ReleaseRecord{
-			ID:            "",
-			ProjectID:     msg.ProjectID,
-			Environment:   targetEnv,
-			OpID:          msg.OpID,
-			OpKind:        msg.Kind,
-			DeliveryStage: DeliveryStageDeploy,
-			FromEnv:       "",
-			ToEnv:         targetEnv,
-			Image:         deployedImage,
-			RenderedPath:  filepath.ToSlash(filepath.Join("deploy", targetEnv, "rendered.yaml")),
-			CreatedAt:     time.Now().UTC(),
+			ID:                    "",
+			ProjectID:             msg.ProjectID,
+			Environment:           targetEnv,
+			OpID:                  msg.OpID,
+			OpKind:                msg.Kind,
+			DeliveryStage:         DeliveryStageDeploy,
+			FromEnv:               "",
+			ToEnv:                 targetEnv,
+			Image:                 deployedImage,
+			RenderedPath:          filepath.ToSlash(filepath.Join("deploy", targetEnv, "rendered.yaml")),
+			ConfigPath:            filepath.ToSlash(filepath.Join("deploy", targetEnv, "deployment.yaml")),
+			RollbackSafe:          rollbackSafeDefaultPtr(),
+			RollbackSourceRelease: "",
+			RollbackScope:         "",
+			CreatedAt:             time.Now().UTC(),
 		},
 	)
 }
@@ -584,6 +588,11 @@ func persistReleaseRecord(ctx context.Context, store *Store, release ReleaseReco
 	}
 	_, err := store.PutRelease(ctx, release)
 	return err
+}
+
+func rollbackSafeDefaultPtr() *bool {
+	safe := true
+	return &safe
 }
 
 func runManifestRendererDelete(

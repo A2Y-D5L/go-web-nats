@@ -111,6 +111,10 @@ function bindEvents() {
     void handlePromotionConfirmSubmit(event);
   });
 
+  dom.forms.rollbackConfirm.addEventListener("submit", (event) => {
+    void handleRollbackConfirmSubmit(event);
+  });
+
   dom.forms.deleteConfirm.addEventListener("submit", (event) => {
     void handleDeleteConfirmSubmit(event);
   });
@@ -128,6 +132,7 @@ function bindEvents() {
   dom.inputs.releaseTimelineEnvironment.addEventListener("change", () => {
     state.releaseTimeline.environment = String(dom.inputs.releaseTimelineEnvironment.value || "").trim().toLowerCase();
     state.releaseTimeline.selectedReleaseID = "";
+    resetRollbackReviewState();
     void loadReleaseTimeline({ silent: true }).catch((error) => {
       setStatus(`Release timeline unavailable: ${error.message}`, "warning");
     });
@@ -141,6 +146,10 @@ function bindEvents() {
     event.preventDefault();
     void openPromotionConfirmation();
   });
+  dom.buttons.openRollbackModal.addEventListener("click", (event) => {
+    event.preventDefault();
+    void openRollbackConfirmation();
+  });
 
   dom.buttons.createModalClose.addEventListener("click", () => closeModal("create"));
   dom.buttons.createModalCancel.addEventListener("click", () => closeModal("create"));
@@ -150,6 +159,8 @@ function bindEvents() {
   dom.buttons.deleteModalCancel.addEventListener("click", () => closeModal("delete"));
   dom.buttons.promotionModalClose.addEventListener("click", () => closeModal("promotion"));
   dom.buttons.promotionModalCancel.addEventListener("click", () => closeModal("promotion"));
+  dom.buttons.rollbackModalClose.addEventListener("click", () => closeModal("rollback"));
+  dom.buttons.rollbackModalCancel.addEventListener("click", () => closeModal("rollback"));
 
   dom.inputs.deleteConfirm.addEventListener("input", () => {
     syncDeleteConfirmationState();
@@ -167,6 +178,22 @@ function bindEvents() {
   dom.inputs.promotionTo.addEventListener("change", () => {
     state.promotion.toEnv = dom.inputs.promotionTo.value;
     renderPromotionPanel();
+  });
+  dom.inputs.rollbackScope.addEventListener("change", () => {
+    state.rollback.scope = String(dom.inputs.rollbackScope.value || "code_only").trim();
+    if (state.ui.modal === "rollback") {
+      void loadRollbackPreview({ silent: true }).catch((error) => {
+        setStatus(`Rollback preview unavailable: ${error.message}`, "warning");
+      });
+    }
+  });
+  dom.inputs.rollbackOverride.addEventListener("change", () => {
+    state.rollback.override = Boolean(dom.inputs.rollbackOverride.checked);
+    if (state.ui.modal === "rollback") {
+      void loadRollbackPreview({ silent: true }).catch((error) => {
+        setStatus(`Rollback preview unavailable: ${error.message}`, "warning");
+      });
+    }
   });
 
   dom.buttons.createAddEnv.addEventListener("click", () => {

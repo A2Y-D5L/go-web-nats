@@ -51,6 +51,8 @@ func (a *API) routes() http.Handler {
 	mux.HandleFunc("/api/events/promotion/preview", a.handlePromotionPreviewEvents)
 	mux.HandleFunc("/api/events/promotion", a.handlePromotionEvents)
 	mux.HandleFunc("/api/events/release", a.handleReleaseEvents)
+	mux.HandleFunc("/api/events/rollback/preview", a.handleRollbackPreviewEvents)
+	mux.HandleFunc("/api/events/rollback", a.handleRollbackEvents)
 	mux.HandleFunc("/api/webhooks/source", a.handleSourceRepoWebhook)
 	mux.HandleFunc("/api/system", a.handleSystem)
 	mux.HandleFunc("/api/healthz", a.handleHealthz)
@@ -143,6 +145,14 @@ type ReleaseEvent struct {
 	ToEnv     string `json:"to_env,omitempty"`
 }
 
+type RollbackEvent struct {
+	ProjectID   string        `json:"project_id"`
+	Environment string        `json:"environment"`
+	ReleaseID   string        `json:"release_id"`
+	Scope       RollbackScope `json:"scope"`
+	Override    bool          `json:"override,omitempty"`
+}
+
 type TransitionPreviewGate struct {
 	Code   string `json:"code"`
 	Title  string `json:"title"`
@@ -174,4 +184,38 @@ type PromotionPreviewResponse struct {
 	Gates         []TransitionPreviewGate    `json:"gates"`
 	Blockers      []TransitionPreviewBlocker `json:"blockers"`
 	RolloutPlan   []string                   `json:"rollout_plan"`
+}
+
+type ReleaseCompareResponse struct {
+	FromID        string              `json:"from_id"`
+	ToID          string              `json:"to_id"`
+	FromRelease   *ReleaseRecord      `json:"from_release,omitempty"`
+	ToRelease     *ReleaseRecord      `json:"to_release,omitempty"`
+	Summary       string              `json:"summary"`
+	ImageDelta    ReleaseCompareDelta `json:"image_delta"`
+	ConfigDelta   ReleaseCompareDelta `json:"config_delta"`
+	RenderedDelta ReleaseCompareDelta `json:"rendered_delta"`
+}
+
+type ReleaseCompareDelta struct {
+	Changed bool     `json:"changed"`
+	From    string   `json:"from,omitempty"`
+	To      string   `json:"to,omitempty"`
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+	Updated []string `json:"updated,omitempty"`
+}
+
+type RollbackPreviewResponse struct {
+	ProjectID      string                     `json:"project_id"`
+	Environment    string                     `json:"environment"`
+	ReleaseID      string                     `json:"release_id"`
+	Scope          RollbackScope              `json:"scope"`
+	Override       bool                       `json:"override,omitempty"`
+	Ready          bool                       `json:"ready"`
+	SourceRelease  *TransitionPreviewRelease  `json:"source_release,omitempty"`
+	CurrentRelease *TransitionPreviewRelease  `json:"current_release,omitempty"`
+	Compare        *ReleaseCompareResponse    `json:"compare,omitempty"`
+	Gates          []TransitionPreviewGate    `json:"gates"`
+	Blockers       []TransitionPreviewBlocker `json:"blockers"`
 }

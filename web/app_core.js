@@ -7,6 +7,7 @@ const dom = {
     deleteConfirm: document.getElementById("deleteConfirmForm"),
     promotion: document.getElementById("promotionForm"),
     promotionConfirm: document.getElementById("promotionConfirmForm"),
+    rollbackConfirm: document.getElementById("rollbackConfirmForm"),
   },
   buttons: {
     openCreateModal: document.getElementById("openCreateModalBtn"),
@@ -19,6 +20,7 @@ const dom = {
     deployDev: document.getElementById("deployDevBtn"),
     buildLatest: document.getElementById("buildLatestBtn"),
     openPromotionModal: document.getElementById("openPromotionModalBtn"),
+    openRollbackModal: document.getElementById("openRollbackModalBtn"),
     journeyNextAction: document.getElementById("journeyNextActionBtn"),
     refreshReleaseTimeline: document.getElementById("refreshReleaseTimelineBtn"),
 
@@ -38,6 +40,9 @@ const dom = {
     promotionModalClose: document.getElementById("promotionModalCloseBtn"),
     promotionModalCancel: document.getElementById("promotionModalCancelBtn"),
     promotionConfirm: document.getElementById("promotionConfirmBtn"),
+    rollbackModalClose: document.getElementById("rollbackModalCloseBtn"),
+    rollbackModalCancel: document.getElementById("rollbackModalCancelBtn"),
+    rollbackConfirm: document.getElementById("rollbackConfirmBtn"),
   },
   inputs: {
     createAPIVersion: document.getElementById("createAPIVersion"),
@@ -70,6 +75,8 @@ const dom = {
     promotionFrom: document.getElementById("promotionFrom"),
     promotionTo: document.getElementById("promotionTo"),
     releaseTimelineEnvironment: document.getElementById("releaseTimelineEnvironment"),
+    rollbackScope: document.getElementById("rollbackScope"),
+    rollbackOverride: document.getElementById("rollbackOverride"),
 
     deleteConfirm: document.getElementById("deleteConfirmInput"),
     promotionConfirmInput: document.getElementById("promotionConfirmInput"),
@@ -112,6 +119,9 @@ const dom = {
     promotionSummary: document.getElementById("promotionSummary"),
     promotionPreviewStatus: document.getElementById("promotionPreviewStatus"),
     promotionConfirmHint: document.getElementById("promotionConfirmHint"),
+    rollbackPreviewStatus: document.getElementById("rollbackPreviewStatus"),
+    rollbackSummary: document.getElementById("rollbackSummary"),
+    rollbackConfirmHint: document.getElementById("rollbackConfirmHint"),
 
     opRaw: document.getElementById("lastOp"),
     opTransportStatus: document.getElementById("opTransportStatus"),
@@ -134,6 +144,9 @@ const dom = {
     promotionPreviewGates: document.getElementById("promotionPreviewGates"),
     promotionPreviewBlockers: document.getElementById("promotionPreviewBlockers"),
     promotionRolloutPlan: document.getElementById("promotionRolloutPlan"),
+    rollbackCompare: document.getElementById("rollbackCompare"),
+    rollbackPreviewGates: document.getElementById("rollbackPreviewGates"),
+    rollbackPreviewBlockers: document.getElementById("rollbackPreviewBlockers"),
   },
   envEditors: {
     create: document.getElementById("createEnvList"),
@@ -144,6 +157,7 @@ const dom = {
     update: document.getElementById("updateModal"),
     delete: document.getElementById("deleteModal"),
     promotion: document.getElementById("promotionModal"),
+    rollback: document.getElementById("rollbackModal"),
   },
 };
 
@@ -202,6 +216,7 @@ const workerOrderByKind = {
   deploy: ["deployer"],
   promote: ["promoter.plan", "promoter.render", "promoter.commit", "promoter.finalize"],
   release: ["promoter.plan", "promoter.render", "promoter.commit", "promoter.finalize"],
+  rollback: ["promoter.plan", "promoter.render", "promoter.commit", "promoter.finalize"],
 };
 
 const workerLabelByName = {
@@ -225,6 +240,7 @@ const operationLabelByKind = {
   deploy: "Deliver to dev",
   promote: "Promote environment",
   release: "Release to production",
+  rollback: "Rollback environment",
 };
 
 const nextActionKindToTone = {
@@ -321,6 +337,16 @@ const state = {
     ready: false,
     action: "promote",
     confirmationPhrase: "",
+    preview: null,
+    previewLoading: false,
+    previewError: "",
+    blockers: [],
+  },
+  rollback: {
+    environment: "",
+    releaseID: "",
+    scope: "code_only",
+    override: false,
     preview: null,
     previewLoading: false,
     previewError: "",
