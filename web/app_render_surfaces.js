@@ -37,6 +37,39 @@ function journeyNextActionInstruction(nextAction) {
   return `${summary} ${detail}`;
 }
 
+function journeyActionVisual(kind) {
+  switch (String(kind || "none")) {
+    case "build":
+      return { icon: "B", tone: "info", title: "Build next" };
+    case "deploy_dev":
+      return { icon: "D", tone: "info", title: "Deliver to dev" };
+    case "promote":
+      return { icon: "P", tone: "info", title: "Promote" };
+    case "release":
+      return { icon: "R", tone: "warning", title: "Release" };
+    case "investigate":
+      return { icon: "!", tone: "error", title: "Investigate" };
+    default:
+      return { icon: "-", tone: "success", title: "No action needed" };
+  }
+}
+
+function renderJourneyNextActionCard(nextAction, { paused = false, error = "" } = {}) {
+  const action = nextAction || { kind: "none", detail: "", label: "" };
+  const visual = journeyActionVisual(action.kind);
+  const detail = error || journeyNextActionInstruction(action);
+  const title = paused ? "Operation in progress" : visual.title;
+
+  dom.containers.journeyNextAction.className = "summary-card next-action-card";
+  dom.containers.journeyNextAction.classList.add(`tone-${paused ? "warning" : visual.tone}`);
+  dom.containers.journeyNextAction.replaceChildren();
+
+  const icon = makeElem("span", "next-action-icon", paused ? "..." : visual.icon);
+  const content = makeElem("div", "next-action-copy");
+  content.append(makeElem("strong", "next-action-title", title), makeElem("p", "next-action-detail", detail));
+  dom.containers.journeyNextAction.append(icon, content);
+}
+
 function renderWorkspaceShell() {
   const project = getSelectedProject();
   const shouldShowWorkspace = state.ui.workspaceOpen && Boolean(project);
@@ -52,46 +85,45 @@ function renderWorkspaceShell() {
 function renderJourneyPanel() {
   const project = getSelectedProject();
   const milestoneContainer = dom.containers.journeyMilestones;
-  const nextActionCard = dom.containers.journeyNextAction;
   const nextActionButton = dom.buttons.journeyNextAction;
 
   milestoneContainer.replaceChildren();
-  nextActionCard.replaceChildren();
+  dom.containers.journeyNextAction.replaceChildren();
 
   if (!project) {
-    dom.text.journeyStatusLine.textContent = "Select an app to load journey milestones.";
-    nextActionCard.textContent = "No app selected.";
+    dom.text.journeyStatusLine.textContent = "Pick an app to load milestones.";
+    renderJourneyNextActionCard({ kind: "none", detail: "No app selected." });
     nextActionButton.disabled = true;
-    nextActionButton.textContent = "Run suggested step";
-    renderEmptyState(milestoneContainer, "Milestones appear after you select an app.");
+    nextActionButton.textContent = "Run step";
+    renderEmptyState(milestoneContainer, "Milestones appear after app selection.");
     return;
   }
 
   const journey = currentJourney();
   if ((state.overview.loading && !journey) || (state.journey.loading && !journey)) {
-    dom.text.journeyStatusLine.textContent = "Loading journey snapshot...";
-    nextActionCard.textContent = "Preparing suggested next step...";
+    dom.text.journeyStatusLine.textContent = "Loading journey...";
+    renderJourneyNextActionCard({ kind: "none", detail: "Preparing next action." });
     nextActionButton.disabled = true;
-    nextActionButton.textContent = "Run suggested step";
+    nextActionButton.textContent = "Run step";
     renderEmptyState(milestoneContainer, "Loading milestones...");
     return;
   }
 
   const journeyError = journey ? "" : state.journey.error || state.overview.error;
   if (journeyError) {
-    dom.text.journeyStatusLine.textContent = "Journey snapshot unavailable.";
-    nextActionCard.textContent = journeyError;
+    dom.text.journeyStatusLine.textContent = "Journey unavailable.";
+    renderJourneyNextActionCard({ kind: "investigate", detail: journeyError }, { error: journeyError });
     nextActionButton.disabled = true;
-    nextActionButton.textContent = "Run suggested step";
+    nextActionButton.textContent = "Run step";
     renderEmptyState(milestoneContainer, "Journey data could not be loaded.");
     return;
   }
 
   if (!journey) {
-    dom.text.journeyStatusLine.textContent = "Journey data is not available yet.";
-    nextActionCard.textContent = "Refresh to retry.";
+    dom.text.journeyStatusLine.textContent = "Journey unavailable.";
+    renderJourneyNextActionCard({ kind: "none", detail: "Refresh to retry." });
     nextActionButton.disabled = true;
-    nextActionButton.textContent = "Run suggested step";
+    nextActionButton.textContent = "Run step";
     renderEmptyState(milestoneContainer, "No milestones to show yet.");
     return;
   }
@@ -99,16 +131,19 @@ function renderJourneyPanel() {
   dom.text.journeyStatusLine.textContent = journey.summary || "Journey status is available.";
 
   const nextAction = journey.next_action || { kind: "none", label: "No suggested action", detail: "" };
-  nextActionCard.textContent = journeyNextActionInstruction(nextAction);
+  renderJourneyNextActionCard(nextAction);
   nextActionButton.dataset.actionKind = nextAction.kind || "none";
   nextActionButton.dataset.fromEnv = nextAction.from_env || "";
   nextActionButton.dataset.toEnv = nextAction.to_env || "";
-  nextActionButton.textContent = nextAction.label || "Run suggested step";
+  nextActionButton.textContent = nextAction.label || "Run step";
   nextActionButton.disabled = !["build", "deploy_dev", "promote", "release"].includes(nextAction.kind);
 
   if (projectHasRunningOperation()) {
     nextActionButton.disabled = true;
-    nextActionCard.textContent = "Suggested step is temporarily paused while current app activity is running.";
+    renderJourneyNextActionCard(nextAction, {
+      paused: true,
+      error: "Current operation is running. Next step unlocks when it finishes.",
+    });
   }
 
   const milestones = Array.isArray(journey.milestones) ? journey.milestones : [];
@@ -146,7 +181,7 @@ function renderBuildKitSignal() {
 
   if (!state.artifacts.loaded) {
     signal.className = "buildkit-signal muted";
-    signal.textContent = "Output insight unavailable until outputs are loaded.";
+    signal.textContent = "Load outputs to inspect build mode.";
     return;
   }
 
@@ -165,8 +200,8 @@ function renderBuildKitSignal() {
   if (effectiveMode === "artifact") {
     signal.className = "buildkit-signal muted";
     signal.textContent = modeContext.length
-      ? `Builder mode context: ${modeContext.join(" • ")}`
-      : "Builder mode context is unavailable.";
+      ? `Builder mode: ${modeContext.join(" • ")}`
+      : "Builder mode context unavailable.";
     return;
   }
 
@@ -174,9 +209,9 @@ function renderBuildKitSignal() {
   if (present.length === buildKitArtifactSet.size) {
     signal.className = "buildkit-signal present";
     if (modeContext.length) {
-      signal.textContent = `Detailed build evidence is present. ${modeContext.join(" • ")}`;
+      signal.textContent = `Build evidence present. ${modeContext.join(" • ")}`;
     } else {
-      signal.textContent = "Detailed build evidence is present (summary, metadata, and log).";
+      signal.textContent = "Build evidence present (summary, metadata, log).";
     }
     return;
   }
@@ -184,9 +219,9 @@ function renderBuildKitSignal() {
   const missing = [...buildKitArtifactSet].filter((file) => !state.artifacts.files.includes(file));
   signal.className = "buildkit-signal missing";
   if (modeContext.length) {
-    signal.textContent = `Some detailed build evidence is missing: ${missing.join(", ")}. ${modeContext.join(" • ")}`;
+    signal.textContent = `Missing build evidence: ${missing.join(", ")}. ${modeContext.join(" • ")}`;
   } else {
-    signal.textContent = `Some detailed build evidence is missing: ${missing.join(", ")}`;
+    signal.textContent = `Missing build evidence: ${missing.join(", ")}`;
   }
 }
 
@@ -217,7 +252,7 @@ function renderArtifactQuickLinks() {
   }
 
   if (!links.length) {
-    container.appendChild(makeElem("span", "helper-text", "No quick links yet."));
+    container.appendChild(makeElem("span", "helper-text", "No quick links"));
     return;
   }
 
@@ -235,7 +270,7 @@ function renderArtifactsPanel() {
   const filtered = filteredArtifactFiles();
 
   if (!project) {
-    dom.text.artifactStats.textContent = "Select an app first.";
+    dom.text.artifactStats.textContent = "Select app";
     dom.containers.artifactQuickLinks.replaceChildren();
     dom.containers.artifacts.replaceChildren();
     renderEmptyState(dom.containers.artifacts, "Pick an app to inspect outputs.");
@@ -244,14 +279,14 @@ function renderArtifactsPanel() {
     dom.text.artifactPreviewMeta.textContent = "Preview unavailable";
     dom.buttons.copyPreview.disabled = true;
     dom.text.buildkitSignal.className = "buildkit-signal muted";
-    dom.text.buildkitSignal.textContent = "Output insight unavailable until outputs are loaded.";
+    dom.text.buildkitSignal.textContent = "Load outputs to inspect build mode.";
     return;
   }
 
   if (state.artifacts.loading && !state.artifacts.loaded) {
     dom.text.artifactStats.textContent = "Loading outputs...";
   } else if (!state.artifacts.loaded) {
-    dom.text.artifactStats.textContent = "Outputs ready to load";
+    dom.text.artifactStats.textContent = "Outputs not loaded";
   } else {
     dom.text.artifactStats.textContent = `${filtered.length} visible of ${state.artifacts.files.length}`;
   }
@@ -268,7 +303,7 @@ function renderArtifactsPanel() {
   } else if (!filtered.length) {
     const message = state.artifacts.files.length
       ? "No outputs match this filter."
-      : "No outputs are available for this app yet.";
+      : "No outputs for this app yet.";
     renderEmptyState(dom.containers.artifacts, message);
   } else {
     for (const path of filtered) {
@@ -309,14 +344,14 @@ function renderSystemStrip() {
   const readyCount = state.projects.filter((project) => project.status?.phase === "Ready").length;
 
   dom.text.systemProjectCount.textContent = String(state.projects.length);
-  dom.text.systemReadyCount.textContent = `${readyCount} delivery-ready`;
+  dom.text.systemReadyCount.textContent = `${readyCount} ready`;
 
   const system = state.system.data;
   if (state.system.loading && !system) {
     dom.text.healthLabel.textContent = "Loading";
-    dom.text.healthMeta.textContent = "Fetching runtime capability state";
+    dom.text.healthMeta.textContent = "Fetching runtime state";
     dom.text.systemActiveOp.textContent = "Loading";
-    dom.text.systemActiveOpMeta.textContent = "Reading realtime transport status";
+    dom.text.systemActiveOpMeta.textContent = "Reading realtime status";
     dom.text.systemBuilderMode.textContent = "Loading";
     dom.text.systemBuilderMeta.textContent = "Reading builder mode";
     return;
@@ -325,12 +360,12 @@ function renderSystemStrip() {
   if (!system) {
     dom.text.healthLabel.textContent = state.system.error ? "Unavailable" : "Unknown";
     dom.text.healthMeta.textContent = state.system.error
-      ? "Runtime status endpoint failed"
-      : "Runtime status not loaded yet";
+      ? "Runtime status request failed"
+      : "Runtime status not loaded";
     dom.text.systemActiveOp.textContent = "Unknown";
-    dom.text.systemActiveOpMeta.textContent = "Realtime transport data unavailable";
+    dom.text.systemActiveOpMeta.textContent = "Realtime data unavailable";
     dom.text.systemBuilderMode.textContent = "Unknown";
-    dom.text.systemBuilderMeta.textContent = "Builder mode data unavailable";
+    dom.text.systemBuilderMeta.textContent = "Builder data unavailable";
     return;
   }
 
@@ -406,8 +441,8 @@ function syncDeleteConfirmationState() {
 
   dom.buttons.deleteConfirm.disabled = !valid;
   dom.text.deleteConfirmHint.textContent = expected
-    ? `Type "${expected}" exactly to enable deletion.`
-    : "Select an app first.";
+    ? `Type "${expected}" to enable delete.`
+    : "Select app first.";
 }
 
 function syncPromotionConfirmationState() {
@@ -418,13 +453,13 @@ function syncPromotionConfirmationState() {
 
   dom.buttons.promotionConfirm.disabled = !valid;
   if (state.promotion.previewLoading) {
-    dom.text.promotionConfirmHint.textContent = "Preview in progress. Confirmation unlocks when preview completes.";
+    dom.text.promotionConfirmHint.textContent = "Preview running. Confirmation unlocks after completion.";
     return;
   }
   if (hasBlockers) {
     dom.text.promotionConfirmHint.textContent =
-      "Confirmation disabled while preview blockers are present. Resolve blockers first.";
+      "Confirmation locked while blockers exist.";
     return;
   }
-  dom.text.promotionConfirmHint.textContent = expected ? `Type "${expected}" exactly to confirm.` : "Move summary unavailable.";
+  dom.text.promotionConfirmHint.textContent = expected ? `Type "${expected}" to confirm.` : "Move summary unavailable.";
 }

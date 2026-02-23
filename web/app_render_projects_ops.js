@@ -1,22 +1,28 @@
 // Project rail rendering and operation timeline/progress/history rendering.
+function makeSignalChip(text, className = "") {
+  const classes = ["signal-chip"];
+  if (className) classes.push(className);
+  return makeElem("span", classes.join(" "), text);
+}
+
 function renderProjectsList() {
   const selected = getSelectedProject();
   const visible = getVisibleProjects();
 
-  dom.text.projectStats.textContent = `${visible.length} visible of ${state.projects.length}`;
+  dom.text.projectStats.textContent = `${visible.length} shown • ${state.projects.length} total`;
   dom.containers.projects.replaceChildren();
 
   if (!visible.length) {
     dom.containers.projects.replaceChildren();
     if (state.projects.length) {
-      renderEmptyState(dom.containers.projects, "No apps match current filters. Try broadening search or status.");
+      renderEmptyState(dom.containers.projects, "No apps match this filter.");
       return;
     }
 
     const empty = makeElem("div", "empty-state empty-state-cta");
     empty.append(
-      makeElem("p", "", "No apps created yet."),
-      makeElem("p", "helper-text", "Create your first app to open a dedicated delivery workspace.")
+      makeElem("p", "", "No apps yet."),
+      makeElem("p", "helper-text", "Create one to start the flow.")
     );
     const cta = makeElem("button", "btn btn-primary", "Create app");
     cta.type = "button";
@@ -44,16 +50,18 @@ function renderProjectsList() {
     );
 
     const envCount = projectEnvironmentNames(project).length;
-
-    const runtimeMeta = makeElem(
-      "p",
-      "project-meta emphasis",
-      `${formatRuntimeLiteral(project.spec?.runtime)} • ${envCount} envs • updated ${elapsedSince(project.updated_at)}`
+    const runtimeLabel = formatRuntimeLiteral(project.spec?.runtime).replace(/\s+\(recommended\)/i, "");
+    const signals = makeElem("div", "project-signals");
+    signals.append(
+      makeSignalChip(runtimeLabel, "signal-chip-runtime"),
+      makeSignalChip(`${envCount} env${envCount === 1 ? "" : "s"}`, "signal-chip-env"),
+      makeSignalChip(`updated ${elapsedSince(project.updated_at)}`, "signal-chip-updated")
     );
-    const idMeta = makeElem("p", "project-meta", `ID ${project.id}`);
-    const msgMeta = makeElem("p", "project-meta", project.status?.message || "No recent update message");
 
-    item.append(titleRow, runtimeMeta, idMeta, msgMeta);
+    const idMeta = makeElem("p", "project-meta", `ID ${String(project.id || "").slice(0, 12)}`);
+    const msgMeta = makeElem("p", "project-meta", project.status?.message || "No recent updates");
+
+    item.append(titleRow, signals, idMeta, msgMeta);
 
     item.addEventListener("click", () => {
       selectProject(project.id);
@@ -84,7 +92,7 @@ function renderSelectionPanel() {
 
   if (!project) {
     dom.text.selected.classList.add("muted");
-    dom.text.selected.textContent = "Select an app to review journey progress and run the next delivery step.";
+    dom.text.selected.textContent = "Pick an app to unlock delivery controls.";
     return;
   }
 
@@ -96,24 +104,24 @@ function renderSelectionPanel() {
     makeBadge(project.status?.phase || "Unknown", project.status?.phase || "unknown")
   );
 
-  const row2 = makeElem("div", "project-summary-row");
+  const row2 = makeElem("div", "project-signals");
   row2.append(
-    makeElem("span", "project-meta emphasis", `ID ${project.id}`),
-    makeElem("span", "project-meta emphasis", formatRuntimeLiteral(project.spec?.runtime))
+    makeSignalChip(`ID ${String(project.id || "").slice(0, 12)}`, "signal-chip-id"),
+    makeSignalChip(formatRuntimeLiteral(project.spec?.runtime).replace(/\s+\(recommended\)/i, ""), "signal-chip-runtime")
   );
 
   const envs = projectEnvironmentNames(project);
   const lastActivity = project.status?.last_op_kind ? operationLabel(project.status.last_op_kind) : "none";
-  const row3 = makeElem("div", "project-summary-row");
+  const row3 = makeElem("div", "project-signals");
   row3.append(
-    makeElem("span", "project-meta", `Environments ${envs.join(", ")}`),
-    makeElem("span", "project-meta", `Last activity ${lastActivity}`)
+    makeSignalChip(`envs ${envs.join(", ")}`, "signal-chip-env"),
+    makeSignalChip(`last ${lastActivity}`, "signal-chip-activity")
   );
 
   const row4 = makeElem(
     "p",
     "project-meta",
-    project.status?.message || "App is ready. Continue with build, delivery, and environment moves below."
+    project.status?.message || "Ready for next step."
   );
 
   dom.text.selected.append(row1, row2, row3, row4);
@@ -275,10 +283,7 @@ function renderOperationProgress(op) {
   dom.containers.opProgress.replaceChildren();
 
   if (!op) {
-    renderEmptyState(
-      dom.containers.opProgress,
-      "No active delivery activity. Run a journey step to see live progress."
-    );
+    renderEmptyState(dom.containers.opProgress, "No active operation.");
     return;
   }
 
@@ -316,7 +321,7 @@ function renderOperationProgress(op) {
   const meta = makeElem(
     "div",
     "helper-text",
-    `${doneCount}/${order.length || 0} journey steps complete • duration ${duration(op.requested, op.finished)}`
+    `${doneCount}/${order.length || 0} steps • duration ${duration(op.requested, op.finished)}`
   );
 
   card.append(head, track, meta);
@@ -349,14 +354,14 @@ function renderOperationTimeline(op) {
   dom.containers.opTimeline.replaceChildren();
 
   if (!op) {
-    renderEmptyState(dom.containers.opTimeline, "Activity steps appear when an app action starts.");
+    renderEmptyState(dom.containers.opTimeline, "Steps appear while operations run.");
     return;
   }
 
   const order = workerOrderForKind(op.kind);
 
   if (!order.length) {
-    renderEmptyState(dom.containers.opTimeline, "No known delivery path for this action.");
+    renderEmptyState(dom.containers.opTimeline, "No known worker path for this operation.");
     return;
   }
 
@@ -371,7 +376,7 @@ function renderOperationTimeline(op) {
 
     const bits = [];
     if (!step) {
-      bits.push("waiting");
+      bits.push("queued");
     } else {
       bits.push(`started ${toLocalTime(step.started_at)}`);
       bits.push(`ended ${toLocalTime(step.ended_at)}`);
@@ -401,7 +406,7 @@ function renderOperationHistory() {
   dom.containers.opHistory.replaceChildren();
 
   if (state.operation.historyLoading && !state.operation.history.length) {
-    renderEmptyState(dom.containers.opHistory, "Loading activity history...");
+    renderEmptyState(dom.containers.opHistory, "Loading history...");
     return;
   }
 
@@ -411,7 +416,7 @@ function renderOperationHistory() {
   }
 
   if (!state.operation.history.length) {
-    renderEmptyState(dom.containers.opHistory, "Completed app activities will be listed here.");
+    renderEmptyState(dom.containers.opHistory, "Completed operations appear here.");
     return;
   }
 
@@ -461,7 +466,7 @@ function renderOperationHistory() {
     const loadMoreBtn = makeElem(
       "button",
       "btn btn-subtle",
-      state.operation.historyLoadingMore ? "Loading older activity..." : "Load older activity"
+      state.operation.historyLoadingMore ? "Loading older..." : "Load older"
     );
     loadMoreBtn.type = "button";
     loadMoreBtn.disabled = state.operation.historyLoading || state.operation.historyLoadingMore;
@@ -500,7 +505,7 @@ function renderReleaseTimelinePanel() {
     refreshBtn.disabled = true;
     rollbackReviewBtn.disabled = true;
     rollbackEl.textContent = "Rollback target not selected. Choose a release entry to prepare rollback context.";
-    setPanelInlineStatus(statusEl, "Select an app to inspect release timeline history.", "info");
+    setPanelInlineStatus(statusEl, "Select an app to inspect release timeline.", "info");
     renderEmptyState(container, "Release records appear after environment deliveries complete.");
     return;
   }
@@ -519,7 +524,7 @@ function renderReleaseTimelinePanel() {
     state.rollback.environment = String(selectedRecord.environment || "").trim().toLowerCase();
     state.rollback.releaseID = String(selectedRecord.id || "").trim();
   } else {
-    rollbackEl.textContent = "Rollback target not selected. Choose a release entry to prepare rollback context.";
+    rollbackEl.textContent = "No rollback target selected.";
     state.rollback.environment = "";
     state.rollback.releaseID = "";
   }
@@ -544,7 +549,7 @@ function renderReleaseTimelinePanel() {
       `No release records yet for ${environment || "selected"} environment.`,
       "info"
     );
-    renderEmptyState(container, "Release records will appear after successful deploy, promote, or release steps.");
+    renderEmptyState(container, "Release records appear after deploy/promote/release.");
     return;
   }
 
@@ -590,7 +595,7 @@ function renderReleaseTimelinePanel() {
     const prepareBtn = makeElem(
       "button",
       "btn btn-subtle",
-      state.releaseTimeline.selectedReleaseID === record.id ? "Rollback target selected" : "Prepare rollback"
+      state.releaseTimeline.selectedReleaseID === record.id ? "Selected" : "Use for rollback"
     );
     prepareBtn.type = "button";
     prepareBtn.addEventListener("click", () => {
@@ -619,7 +624,7 @@ function renderReleaseTimelinePanel() {
     const loadMoreBtn = makeElem(
       "button",
       "btn btn-subtle",
-      state.releaseTimeline.loadingMore ? "Loading older releases..." : "Load older releases"
+      state.releaseTimeline.loadingMore ? "Loading older..." : "Load older"
     );
     loadMoreBtn.type = "button";
     loadMoreBtn.disabled = state.releaseTimeline.loading || state.releaseTimeline.loadingMore;
@@ -648,7 +653,7 @@ function renderOperationTransportStatus(op) {
   if (!dom.text.opTransportStatus) return;
 
   if (!op) {
-    setPanelInlineStatus(dom.text.opTransportStatus, "Realtime stream connects after an action starts.", "info");
+    setPanelInlineStatus(dom.text.opTransportStatus, "Realtime stream connects when operation starts.", "info");
     return;
   }
 
@@ -656,7 +661,7 @@ function renderOperationTransportStatus(op) {
   if (state.operation.usingPolling && !terminal) {
     setPanelInlineStatus(
       dom.text.opTransportStatus,
-      "Realtime stream unavailable. Using polling fallback for activity updates.",
+      "Realtime unavailable. Using polling fallback.",
       "warning"
     );
     return;
@@ -665,21 +670,21 @@ function renderOperationTransportStatus(op) {
   if (state.operation.eventSource && !terminal) {
     setPanelInlineStatus(
       dom.text.opTransportStatus,
-      "Realtime stream connected. Steps update live without refreshing.",
+      "Realtime connected. Steps update live.",
       "success"
     );
     return;
   }
 
   if (!terminal) {
-    setPanelInlineStatus(dom.text.opTransportStatus, "Connecting realtime activity stream...", "info");
+    setPanelInlineStatus(dom.text.opTransportStatus, "Connecting realtime stream...", "info");
     return;
   }
 
   if (op.status === "done") {
     setPanelInlineStatus(
       dom.text.opTransportStatus,
-      "Activity completed. Review timeline and outputs for the final result.",
+      "Operation completed. Review timeline and outputs.",
       "success"
     );
     return;
@@ -687,7 +692,7 @@ function renderOperationTransportStatus(op) {
 
   setPanelInlineStatus(
     dom.text.opTransportStatus,
-    "Activity failed. Review recovery hints and retry when ready.",
+    "Operation failed. Review hints and retry.",
     "error"
   );
 }

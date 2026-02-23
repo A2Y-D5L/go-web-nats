@@ -432,13 +432,30 @@ function makeElem(tag, className, text) {
 }
 
 function phaseClass(phase) {
-  const key = String(phase || "unknown").toLowerCase();
+  const key = String(phase || "unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-");
   return `phase-${key}`;
+}
+
+function badgeIconForPhase(phase) {
+  const key = String(phase || "unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-");
+  if (["ready", "done", "complete", "live", "success"].includes(key)) return "OK";
+  if (["running", "reconciling", "in-progress"].includes(key)) return "GO";
+  if (["warning", "deleting", "blocked"].includes(key)) return "!!";
+  if (["error", "failed"].includes(key)) return "ER";
+  return "--";
 }
 
 function makeBadge(label, phase) {
   const badge = makeElem("span", "phase-badge", label || "unknown");
-  badge.classList.add(phaseClass(phase));
+  const normalizedPhase = String(phase || label || "unknown");
+  badge.classList.add(phaseClass(normalizedPhase));
+  badge.dataset.icon = badgeIconForPhase(normalizedPhase);
   return badge;
 }
 
@@ -456,6 +473,7 @@ function setPanelInlineStatus(target, message, tone = "info") {
   target.textContent = message || "";
   target.className = "panel-inline-status";
   target.classList.add(`tone-${tone || "info"}`);
+  target.dataset.tone = tone || "info";
 }
 
 function renderStatus() {
@@ -464,6 +482,7 @@ function renderStatus() {
 
   target.textContent = message;
   target.className = "status-banner";
+  target.dataset.tone = state.status.tone || "info";
   if (!message) {
     target.classList.add("empty");
     return;

@@ -623,33 +623,33 @@ function createEnvironmentSnapshotCard(snapshot) {
     )
   );
 
-  const meta = makeElem("div", "environment-meta");
+  const meta = makeElem("div", "environment-meta environment-signals");
   meta.append(
-    makeElem("span", "", `Image ${snapshot.imageTag || "unknown"}`),
-    makeElem("span", "", `Image source ${snapshot.imageSource || "not available"}`),
-    makeElem("span", "", `Delivery config rendered ${snapshot.hasRendered ? "yes" : "no"}`)
+    makeSignalChip(`image ${snapshot.imageTag || "unknown"}`, "signal-chip-runtime"),
+    makeSignalChip(`source ${snapshot.imageSource || "n/a"}`, "signal-chip-id"),
+    makeSignalChip(snapshot.hasRendered ? "rendered yes" : "rendered no", "signal-chip-env")
   );
   if (snapshot.healthStatus) {
-    meta.appendChild(makeElem("span", "", `Health ${snapshot.healthStatus}`));
+    meta.appendChild(makeSignalChip(`health ${snapshot.healthStatus}`, "signal-chip-health"));
   }
   if (snapshot.deliveryType && snapshot.deliveryType !== "none") {
-    meta.appendChild(makeElem("span", "", `Delivery type ${snapshot.deliveryType}`));
+    meta.appendChild(makeSignalChip(`type ${snapshot.deliveryType}`, "signal-chip-activity"));
   }
   if (snapshot.configReadiness) {
-    meta.appendChild(makeElem("span", "", `Config readiness ${snapshot.configReadiness}`));
+    meta.appendChild(makeSignalChip(`config ${snapshot.configReadiness}`, "signal-chip-runtime"));
   }
   if (snapshot.secretsReadiness) {
-    meta.appendChild(makeElem("span", "", `Secrets readiness ${snapshot.secretsReadiness}`));
+    meta.appendChild(makeSignalChip(`secrets ${snapshot.secretsReadiness}`, "signal-chip-runtime"));
   }
   if (hasRealTimestamp(snapshot.lastDeliveryAt)) {
-    meta.appendChild(makeElem("span", "", `Last delivery ${toLocalTime(snapshot.lastDeliveryAt)}`));
+    meta.appendChild(makeSignalChip(`updated ${toLocalTime(snapshot.lastDeliveryAt)}`, "signal-chip-updated"));
   }
 
   if (transitionEvidence.length) {
     const label = transitionEvidence.map((edge) => `${edge.action} ${edge.from}→${edge.to}`).join(", ");
-    meta.appendChild(makeElem("span", "", `Environment moves ${label}`));
+    meta.appendChild(makeSignalChip(`moves ${label}`, "signal-chip-activity"));
   } else {
-    meta.appendChild(makeElem("span", "", "No environment moves yet"));
+    meta.appendChild(makeSignalChip("moves none", "signal-chip-id"));
   }
 
   const links = makeElem("div", "environment-links");
@@ -671,7 +671,7 @@ function createEnvironmentSnapshotCard(snapshot) {
   maybeLink(snapshot.overlayImagePath, "image marker");
 
   if (!links.childElementCount) {
-    links.appendChild(makeElem("span", "helper-text", "No environment outputs yet"));
+    links.appendChild(makeElem("span", "helper-text", "No outputs yet"));
   }
 
   card.append(head, meta, links);
@@ -684,20 +684,20 @@ function renderEnvironmentMatrix() {
   container.replaceChildren();
 
   if (!project) {
-    renderEmptyState(container, "Select an app to inspect environment outcomes.");
+    renderEmptyState(container, "Select an app to inspect environments.");
     return;
   }
 
   const overview = currentOverview();
   if (state.overview.loading && !overview) {
-    renderEmptyState(container, "Loading server overview for environments...");
+    renderEmptyState(container, "Loading environment overview...");
     return;
   }
 
   if (overview) {
     const environments = Array.isArray(overview.environments) ? overview.environments : [];
     if (!environments.length) {
-      renderEmptyState(container, "No environments available in overview yet.");
+      renderEmptyState(container, "No environment overview yet.");
       return;
     }
     for (const environment of environments) {
@@ -707,7 +707,7 @@ function renderEnvironmentMatrix() {
   }
 
   if (state.artifacts.loading && !state.artifacts.loaded) {
-    renderEmptyState(container, "Loading outputs and deriving environment state...");
+    renderEmptyState(container, "Loading outputs and deriving state...");
     return;
   }
 
@@ -715,7 +715,7 @@ function renderEnvironmentMatrix() {
     const wrap = makeElem("div", "empty-state");
     wrap.append(
       makeElem("p", "", `Environment data unavailable: ${state.artifacts.error}`),
-      makeElem("p", "helper-text", "You can still run delivery steps. The API validates requests server-side.")
+      makeElem("p", "helper-text", "You can still run operations. API validates on submit.")
     );
     container.appendChild(wrap);
     return;
@@ -771,15 +771,15 @@ function deployGuardrailState() {
     return {
       disabled: true,
       message: "Select an app first.",
-      summary: "Choose an app to inspect build readiness before delivering.",
+      summary: "Pick app to inspect readiness.",
     };
   }
 
   if (projectHasRunningOperation()) {
     return {
       disabled: true,
-      message: "Wait for current activity to finish before starting delivery.",
-      summary: "Another app activity is currently running.",
+      message: "Wait for current operation to finish.",
+      summary: "Another operation is active.",
     };
   }
 
@@ -787,8 +787,8 @@ function deployGuardrailState() {
     if (!state.artifacts.buildImageTag) {
       return {
         disabled: true,
-        message: "No build image found. Run a source build before delivering.",
-        summary: "Dev delivery requires build/image.txt.",
+        message: "No build image found. Run build first.",
+        summary: "Dev delivery needs build/image.txt.",
       };
     }
 
@@ -802,15 +802,15 @@ function deployGuardrailState() {
   if (state.artifacts.error) {
     return {
       disabled: false,
-      message: "Output state unavailable. Delivery is still allowed; API validates readiness.",
-      summary: "Readiness preview unavailable due to output load error.",
+      message: "Output state unavailable. Delivery still allowed.",
+      summary: "Readiness preview unavailable.",
     };
   }
 
   return {
     disabled: false,
-    message: "Load outputs to see exact image before delivering.",
-    summary: "Dev delivery only targets the dev environment.",
+    message: "Load outputs to confirm exact image.",
+    summary: "Dev delivery targets dev only.",
   };
 }
 
@@ -820,7 +820,7 @@ function buildGuardrailState() {
     return {
       disabled: true,
       message: "Select an app first.",
-      summary: "Choose an app to trigger a source build.",
+      summary: "Pick app to trigger build.",
       tone: "warning",
     };
   }
@@ -829,8 +829,8 @@ function buildGuardrailState() {
     const opKind = state.operation.payload?.kind;
     return {
       disabled: true,
-      message: `Wait for ${operationLabel(opKind)} to finish before starting another build.`,
-      summary: "Another app activity is currently running.",
+      message: `Wait for ${operationLabel(opKind)} to finish first.`,
+      summary: "Another operation is active.",
       tone: "warning",
     };
   }
@@ -838,7 +838,7 @@ function buildGuardrailState() {
   return {
     disabled: false,
     message: "Build trigger is ready.",
-    summary: "Build uses source/main with refs/heads/main by default.",
+    summary: "Default target is source/main.",
     tone: "info",
   };
 }
@@ -896,7 +896,7 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (projectHasRunningOperation()) {
     return {
       valid: false,
-      reason: `Wait for current activity to finish before ${transitionVerb(action)}.`,
+      reason: `Wait for current operation to finish before ${transitionVerb(action)}.`,
       sourceImage: "",
       targetImage: "",
       action,
@@ -937,7 +937,7 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (!state.artifacts.loaded) {
     return {
       valid: true,
-      reason: `Load outputs to verify image before confirming this ${transitionVerb(action)}.`,
+      reason: `Load outputs to verify image before ${transitionVerb(action)}.`,
       sourceImage: "unknown (outputs not loaded)",
       targetImage: "unknown",
       warning: true,
@@ -953,7 +953,7 @@ function promotionValidation(project, fromEnv, toEnv) {
   if (!sourceImage) {
     return {
       valid: false,
-      reason: `No delivered image found in ${fromEnv}. Deliver or move that source first.`,
+      reason: `No delivered image in ${fromEnv}. Deliver or move source first.`,
       sourceImage: "",
       targetImage,
       action,
@@ -979,7 +979,7 @@ function renderDeployPanel() {
   if (projectHasRunningOperation()) {
     setPanelInlineStatus(
       dom.text.deployPanelStatus,
-      "Delivery controls are paused while current activity is in progress.",
+      "Delivery controls paused while operation is active.",
       "warning"
     );
     return;
@@ -987,7 +987,7 @@ function renderDeployPanel() {
 
   setPanelInlineStatus(
     dom.text.deployPanelStatus,
-    guardrail.disabled ? "Resolve delivery guardrails before continuing." : "Ready: deliver the latest built image to dev.",
+    guardrail.disabled ? "Resolve guardrails before continue." : "Ready: deliver latest image to dev.",
     guardrail.disabled ? "warning" : "success"
   );
 }
@@ -1031,7 +1031,7 @@ function renderPromotionPanel() {
 
   dom.text.promotionDraftSummary.textContent = project
     ? `${actionLabel}: source ${fromEnv || "-"} (${validation.sourceImage || "unknown"}) -> target ${toEnv || "-"} (${validation.targetImage || "unknown"}).`
-    : "Select an app to configure environment moves.";
+    : "Select app to configure moves.";
 
   dom.text.promotionGuardrail.textContent = validation.reason;
   dom.buttons.openPromotionModal.textContent =
@@ -1043,7 +1043,7 @@ function renderPromotionPanel() {
   if (projectHasRunningOperation()) {
     setPanelInlineStatus(
       dom.text.promotionPanelStatus,
-      "Environment moves are paused while current activity is in progress.",
+      "Moves paused while operation is active.",
       "warning"
     );
     return;
@@ -1052,8 +1052,8 @@ function renderPromotionPanel() {
   setPanelInlineStatus(
     dom.text.promotionPanelStatus,
     validation.valid
-      ? `${actionLabel} path ready. Review move details, then confirm.`
-      : "Adjust environment selection or readiness checks before continuing.",
+      ? `${actionLabel} path ready. Review and confirm.`
+      : "Adjust selection or readiness checks.",
     validation.valid ? "success" : "warning"
   );
 }

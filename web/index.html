@@ -14,19 +14,25 @@
         <section id="landingPanel" class="panel landing-panel" aria-label="Apps landing">
           <header class="panel-head landing-head">
             <div>
-              <h1>Your apps</h1>
-              <p class="panel-copy">Choose an app to open its dedicated workspace.</p>
+              <p class="workspace-kicker">Control plane</p>
+              <h1>Apps</h1>
+              <p class="panel-copy">Build, deliver, and release with visual signals.</p>
+              <div class="landing-cues" aria-hidden="true">
+                <span class="cue-pill cue-pill-build">Build</span>
+                <span class="cue-pill cue-pill-deliver">Deliver</span>
+                <span class="cue-pill cue-pill-release">Release</span>
+              </div>
             </div>
             <div class="landing-actions">
-              <button id="openCreateModalBtn" type="button" class="btn btn-primary">Create app</button>
-              <button id="refreshBtn" type="button" class="btn btn-subtle">Refresh</button>
+              <button id="openCreateModalBtn" type="button" class="btn btn-primary btn-icon btn-icon-create">Create app</button>
+              <button id="refreshBtn" type="button" class="btn btn-subtle btn-icon btn-icon-refresh">Sync</button>
             </div>
           </header>
 
           <div class="filter-grid landing-filter-grid">
             <label class="field compact" for="projectSearch">
               <span>Search apps (/)</span>
-              <input id="projectSearch" placeholder="Search by name, id, status, or message" />
+              <input id="projectSearch" placeholder="name, id, phase, runtime" />
             </label>
             <label class="field compact" for="phaseFilter">
               <span>Filter by state</span>
@@ -48,7 +54,7 @@
             </label>
           </div>
 
-          <p id="projectStats" class="helper-text">0 visible</p>
+          <p id="projectStats" class="helper-text">0 apps</p>
           <div id="projects" class="project-list landing-project-list" role="listbox" aria-label="Apps"></div>
         </section>
 
@@ -67,29 +73,29 @@
             </div>
 
             <div id="appStatus" class="status-banner" role="status" aria-live="polite"></div>
-            <div id="selected" class="project-summary muted">Select an app to view its delivery journey.</div>
+            <div id="selected" class="project-summary muted">Choose an app to open workspace signals.</div>
           </article>
 
           <section class="system-strip system-strip-compact" aria-label="Portfolio summary">
             <article class="metric-card">
-              <p class="metric-label">Apps in portfolio</p>
+              <p class="metric-label">Portfolio</p>
               <p id="systemProjectCount" class="metric-value">0</p>
-              <p id="systemReadyCount" class="metric-meta">0 delivery-ready</p>
+              <p id="systemReadyCount" class="metric-meta">0 ready</p>
             </article>
             <article class="metric-card">
-              <p class="metric-label">Runtime endpoint</p>
+              <p class="metric-label">Runtime</p>
               <p id="healthLabel" class="metric-value">Loading</p>
-              <p id="healthMeta" class="metric-meta">Loading system capability state</p>
+              <p id="healthMeta" class="metric-meta">Loading runtime state</p>
             </article>
             <article class="metric-card">
-              <p class="metric-label">Realtime transport</p>
+              <p class="metric-label">Realtime</p>
               <p id="systemActiveOp" class="metric-value">Loading</p>
-              <p id="systemActiveOpMeta" class="metric-meta">Checking SSE capability</p>
+              <p id="systemActiveOpMeta" class="metric-meta">Checking SSE transport</p>
             </article>
             <article class="metric-card">
-              <p class="metric-label">Builder mode</p>
+              <p class="metric-label">Builder</p>
               <p id="systemBuilderMode" class="metric-value">Loading</p>
-              <p id="systemBuilderMeta" class="metric-meta">Reading effective mode</p>
+              <p id="systemBuilderMeta" class="metric-meta">Reading mode</p>
             </article>
           </section>
 
@@ -97,7 +103,7 @@
             <button
               id="focusTabDelivery"
               type="button"
-              class="focus-tab active"
+              class="focus-tab focus-tab-delivery active"
               role="tab"
               aria-controls="focusPanelDelivery"
               aria-selected="true"
@@ -108,7 +114,7 @@
             <button
               id="focusTabEnvironments"
               type="button"
-              class="focus-tab"
+              class="focus-tab focus-tab-environments"
               role="tab"
               aria-controls="focusPanelEnvironments"
               aria-selected="false"
@@ -119,7 +125,7 @@
             <button
               id="focusTabActivity"
               type="button"
-              class="focus-tab"
+              class="focus-tab focus-tab-activity"
               role="tab"
               aria-controls="focusPanelActivity"
               aria-selected="false"
@@ -139,11 +145,11 @@
             <article class="panel journey-panel">
               <div class="panel-head">
                 <div>
-                  <h2>Journey progress</h2>
-                  <p id="journeyStatusLine" class="panel-copy">Select an app to load journey milestones.</p>
+                  <h2>Delivery flow</h2>
+                  <p id="journeyStatusLine" class="panel-copy">Pick an app to load milestones.</p>
                 </div>
                 <button id="journeyNextActionBtn" type="button" class="btn btn-primary" disabled>
-                  Run suggested step
+                  Run step
                 </button>
               </div>
               <div id="journeyNextAction" class="summary-card"></div>
@@ -151,19 +157,17 @@
             </article>
 
             <section class="action-grid">
-              <article class="panel ci-panel">
-                <h3>1. Build from source changes</h3>
-                <p class="panel-copy">
-                  Start a build now using the default source webhook payload. Expand advanced options only when needed.
-                </p>
+              <article class="panel ci-panel flow-card flow-build">
+                <div class="flow-head">
+                  <span class="flow-step">1</span>
+                  <h3>Build</h3>
+                </div>
+                <p class="panel-copy">Trigger source/main build.</p>
                 <form id="webhookForm" class="form-grid compact-form">
-                  <button id="buildLatestBtn" type="submit" class="btn btn-primary field-full">Build latest source</button>
-                  <p id="buildPanelStatus" class="panel-inline-status field-full">Ready to trigger a new build run.</p>
+                  <button id="buildLatestBtn" type="submit" class="btn btn-primary field-full">Build latest</button>
+                  <p id="buildPanelStatus" class="panel-inline-status field-full">Ready.</p>
                   <details class="advanced-details field-full">
-                    <summary>Advanced webhook payload</summary>
-                    <p class="panel-copy">
-                      Optional overrides for repository webhook metadata. Leave blank to use the default values.
-                    </p>
+                    <summary>Webhook payload overrides</summary>
                     <div class="advanced-grid">
                       <label class="field" for="webhookRepo">
                         <span>Repository</span>
@@ -186,18 +190,24 @@
                 </form>
               </article>
 
-              <article class="panel deploy-panel">
-                <h3>2. Deliver to dev</h3>
-                <p class="panel-copy">Ship the latest built image to your dev environment for validation.</p>
+              <article class="panel deploy-panel flow-card flow-deploy">
+                <div class="flow-head">
+                  <span class="flow-step">2</span>
+                  <h3>Deliver to dev</h3>
+                </div>
+                <p class="panel-copy">Push latest image to dev.</p>
                 <div id="deploySummary" class="summary-card"></div>
                 <p id="deployGuardrail" class="guardrail-text"></p>
-                <p id="deployPanelStatus" class="panel-inline-status">Dev delivery is waiting for your confirmation.</p>
+                <p id="deployPanelStatus" class="panel-inline-status">Awaiting confirmation.</p>
                 <button id="deployDevBtn" type="button" class="btn btn-primary">Deliver to dev</button>
               </article>
 
-              <article class="panel promotion-panel">
-                <h3>3. Move across environments</h3>
-                <p class="panel-copy">Promote between non-production environments, then release to production.</p>
+              <article class="panel promotion-panel flow-card flow-promote">
+                <div class="flow-head">
+                  <span class="flow-step">3</span>
+                  <h3>Promote or release</h3>
+                </div>
+                <p class="panel-copy">Move image across environments.</p>
                 <form id="promotionForm" class="form-grid compact-form" novalidate>
                   <label class="field" for="promotionFrom">
                     <span>From</span>
@@ -212,7 +222,7 @@
                   <p id="promotionPanelStatus" class="panel-inline-status field-full">
                     Choose source and target environments to continue.
                   </p>
-                  <button id="openPromotionModalBtn" type="submit" class="btn btn-primary field-full">Review move</button>
+                  <button id="openPromotionModalBtn" type="submit" class="btn btn-primary field-full">Review path</button>
                 </form>
               </article>
             </section>
@@ -229,29 +239,29 @@
             <article class="panel environment-panel">
               <div class="panel-head">
                 <div>
-                  <h2>Environment outcomes</h2>
-                  <p class="panel-copy">See where each environment stands and which image it is currently using.</p>
+                  <h2>Environments</h2>
+                  <p class="panel-copy">Live image and readiness by environment.</p>
                 </div>
-                <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Refresh outputs</button>
+                <button id="loadArtifactsBtn" type="button" class="btn btn-subtle">Reload outputs</button>
               </div>
               <div id="environmentMatrix" class="environment-grid"></div>
             </article>
 
             <article class="panel artifacts-panel">
               <div class="panel-head">
-                <h2>Outputs and logs</h2>
+                <h2>Outputs</h2>
                 <p id="artifactStats" class="helper-text">Outputs not loaded</p>
               </div>
               <label class="field compact" for="artifactSearch">
                 <span>Filter outputs</span>
-                <input id="artifactSearch" placeholder="deploy/dev, promotions/dev-to-staging, releases/stage-to-prod, repos/..." />
+                <input id="artifactSearch" placeholder="deploy/dev, promotions/dev-to-staging, releases/..." />
               </label>
-              <div id="buildkitSignal" class="buildkit-signal muted">Output insight unavailable until outputs are loaded.</div>
+              <div id="buildkitSignal" class="buildkit-signal muted">Load outputs for build signal.</div>
               <div id="artifactQuickLinks" class="quick-links"></div>
               <div id="artifacts" class="artifact-list"></div>
               <div class="preview-head">
                 <p id="artifactPreviewMeta" class="helper-text">Preview unavailable</p>
-                <button id="copyPreviewBtn" type="button" class="btn btn-subtle" disabled>Copy preview</button>
+                <button id="copyPreviewBtn" type="button" class="btn btn-subtle" disabled>Copy</button>
               </div>
               <pre id="artifactPreview" class="codeblock muted">Select an output to preview.</pre>
             </article>
@@ -267,15 +277,15 @@
           >
             <article class="panel operations-panel">
               <div class="panel-head">
-                <h2>Recent activity</h2>
-                <p class="helper-text">Live progress for the selected app</p>
+                <h2>Live activity</h2>
+                <p class="helper-text">Current app only</p>
               </div>
-              <p id="opTransportStatus" class="panel-inline-status">Realtime stream connects after an action starts.</p>
+              <p id="opTransportStatus" class="panel-inline-status">Realtime stream connects after an operation starts.</p>
               <div id="opProgress"></div>
               <div id="opErrorSurface"></div>
               <div id="opTimeline" class="timeline"></div>
               <div class="history-wrap">
-                <h3>Activity history</h3>
+                <h3>Recent operations</h3>
                 <div id="opHistory" class="history-list"></div>
               </div>
               <div class="history-wrap">
@@ -286,20 +296,20 @@
                       <span>Environment</span>
                       <select id="releaseTimelineEnvironment"></select>
                     </label>
-                    <button id="refreshReleaseTimelineBtn" type="button" class="btn btn-subtle">Refresh timeline</button>
-                    <button id="openRollbackModalBtn" type="button" class="btn btn-primary" disabled>Review rollback</button>
+                    <button id="refreshReleaseTimelineBtn" type="button" class="btn btn-subtle">Refresh</button>
+                    <button id="openRollbackModalBtn" type="button" class="btn btn-primary" disabled>Rollback preview</button>
                   </div>
                 </div>
                 <div id="rollbackTargetSummary" class="summary-card">
-                  Rollback target not selected. Choose a release entry to prepare rollback context.
+                  No rollback target selected.
                 </div>
                 <p id="releaseTimelineStatus" class="panel-inline-status">
-                  Select an environment to load release timeline history.
+                  Select environment to load timeline.
                 </p>
                 <div id="releaseTimeline" class="timeline"></div>
               </div>
               <details id="opRawWrap" class="raw-details">
-                <summary>Show raw activity payload</summary>
+                <summary>Raw payload</summary>
                 <pre id="lastOp" class="codeblock"></pre>
               </details>
             </article>
@@ -331,7 +341,7 @@
             <div class="env-builder-head">
               <div>
                 <p class="env-builder-title">Environment setup</p>
-                <p class="helper-text">Add each environment this app should move through.</p>
+                <p class="helper-text">Add the delivery path.</p>
               </div>
               <div class="env-builder-actions">
                 <button id="createCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
@@ -392,7 +402,7 @@
             <div class="env-builder-head">
               <div>
                 <p class="env-builder-title">Environment setup</p>
-                <p class="helper-text">Keep environments explicit so delivery transitions stay safe.</p>
+                <p class="helper-text">Keep path explicit.</p>
               </div>
               <div class="env-builder-actions">
                 <button id="updateCleanKeysBtn" type="button" class="btn btn-subtle">Clean var keys</button>
@@ -439,7 +449,7 @@
         </header>
 
         <div class="delete-warning">
-          <p class="delete-warning-title">This permanently deletes the app record and its local outputs.</p>
+          <p class="delete-warning-title">This permanently deletes app data and outputs.</p>
           <p id="deleteModalTarget" class="delete-target"></p>
         </div>
 
@@ -466,7 +476,7 @@
         </header>
 
         <div class="promotion-warning">
-          <p class="promotion-warning-title">Review source, target, and image before continuing.</p>
+          <p class="promotion-warning-title">Validate source, target, and image before run.</p>
           <p id="promotionPreviewStatus" class="helper-text"></p>
           <div id="promotionSummary" class="promotion-summary"></div>
           <div id="promotionPreviewGates" class="promotion-preview-list"></div>
@@ -492,12 +502,12 @@
       <button class="modal-backdrop" data-modal-close="rollback" aria-label="Close rollback dialog"></button>
       <section class="modal-card modal-card-warning" aria-label="Rollback confirmation dialog">
         <header class="modal-header">
-          <h2 id="rollbackModalTitle">Review rollback</h2>
+          <h2 id="rollbackModalTitle">Rollback preview</h2>
           <button id="rollbackModalCloseBtn" type="button" class="btn btn-subtle">Close</button>
         </header>
 
         <div class="promotion-warning">
-          <p class="promotion-warning-title">Preview rollback impact before execution.</p>
+          <p class="promotion-warning-title">Preview impact before execute.</p>
           <p id="rollbackPreviewStatus" class="helper-text"></p>
           <div id="rollbackSummary" class="promotion-summary"></div>
           <div id="rollbackCompare" class="promotion-preview-list"></div>
