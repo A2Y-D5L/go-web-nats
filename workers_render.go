@@ -265,8 +265,8 @@ func renderOverlayKustomizationManifest(image string) string {
 kind: Kustomization
 resources:
   - ../../base
-patchesStrategicMerge:
-  - deployment-patch.yaml
+patches:
+  - path: deployment-patch.yaml
 images:
   - name: app-image
     newName: %s

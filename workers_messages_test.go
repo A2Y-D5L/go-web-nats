@@ -155,6 +155,20 @@ func TestWorkers_ManifestApplyWritesKustomizeTreeAndDevRenderOnly(t *testing.T) 
 	if !strings.Contains(string(devDeployment), "image: local/svc:dev12345") {
 		t.Fatalf("expected dev deployment image tag, got: %s", string(devDeployment))
 	}
+	devOverlayKustomization, readErr := artifacts.ReadFile(
+		msg.ProjectID,
+		"repos/manifests/overlays/dev/kustomization.yaml",
+	)
+	if readErr != nil {
+		t.Fatalf("read dev overlay kustomization: %v", readErr)
+	}
+	devOverlayText := string(devOverlayKustomization)
+	if !strings.Contains(devOverlayText, "patches:\n  - path: deployment-patch.yaml") {
+		t.Fatalf("expected modern patches stanza, got: %s", devOverlayText)
+	}
+	if strings.Contains(devOverlayText, "patchesStrategicMerge:") {
+		t.Fatalf("overlay kustomization must not use deprecated patchesStrategicMerge: %s", devOverlayText)
+	}
 }
 
 func TestWorkers_ManifestPromotionRendersHigherEnvOnlyDuringPromotion(t *testing.T) {

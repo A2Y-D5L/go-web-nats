@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -16,7 +18,9 @@ import (
 // Run starts the local platform runtime (embedded NATS, workers, and HTTP API).
 func Run() {
 	mainLog := appLoggerForProcess().Source("main")
-	ctx, cancel := context.WithCancel(context.Background())
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 
 	natsURL, jsDir, jsDirEphemeral, stopNATS := startRuntimeNATS(mainLog)
@@ -103,10 +107,49 @@ func Run() {
 		artifactsRoot,
 	)
 
-	listenErr := srv.ListenAndServe()
-	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
-		mainLog.Fatalf("http server: %v", listenErr)
+	serveErr := serveHTTPUntilSignalOrExit(signalCtx, srv, mainLog)
+	if serveErr != nil {
+		mainLog.Fatalf("http server: %v", serveErr)
 	}
+}
+
+func serveHTTPUntilSignalOrExit(signalCtx context.Context, srv *http.Server, mainLog sourceLogger) error {
+	listenErrCh := make(chan error, 1)
+	go func() {
+		listenErrCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case <-signalCtx.Done():
+		mainLog.Infof("Shutdown signal received; draining HTTP server")
+		shutdownErr := shutdownHTTPServer(signalCtx, srv, mainLog)
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		listenErr := <-listenErrCh
+		if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
+			return listenErr
+		}
+	case listenErr := <-listenErrCh:
+		if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
+			return listenErr
+		}
+	}
+	return nil
+}
+
+func shutdownHTTPServer(signalCtx context.Context, srv *http.Server, mainLog sourceLogger) error {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(signalCtx), defaultShutdownWait)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	shutdownCancel()
+	if shutdownErr == nil {
+		return nil
+	}
+	mainLog.Warnf("http graceful shutdown error: %v", shutdownErr)
+	if closeErr := srv.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+		mainLog.Warnf("http forced close error: %v", closeErr)
+	}
+	return shutdownErr
 }
 
 func startRuntimeNATS(mainLog sourceLogger) (string, string, bool, func()) {

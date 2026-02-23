@@ -40,6 +40,7 @@ const (
 	defaultKVProjectHistory   = 25
 	defaultKVOpsHistory       = 50
 	defaultStartupWait        = 10 * time.Second
+	defaultShutdownWait       = 10 * time.Second
 	defaultReadHeaderWait     = 5 * time.Second
 	apiWaitTimeout            = 45 * time.Second
 	gitOpTimeout              = 20 * time.Second
